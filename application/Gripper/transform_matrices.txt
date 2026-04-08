@@ -1,0 +1,278 @@
+六自由度机械臂齐次变换矩阵
+============================
+
+T01 矩阵:
+==================================================
+行1列1: cos(joint1_angle)
+行1列2: -sin(joint1_angle)
+行1列3: 0
+行1列4: 0
+行2列1: sin(joint1_angle)
+行2列2: cos(joint1_angle)
+行2列3: 0
+行2列4: 0
+行3列1: 0
+行3列2: 0
+行3列3: 1
+行3列4: 3/25
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint1_angle), -sin(joint1_angle), 0, 0 ]
+[ sin(joint1_angle), cos(joint1_angle), 0, 0 ]
+[ 0, 0, 1, 3/25 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T12 矩阵:
+==================================================
+行1列1: cos(joint2_angle)
+行1列2: -sin(joint2_angle)
+行1列3: 0
+行1列4: 0
+行2列1: 0
+行2列2: 0
+行2列3: -1
+行2列4: 0
+行3列1: sin(joint2_angle)
+行3列2: cos(joint2_angle)
+行3列3: 0
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint2_angle), -sin(joint2_angle), 0, 0 ]
+[ 0, 0, -1, 0 ]
+[ sin(joint2_angle), cos(joint2_angle), 0, 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T23 矩阵:
+==================================================
+行1列1: cos(joint3_angle)
+行1列2: -sin(joint3_angle)
+行1列3: 0
+行1列4: 11/50
+行2列1: sin(joint3_angle)
+行2列2: cos(joint3_angle)
+行2列3: 0
+行2列4: 0
+行3列1: 0
+行3列2: 0
+行3列3: 1
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint3_angle), -sin(joint3_angle), 0, 11/50 ]
+[ sin(joint3_angle), cos(joint3_angle), 0, 0 ]
+[ 0, 0, 1, 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T34 矩阵:
+==================================================
+行1列1: cos(joint4_angle)
+行1列2: -sin(joint4_angle)
+行1列3: 0
+行1列4: 11/200
+行2列1: 0
+行2列2: 0
+行2列3: 1
+行2列4: 2969/10000
+行3列1: -sin(joint4_angle)
+行3列2: -cos(joint4_angle)
+行3列3: 0
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint4_angle), -sin(joint4_angle), 0, 11/200 ]
+[ 0, 0, 1, 2969/10000 ]
+[ -sin(joint4_angle), -cos(joint4_angle), 0, 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T45 矩阵:
+==================================================
+行1列1: cos(joint5_angle)
+行1列2: -sin(joint5_angle)
+行1列3: 0
+行1列4: 0
+行2列1: 0
+行2列2: 0
+行2列3: -1
+行2列4: 0
+行3列1: sin(joint5_angle)
+行3列2: cos(joint5_angle)
+行3列3: 0
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint5_angle), -sin(joint5_angle), 0, 0 ]
+[ 0, 0, -1, 0 ]
+[ sin(joint5_angle), cos(joint5_angle), 0, 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T56 矩阵:
+==================================================
+行1列1: cos(joint6_angle)
+行1列2: -sin(joint6_angle)
+行1列3: 0
+行1列4: 0
+行2列1: 0
+行2列2: 0
+行2列3: 1
+行2列4: 0
+行3列1: -sin(joint6_angle)
+行3列2: -cos(joint6_angle)
+行3列3: 0
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint6_angle), -sin(joint6_angle), 0, 0 ]
+[ 0, 0, 1, 0 ]
+[ -sin(joint6_angle), -cos(joint6_angle), 0, 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T04 矩阵:
+==================================================
+行1列1: cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - sin(joint1_angle)*sin(joint4_angle)
+行1列2: - cos(joint4_angle)*sin(joint1_angle) - sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))
+行1列3: - cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) - cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)
+行1列4: (11*cos(joint1_angle)*cos(joint2_angle))/50 + (11*cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle))/200 - (2969*cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle))/10000 - (2969*cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))/10000 - (11*cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+行2列1: cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))
+行2列2: cos(joint1_angle)*cos(joint4_angle) - sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))
+行2列3: - cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) - cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)
+行2列4: (11*cos(joint2_angle)*sin(joint1_angle))/50 + (11*cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle))/200 - (2969*cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle))/10000 - (2969*cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))/10000 - (11*sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+行3列1: cos(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))
+行3列2: -sin(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))
+行3列3: cos(joint2_angle)*cos(joint3_angle) - sin(joint2_angle)*sin(joint3_angle)
+行3列4: (11*sin(joint2_angle))/50 + (11*cos(joint2_angle)*sin(joint3_angle))/200 + (11*cos(joint3_angle)*sin(joint2_angle))/200 - (2969*sin(joint2_angle)*sin(joint3_angle))/10000 + (2969*cos(joint2_angle)*cos(joint3_angle))/10000 + 3/25
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - sin(joint1_angle)*sin(joint4_angle), - cos(joint4_angle)*sin(joint1_angle) - sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)), - cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) - cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle), (11*cos(joint1_angle)*cos(joint2_angle))/50 + (11*cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle))/200 - (2969*cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle))/10000 - (2969*cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))/10000 - (11*cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200 ]
+[ cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)), cos(joint1_angle)*cos(joint4_angle) - sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)), - cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) - cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle), (11*cos(joint2_angle)*sin(joint1_angle))/50 + (11*cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle))/200 - (2969*cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle))/10000 - (2969*cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))/10000 - (11*sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200 ]
+[ cos(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle)), -sin(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle)), cos(joint2_angle)*cos(joint3_angle) - sin(joint2_angle)*sin(joint3_angle), (11*sin(joint2_angle))/50 + (11*cos(joint2_angle)*sin(joint3_angle))/200 + (11*cos(joint3_angle)*sin(joint2_angle))/200 - (2969*sin(joint2_angle)*sin(joint3_angle))/10000 + (2969*cos(joint2_angle)*cos(joint3_angle))/10000 + 3/25 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T46 矩阵:
+==================================================
+行1列1: cos(joint4_angle)*cos(joint5_angle)*cos(joint6_angle) - sin(joint4_angle)*sin(joint6_angle)
+行1列2: - cos(joint6_angle)*sin(joint4_angle) - cos(joint4_angle)*cos(joint5_angle)*sin(joint6_angle)
+行1列3: -cos(joint4_angle)*sin(joint5_angle)
+行1列4: 11/200
+行2列1: cos(joint6_angle)*sin(joint5_angle)
+行2列2: -sin(joint5_angle)*sin(joint6_angle)
+行2列3: cos(joint5_angle)
+行2列4: 2969/10000
+行3列1: - cos(joint4_angle)*sin(joint6_angle) - cos(joint5_angle)*cos(joint6_angle)*sin(joint4_angle)
+行3列2: cos(joint5_angle)*sin(joint4_angle)*sin(joint6_angle) - cos(joint4_angle)*cos(joint6_angle)
+行3列3: sin(joint4_angle)*sin(joint5_angle)
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint4_angle)*cos(joint5_angle)*cos(joint6_angle) - sin(joint4_angle)*sin(joint6_angle), - cos(joint6_angle)*sin(joint4_angle) - cos(joint4_angle)*cos(joint5_angle)*sin(joint6_angle), -cos(joint4_angle)*sin(joint5_angle), 11/200 ]
+[ cos(joint6_angle)*sin(joint5_angle), -sin(joint5_angle)*sin(joint6_angle), cos(joint5_angle), 2969/10000 ]
+[ - cos(joint4_angle)*sin(joint6_angle) - cos(joint5_angle)*cos(joint6_angle)*sin(joint4_angle), cos(joint5_angle)*sin(joint4_angle)*sin(joint6_angle) - cos(joint4_angle)*cos(joint6_angle), sin(joint4_angle)*sin(joint5_angle), 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T06 矩阵:
+==================================================
+行1列1: - cos(joint6_angle)*(sin(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)) + cos(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - sin(joint6_angle)*(cos(joint4_angle)*sin(joint1_angle) + sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))
+行1列2: sin(joint6_angle)*(sin(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)) + cos(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - cos(joint6_angle)*(cos(joint4_angle)*sin(joint1_angle) + sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))
+行1列3: sin(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))) - cos(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))
+行1列4: (11*cos(joint1_angle)*cos(joint2_angle))/50 + (11*cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle))/200 - (2969*cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle))/10000 - (2969*cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))/10000 - (11*cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+行2列1: - sin(joint6_angle)*(sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - cos(joint1_angle)*cos(joint4_angle)) - cos(joint6_angle)*(sin(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)) - cos(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))))
+行2列2: sin(joint6_angle)*(sin(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)) - cos(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - cos(joint6_angle)*(sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - cos(joint1_angle)*cos(joint4_angle))
+行2列3: - sin(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))) - cos(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))
+行2列4: (11*cos(joint2_angle)*sin(joint1_angle))/50 + (11*cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle))/200 - (2969*cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle))/10000 - (2969*cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))/10000 - (11*sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+行3列1: - cos(joint6_angle)*(sin(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*cos(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))) - sin(joint4_angle)*sin(joint6_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))
+行3列2: sin(joint6_angle)*(sin(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*cos(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))) - cos(joint6_angle)*sin(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))
+行3列3: - cos(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*sin(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))
+行3列4: (11*sin(joint2_angle))/50 + (11*cos(joint2_angle)*sin(joint3_angle))/200 + (11*cos(joint3_angle)*sin(joint2_angle))/200 - (2969*sin(joint2_angle)*sin(joint3_angle))/10000 + (2969*cos(joint2_angle)*cos(joint3_angle))/10000 + 3/25
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ - cos(joint6_angle)*(sin(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)) + cos(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - sin(joint6_angle)*(cos(joint4_angle)*sin(joint1_angle) + sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))), sin(joint6_angle)*(sin(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)) + cos(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - cos(joint6_angle)*(cos(joint4_angle)*sin(joint1_angle) + sin(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))), sin(joint5_angle)*(sin(joint1_angle)*sin(joint4_angle) - cos(joint4_angle)*(cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle) - cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))) - cos(joint5_angle)*(cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle) + cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle)), (11*cos(joint1_angle)*cos(joint2_angle))/50 + (11*cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle))/200 - (2969*cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle))/10000 - (2969*cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))/10000 - (11*cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200 ]
+[ - sin(joint6_angle)*(sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - cos(joint1_angle)*cos(joint4_angle)) - cos(joint6_angle)*(sin(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)) - cos(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))), sin(joint6_angle)*(sin(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)) - cos(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)))) - cos(joint6_angle)*(sin(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle)) - cos(joint1_angle)*cos(joint4_angle)), - sin(joint5_angle)*(cos(joint1_angle)*sin(joint4_angle) + cos(joint4_angle)*(cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle) - sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))) - cos(joint5_angle)*(cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle)), (11*cos(joint2_angle)*sin(joint1_angle))/50 + (11*cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle))/200 - (2969*cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle))/10000 - (2969*cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))/10000 - (11*sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200 ]
+[ - cos(joint6_angle)*(sin(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*cos(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))) - sin(joint4_angle)*sin(joint6_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle)), sin(joint6_angle)*(sin(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*cos(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle))) - cos(joint6_angle)*sin(joint4_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle)), - cos(joint5_angle)*(sin(joint2_angle)*sin(joint3_angle) - cos(joint2_angle)*cos(joint3_angle)) - cos(joint4_angle)*sin(joint5_angle)*(cos(joint2_angle)*sin(joint3_angle) + cos(joint3_angle)*sin(joint2_angle)), (11*sin(joint2_angle))/50 + (11*cos(joint2_angle)*sin(joint3_angle))/200 + (11*cos(joint3_angle)*sin(joint2_angle))/200 - (2969*sin(joint2_angle)*sin(joint3_angle))/10000 + (2969*cos(joint2_angle)*cos(joint3_angle))/10000 + 3/25 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+T36 矩阵:
+==================================================
+行1列1: cos(joint4_angle)*cos(joint5_angle)*cos(joint6_angle) - sin(joint4_angle)*sin(joint6_angle)
+行1列2: - cos(joint6_angle)*sin(joint4_angle) - cos(joint4_angle)*cos(joint5_angle)*sin(joint6_angle)
+行1列3: -cos(joint4_angle)*sin(joint5_angle)
+行1列4: 11/200
+行2列1: cos(joint6_angle)*sin(joint5_angle)
+行2列2: -sin(joint5_angle)*sin(joint6_angle)
+行2列3: cos(joint5_angle)
+行2列4: 2969/10000
+行3列1: - cos(joint4_angle)*sin(joint6_angle) - cos(joint5_angle)*cos(joint6_angle)*sin(joint4_angle)
+行3列2: cos(joint5_angle)*sin(joint4_angle)*sin(joint6_angle) - cos(joint4_angle)*cos(joint6_angle)
+行3列3: sin(joint4_angle)*sin(joint5_angle)
+行3列4: 0
+行4列1: 0
+行4列2: 0
+行4列3: 0
+行4列4: 1
+
+矩阵形式:
+[ cos(joint4_angle)*cos(joint5_angle)*cos(joint6_angle) - sin(joint4_angle)*sin(joint6_angle), - cos(joint6_angle)*sin(joint4_angle) - cos(joint4_angle)*cos(joint5_angle)*sin(joint6_angle), -cos(joint4_angle)*sin(joint5_angle), 11/200 ]
+[ cos(joint6_angle)*sin(joint5_angle), -sin(joint5_angle)*sin(joint6_angle), cos(joint5_angle), 2969/10000 ]
+[ - cos(joint4_angle)*sin(joint6_angle) - cos(joint5_angle)*cos(joint6_angle)*sin(joint4_angle), cos(joint5_angle)*sin(joint4_angle)*sin(joint6_angle) - cos(joint4_angle)*cos(joint6_angle), sin(joint4_angle)*sin(joint5_angle), 0 ]
+[ 0, 0, 0, 1 ]
+
+--------------------------------------------------
+
+末端执行器位置信息:
+==================================================
+X: (11*cos(joint1_angle)*cos(joint2_angle))/50 + (11*cos(joint1_angle)*cos(joint2_angle)*cos(joint3_angle))/200 - (2969*cos(joint1_angle)*cos(joint2_angle)*sin(joint3_angle))/10000 - (2969*cos(joint1_angle)*cos(joint3_angle)*sin(joint2_angle))/10000 - (11*cos(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+Y: (11*cos(joint2_angle)*sin(joint1_angle))/50 + (11*cos(joint2_angle)*cos(joint3_angle)*sin(joint1_angle))/200 - (2969*cos(joint2_angle)*sin(joint1_angle)*sin(joint3_angle))/10000 - (2969*cos(joint3_angle)*sin(joint1_angle)*sin(joint2_angle))/10000 - (11*sin(joint1_angle)*sin(joint2_angle)*sin(joint3_angle))/200
+Z: (11*sin(joint2_angle))/50 + (11*cos(joint2_angle)*sin(joint3_angle))/200 + (11*cos(joint3_angle)*sin(joint2_angle))/200 - (2969*sin(joint2_angle)*sin(joint3_angle))/10000 + (2969*cos(joint2_angle)*cos(joint3_angle))/10000 + 3/25
