@@ -92,17 +92,29 @@ void usartr_debug_task(void const *argument)
         //                 Arm_RB.end_effector_x,
         //                 Arm_RB.end_effector_y);
 
+                uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
+                        Arm_LF.end_effector_x, 
+                        Arm_LF.end_effector_y,
+                        Arm_LF.target_joint_angles[0],
+                        Arm_LF.target_joint_angles[1],
+                        Arm_LF.target_servo_positions[0],
+                        Arm_LF.target_servo_positions[1],
+                        Arm_LF.current_joint_angles[0],
+                        Arm_LF.current_joint_angles[1],
+                        Arm_LF.current_servo_positions[0],
+                        Arm_LF.current_servo_positions[1]);
+
                 // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
-                //         Arm_LF.end_effector_x, 
-                //         Arm_LF.end_effector_y,
-                //         Arm_LF.target_joint_angles[0],
-                //         Arm_LF.target_joint_angles[1],
-                //         Arm_LF.target_servo_positions[0],
-                //         Arm_LF.target_servo_positions[1],
-                //         Arm_LF.current_joint_angles[0],
-                //         Arm_LF.current_joint_angles[1],
-                //         Arm_LF.current_servo_positions[0],
-                //         Arm_LF.current_servo_positions[1]);
+                //         Arm_RF.end_effector_x, 
+                //         Arm_RF.end_effector_y,
+                //         Arm_RF.target_joint_angles[0],
+                //         Arm_RF.target_joint_angles[1],
+                //         Arm_RF.target_servo_positions[0],
+                //         Arm_RF.target_servo_positions[1],
+                //         Arm_RF.current_joint_angles[0],
+                //         Arm_RF.current_joint_angles[1],
+                //         Arm_RF.current_servo_positions[0],
+                //         Arm_RF.current_servo_positions[1]);
 
                 // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
                 //         Arm_LB.end_effector_x, 
@@ -116,17 +128,18 @@ void usartr_debug_task(void const *argument)
                 //         Arm_LB.current_servo_positions[0],
                 //         Arm_LB.current_servo_positions[1]);
 
-                uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
-                        Arm_RF.end_effector_x, 
-                        Arm_RF.end_effector_y,
-                        Arm_RF.target_joint_angles[0],
-                        Arm_RF.target_joint_angles[1],
-                        Arm_RF.target_servo_positions[0],
-                        Arm_RF.target_servo_positions[1],
-                        Arm_RF.current_joint_angles[0],
-                        Arm_RF.current_joint_angles[1],
-                        Arm_RF.current_servo_positions[0],
-                        Arm_RF.current_servo_positions[1]);
+                // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
+                //         Arm_RF.end_effector_x, 
+                //         Arm_RF.end_effector_y,
+                //         Arm_RF.target_joint_angles[0],
+                //         Arm_RF.target_joint_angles[1],
+                //         Arm_RF.target_servo_positions[0],
+                //         Arm_RF.target_servo_positions[1],
+                //         Arm_RF.current_joint_angles[0],
+                //         Arm_RF.current_joint_angles[1],
+                //         Arm_RF.current_servo_positions[0],
+                //         Arm_RF.current_servo_positions[1]);
+
       osDelay(4);
   }
   /* USER CODE END usart_debug_task */
