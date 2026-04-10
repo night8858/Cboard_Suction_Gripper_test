@@ -469,15 +469,18 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
             return false;
     }
 
-    if(arm->target_joint_angles[0] < -180.0f)
-     {arm->target_joint_angles[0] += 180.0f;
-    }else if (arm->target_joint_angles[0] > 180.0f) {
-            arm->target_joint_angles[0] -= 180.0f;
-        }
+    /* Normalize angles to [-180, +180]; must use +-360 not +-180 to stay
+       in the correct half-space. Using +-180 previously caused up to 90-deg
+       servo position errors when IK output was in (180, 270] deg range. */
+    if (arm->target_joint_angles[0] < -180.0f) {
+        arm->target_joint_angles[0] += 360.0f;
+    } else if (arm->target_joint_angles[0] > 180.0f) {
+        arm->target_joint_angles[0] -= 360.0f;
+    }
     if (arm->target_joint_angles[1] < -180.0f) {
-        arm->target_joint_angles[1] += 180.0f;
-    }else if(arm->target_joint_angles[1] > 180.0f) {
-        arm->target_joint_angles[1] -= 180.0f;
+        arm->target_joint_angles[1] += 360.0f;
+    } else if (arm->target_joint_angles[1] > 180.0f) {
+        arm->target_joint_angles[1] -= 360.0f;
     }
     // arm->target_joint_angles[0] = clampf(arm->target_joint_angles[0], -90.0f, 90.0f);
     // arm->target_joint_angles[1] = clampf(arm->target_joint_angles[1], -90.0f, 90.0f);
@@ -486,18 +489,14 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
 
 }
 
-// 单臂控制步骤：反馈更新 -> 逆运动学 -> 发送位置指令
-static bool arm_control_step(Planar_Robot_Arm *arm, bool elbow_up ,float x, float y)
+// 单臂控制步骤：逆运动学 -> 发送位置指令（反馈由调用方在外部统一完成，避免重复读取）
+static __attribute__((unused)) bool arm_control_step(Planar_Robot_Arm *arm, bool elbow_up ,float x, float y)
 {
     if (arm == NULL) {
         return false;
     }
 
-    // 1. 读取舵机反馈，更新当前关节角和末端位姿
-    planar_robot_arm_feedback(arm);
-
-
-    // 2. 逆运动学求解目标关节角
+    // 逆运动学求解目标关节角
     arm->end_aim_x = x;
     arm->end_aim_y = y;
     bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
@@ -720,7 +719,7 @@ static void solve_quintic_coefficients(float p0,
 
 // 规划新的轨迹段：在给定时长内，从当前状态平滑过渡到目标状态。
 static void plan_new_move(TrajectoryPlanner *planner,
-                          float current_time_ms,
+                          uint32_t current_time_ms,
                           float start_pos,
                           float start_vel,
                           float start_acc,
@@ -765,7 +764,7 @@ static void plan_new_move(TrajectoryPlanner *planner,
 
 // 按当前时间采样轨迹，返回当前位置/速度/加速度；轨迹结束时自动钳位到终点。
 static bool update_trajectory(TrajectoryPlanner *planner,
-                              float current_time_ms,
+                              uint32_t current_time_ms,
                               float *out_pos,
                               float *out_vel,
                               float *out_acc)
@@ -787,7 +786,8 @@ static bool update_trajectory(TrajectoryPlanner *planner,
         return true;
     }
 
-    float elapsed_time = (current_time_ms - planner->start_time) / 1000.0f;
+    /* uint32 subtraction handles HAL_GetTick() wrap-around correctly */
+    float elapsed_time = (float)((uint32_t)(current_time_ms - planner->start_time)) / 1000.0f;
     float t = elapsed_time;
     float T = planner->current_segment.duration;
     float *a = planner->current_segment.coeffs;
@@ -843,7 +843,7 @@ static bool target_changed(const ArmTrajectoryContext *ctx, float x, float y)
 }
 
 // 对单臂执行“反馈 -> 必要时重规划 -> 轨迹采样 -> 控制输出”。
-static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_up, float now_ms)
+static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_up, uint32_t now_ms)
 {
     if (arm == NULL) {
         return false;
@@ -855,46 +855,110 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
     }
 
     // 先做一次反馈，用当前末端位姿作为轨迹起点，避免重规划时发生跳变。
-    planar_robot_arm_feedback(arm);
+    bool need_replan = !ctx->initialized ||
+                       target_changed(ctx, arm->end_aim_x, arm->end_aim_y);
 
-    if (!ctx->initialized) {
+    if (need_replan) {
+        /* Snapshot the user target BEFORE IK to prevent end_aim_x/y corruption
+           from polluting the replan trigger check in subsequent cycles. */
+        arm->planned_target_x = arm->end_aim_x;
+        arm->planned_target_y = arm->end_aim_y;
+
+        /* Read actual servo positions once as joint-space start point */
+        get_arm_servo_pos(arm);
+        if (arm->state == ARM_STATE_ERROR) {
+            /* ReadPos failed; refuse to replan from a stale/zero start position */
+            return false;
+        }
+        float cur_j1 = (float)arm->current_servo_positions[0];
+        float cur_j2 = (float)arm->current_servo_positions[1];
+
+        /* Solve IK once for the new target */
+        bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
+        if (!solved) {
+            arm->state = ARM_STATE_ERROR;
+            EnableTorque(arm->SERVO_ID1, 0);
+            EnableTorque(arm->SERVO_ID2, 0);
+            return false;
+        }
+
+        /* Convert target joint angles to servo step counts */
+        float tgt_j1 = clampf(
+            (arm->target_joint_angles[0] + 180.0f) / 360.0f * 4095.0f,
+            1024.0f, 3072.0f);
+        float tgt_j2 = clampf(
+            (arm->target_joint_angles[1] + 180.0f) / 360.0f * 4095.0f,
+            1024.0f, 3072.0f);
+
+        /* Guard against NaN/Inf from IK numerical failure (e.g. atan2(0,0),
+           sqrtf of negative, or out-of-workspace target) */
+        if (!isfinite(tgt_j1) || !isfinite(tgt_j2)) {
+            arm->state = ARM_STATE_ERROR;
+            return false;
+        }
+
+        /* Inherit current trajectory velocity to avoid speed discontinuity */
+
+        // 重规划时继承当前轨迹速度，避免发生速度突变导致卡顿
+        float cur_vel_j1 = 0.0f, cur_vel_j2 = 0.0f;
+        if (ctx->initialized) {
+            update_trajectory(&ctx->planner_j1, now_ms, NULL, &cur_vel_j1, NULL);
+            update_trajectory(&ctx->planner_j2, now_ms, NULL, &cur_vel_j2, NULL);
+        }
+        /* Cap inherited velocity: max-speed quintic over 2048 steps in
+           CONTROLA_TRAJ_DURATION_S peaks at ~1.875*(2048/T) steps/s ~= 2400.           Clamp tighter to prevent overshooting on mid-motion replan. */
+        {
+            const float max_replan_vel = 1500.0f;
+            cur_vel_j1 = clampf(cur_vel_j1, -max_replan_vel, max_replan_vel);
+            cur_vel_j2 = clampf(cur_vel_j2, -max_replan_vel, max_replan_vel);
+        }
+
+        /* Plan quintic polynomial trajectories in joint (servo-step) space */
+        plan_new_move(&ctx->planner_j1, now_ms,
+                      cur_j1, cur_vel_j1, 0.0f,
+                      tgt_j1, 0.0f, 0.0f,
+                      CONTROLA_TRAJ_DURATION_S);
+        plan_new_move(&ctx->planner_j2, now_ms,
+                      cur_j2, cur_vel_j2, 0.0f,
+                      tgt_j2, 0.0f, 0.0f,
+                      CONTROLA_TRAJ_DURATION_S);
+
+        /* Use the snapshot value so last_cmd always reflects the true user
+           intent, never a value potentially modified by IK internals. */
+        ctx->last_cmd_x  = arm->planned_target_x;
+        ctx->last_cmd_y  = arm->planned_target_y;
         ctx->initialized = true;
-        ctx->last_cmd_x = arm->end_aim_x;
-        ctx->last_cmd_y = arm->end_aim_y;
-
-        plan_new_move(&ctx->planner_x, now_ms, arm->end_effector_x, 0.0f, 0.0f, arm->end_aim_x, 0.0f, 0.0f, CONTROLA_TRAJ_DURATION_S);
-        plan_new_move(&ctx->planner_y, now_ms, arm->end_effector_y, 0.0f, 0.0f, arm->end_aim_y, 0.0f, 0.0f, CONTROLA_TRAJ_DURATION_S);
-    }
-
-    if (target_changed(ctx, arm->end_aim_x, arm->end_aim_y)) {
-        ctx->last_cmd_x = arm->end_aim_x;
-        ctx->last_cmd_y = arm->end_aim_y;
-
-        plan_new_move(&ctx->planner_x, now_ms, arm->end_effector_x, 0.0f, 0.0f, arm->end_aim_x, 0.0f, 0.0f, CONTROLA_TRAJ_DURATION_S);
-        plan_new_move(&ctx->planner_y, now_ms, arm->end_effector_y, 0.0f, 0.0f, arm->end_aim_y, 0.0f, 0.0f, CONTROLA_TRAJ_DURATION_S);
     }
 
     // 采样轨迹得到本控制周期目标点。若轨迹结束，输出会自动钳位到终点。
-    float x_cmd = arm->end_aim_x;
-    float y_cmd = arm->end_aim_y;
-    update_trajectory(&ctx->planner_x, now_ms, &x_cmd, NULL, NULL);
-    update_trajectory(&ctx->planner_y, now_ms, &y_cmd, NULL, NULL);
+    /* Sample joint-space trajectories for this control cycle */
+    float j1_cmd = ctx->planner_j1.current_segment.pf;
+    float j2_cmd = ctx->planner_j2.current_segment.pf;
+    update_trajectory(&ctx->planner_j1, now_ms, &j1_cmd, NULL, NULL);
+    update_trajectory(&ctx->planner_j2, now_ms, &j2_cmd, NULL, NULL);
 
     // arm_control_step 会把 end_aim 写成当前插值点。这里在调用后恢复外部目标点，
     // 避免下一周期误判“目标已变更”并把轨迹重规划回当前位置。
-    float user_target_x = ctx->last_cmd_x;
-    float user_target_y = ctx->last_cmd_y;
-    bool ok = arm_control_step(arm, elbow_up, x_cmd, y_cmd);
-    arm->end_aim_x = user_target_x;
-    arm->end_aim_y = user_target_y;
+    arm->target_servo_positions[0] = (int16_t)clampf(j1_cmd, 1024.0f, 3072.0f);
+    arm->target_servo_positions[1] = (int16_t)clampf(j2_cmd, 1024.0f, 3072.0f);
 
-    return ok;
+    uint8_t  ID[2]       = {arm->SERVO_ID1, arm->SERVO_ID2};
+    int16_t  Position[2] = {arm->target_servo_positions[0],
+                            arm->target_servo_positions[1]};
+    uint16_t Speed[2]    = {0, 0};
+    uint8_t  ACC[2]      = {0, 0};
+
+    SyncWritePosEx(ID, 2, Position, Speed, ACC);
+    arm->state = ARM_STATE_MOVING;
+    
+    planar_arm_forward_kinematics(arm);
+    return true;
 }
 
 bool controlA_loop(void)
 {
     bool ok = true;
-    float now_ms = (float)HAL_GetTick();
+    uint32_t now_ms = HAL_GetTick();
 #ifdef movedebug
     // LF单臂调试：每3秒在两个占位符目标点之间切换。
     static bool lf_toggle_initialized = false;
@@ -905,8 +969,8 @@ bool controlA_loop(void)
     // TODO: 将下面4个占位符替换成你的实际目标点坐标（单位:mm）。
     const float LF_TARGET_P0_X = -50.0f; // 占位符点0 X
     const float LF_TARGET_P0_Y = 20.0f;  // 占位符点0 Y
-    const float LF_TARGET_P1_X = 450.0f; // 占位符点1 X
-    const float LF_TARGET_P1_Y = 450.0f;  // 占位符点1 Y
+    const float LF_TARGET_P1_X = 50.0f; // 占位符点1 X
+    const float LF_TARGET_P1_Y = 540.0f;  // 占位符点1 Y
 
     if (!lf_toggle_initialized) {
         lf_toggle_initialized = true;

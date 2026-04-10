@@ -9,8 +9,8 @@
 
 
 // 重规划阈值的定义：当末端位置误差小于该值时，认为当前轨迹仍然有效，无需重新规划。
-#define CONTROLA_TRAJ_DURATION_S 2.0f
-#define CONTROLA_REPLAN_EPS_MM   3.0f
+#define CONTROLA_TRAJ_DURATION_S 1.6f
+#define CONTROLA_REPLAN_EPS_MM   10.0f
 
 
 
@@ -65,6 +65,8 @@ typedef struct {
     float end_aim_x; // 末端执行器目标X坐标
     float end_aim_y; // 末端执行器目标Y坐标
 
+    float planned_target_x; // 本次规划锁定的用户目标X（快照，不被IK修改）
+    float planned_target_y; // 本次规划锁定的用户目标Y（快照，不被IK修改）
 
 
     float origin_point_x_offset ; // 原点X坐标偏移
@@ -90,14 +92,14 @@ typedef struct {
 // 轨迹规划器状态机
 typedef struct {
     TrajectorySegment current_segment;
-    float start_time; // 当前段开始的时间戳 (ms)
+    uint32_t start_time; /* HAL_GetTick() snapshot; uint32 arithmetic is wrap-safe */
     bool is_running;  // 状态机运行标志
 } TrajectoryPlanner;
 
-//轨迹规划器
+//轨迹规划器（关节空间）
 typedef struct {
-    TrajectoryPlanner planner_x;
-    TrajectoryPlanner planner_y;
+    TrajectoryPlanner planner_j1; /* joint 1 servo-step trajectory */
+    TrajectoryPlanner planner_j2; /* joint 2 servo-step trajectory */
     float last_cmd_x;
     float last_cmd_y;
     bool initialized;
