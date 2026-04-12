@@ -3,15 +3,15 @@
 #include "DJI_motor.h"
 #include "variables.h"
 #include <stdbool.h>
+#include "user_lib.h"
 
 extern s_Dji_motor_data_t DJI_motor_3508;
-
+extern ramp_function_source_t pump_ramp;
 
 void pump_M3508_init(void)
 {
     s_Dji_motor_config(&DJI_motor_3508, 1, &hcan1);
-
-    DJI_motor_SPEED_PID_init(&DJI_motor_3508, 16.0f, 1.2, 0.0, 1000, 14000);
+    DJI_motor_SPEED_PID_init(&DJI_motor_3508, 13.0f, 1.2, 0.0, 1000, 14000);
 }
 
 void pump_speed_set(s_Dji_motor_data_t *motor_data,float target_speed)

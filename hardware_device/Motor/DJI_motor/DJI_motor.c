@@ -92,6 +92,7 @@ void DJI_motor_3508_recevie(s_Dji_motor_data_t *motor_data, uint8_t *RxDate)
         	motor_data->back_position    =		RxDate[0]<<8 | RxDate[1];
         	motor_data->back_motor_speed =		RxDate[2]<<8 | RxDate[3];
         	motor_data->back_current     = 	    RxDate[4]<<8 | RxDate[5];
+            motor_data->temperature      =      RxDate[6];
             continue_motor_pos(motor_data);
 }
 

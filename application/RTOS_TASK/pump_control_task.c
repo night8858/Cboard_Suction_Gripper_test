@@ -16,7 +16,7 @@ void pump_control_task(void const * argument)
     {
         pump_speed_set(3000.0f);  ///不建议太大
         //heartbeat_kick(HB_TASK_PUMP, HAL_GetTick());
-        osDelay(5);
+        osDelay(4);
     }
     /* USER CODE END pump_control_task */
 

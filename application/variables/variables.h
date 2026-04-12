@@ -7,6 +7,7 @@
 #include "DJI_motor.h"
 #include "arm_control.h"
 #include "Planar_Robot_Arm.h"
+#include "user_lib.h"
 
 #define APP_SERVO_COUNT 8
 #define APP_SOLENOID_COUNT 2

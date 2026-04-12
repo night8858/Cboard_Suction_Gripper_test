@@ -72,6 +72,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/route_planner.c
     application/variables/variables.c
     application/Algorithm/PID.c
+    application/Algorithm/user_lib.c
     # Add user sources here
 )
 

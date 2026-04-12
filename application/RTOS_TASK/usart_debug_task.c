@@ -30,6 +30,11 @@ void usartr_debug_task(void const *argument)
   /* Infinite loop */
 
   for (;;) {
+
+      uart_dma_printf(&huart6, "%d,%d\n", 
+                      DJI_motor_3508.back_motor_speed, 
+                      DJI_motor_3508.temperature);
+
     // uart_dma_printf(
     //     &huart6, "%4.3f,%4.3f,%4.3f,%4.3f,%4.3f,%4.3f\n",
     //     real_motor_angle.Joint1_angle, real_motor_angle.Joint2_angle,
@@ -72,7 +77,7 @@ void usartr_debug_task(void const *argument)
     //     real_arm_terminal.terminal_X, real_arm_terminal.terminal_Y,
     //     real_arm_terminal.terminal_Z, real_arm_terminal.terminal_YAW,
     //     real_arm_terminal.terminal_PITCH, real_arm_terminal.terminal_ROLL);
-    //   heartbeat_kick(HB_TASK_DEBUG, HAL_GetTick());
+
       // uart_dma_printf(&huart6, "%f,%f,%f,%f,%f,%f\n", 
       //                 Arm_RB.current_joint_angles[0], 
       //                 Arm_RB.current_joint_angles[1],
@@ -92,17 +97,17 @@ void usartr_debug_task(void const *argument)
         //                 Arm_RB.end_effector_x,
         //                 Arm_RB.end_effector_y);
 
-                uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
-                        Arm_LF.end_effector_x, 
-                        Arm_LF.end_effector_y,
-                        Arm_LF.target_joint_angles[0],
-                        Arm_LF.target_joint_angles[1],
-                        Arm_LF.target_servo_positions[0],
-                        Arm_LF.target_servo_positions[1],
-                        Arm_LF.current_joint_angles[0],
-                        Arm_LF.current_joint_angles[1],
-                        Arm_LF.current_servo_positions[0],
-                        Arm_LF.current_servo_positions[1]);
+                // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
+                //         Arm_LF.end_effector_x, 
+                //         Arm_LF.end_effector_y,
+                //         Arm_LF.target_joint_angles[0],
+                //         Arm_LF.target_joint_angles[1],
+                //         Arm_LF.target_servo_positions[0],
+                //         Arm_LF.target_servo_positions[1],
+                //         Arm_LF.current_joint_angles[0],
+                //         Arm_LF.current_joint_angles[1],
+                //         Arm_LF.current_servo_positions[0],
+                //         Arm_LF.current_servo_positions[1]);
 
                 // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%f,%f,%d,%d\n", 
                 //         Arm_RF.end_effector_x, 
