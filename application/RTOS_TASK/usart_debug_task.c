@@ -31,9 +31,9 @@ void usartr_debug_task(void const *argument)
 
   for (;;) {
 
-      uart_dma_printf(&huart6, "%d,%d\n", 
-                      DJI_motor_3508.back_motor_speed, 
-                      DJI_motor_3508.temperature);
+      // uart_dma_printf(&huart6, "%d,%d\n", 
+      //                 DJI_motor_3508.back_motor_speed, 
+      //                 DJI_motor_3508.temperature);
 
     // uart_dma_printf(
     //     &huart6, "%4.3f,%4.3f,%4.3f,%4.3f,%4.3f,%4.3f\n",
@@ -144,6 +144,16 @@ void usartr_debug_task(void const *argument)
                 //         Arm_RF.current_joint_angles[1],
                 //         Arm_RF.current_servo_positions[0],
                 //         Arm_RF.current_servo_positions[1]);
+
+                uart_dma_printf(&huart6, "%d,%d,%d,%d,%d,%d,%d,%d\n", 
+                        Arm_LF.target_servo_positions[0], 
+                        Arm_LF.target_servo_positions[1],
+                        Arm_RF.target_servo_positions[0],
+                        Arm_RF.target_servo_positions[1],
+                        Arm_LB.target_servo_positions[0],
+                        Arm_LB.target_servo_positions[1],
+                        Arm_RB.target_servo_positions[0],
+                        Arm_RB.target_servo_positions[1]);
 
       osDelay(4);
   }

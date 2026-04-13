@@ -11,6 +11,11 @@
 
 #include "planar_robot_arm.h"
 
+
+
+/// 机械臂控制任务
+/// 负责机械臂的整体控制流程，包括任务规划、运动学计算、轨迹规划、关节控制和位置反馈等。
+/// 目前是控制四个机械臂的代码 
 void arm_control_task(void *argument)
 {
     // arm_config_init();
