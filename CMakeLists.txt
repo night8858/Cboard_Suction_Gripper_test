@@ -70,6 +70,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/Planar_Robot_Arm.c
     application/Gripper/pump_control.c
     application/Gripper/route_planner.c
+    application/Gripper/gimbal.c
+    application/Gripper/command_decode.c
     application/variables/variables.c
     application/Algorithm/PID.c
     application/Algorithm/user_lib.c
@@ -93,6 +95,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     bsp/usart
     bsp/led
     bsp/solenoid
+    bsp/virtual_serial_port
     # Add user defined include paths
 )
 

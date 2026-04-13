@@ -1074,7 +1074,6 @@ bool controlA_loop(void)
     ok &= arm_control_step(&Arm_LB, g_arm_elbow_up[2], Arm_LB.end_effector_x, Arm_LB.end_effector_y);
     ok &= arm_control_step(&Arm_RB, g_arm_elbow_up[3], Arm_RB.end_effector_x, Arm_RB.end_effector_y);
 #endif
-
     return ok;
 
 }

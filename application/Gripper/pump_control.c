@@ -21,7 +21,7 @@ void pump_speed_set(s_Dji_motor_data_t *motor_data,float target_speed)
 }
 
 
-
+//c板无法控制电磁阀，暂时不使用该函数，等待移植到stm32f405后再完善
 void Solenoid_Valve_init(void)
 {
     // 初始化电磁阀控制引脚
@@ -33,12 +33,11 @@ void Solenoid_Valve_control(uint8_t ID , bool state)
 {
     // 控制电磁阀的开关
     // 例如：HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, on ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    if (state) {
-        // 打开电磁阀
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-    } else {
-        // 关闭电磁阀
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-    
-    }
+    // if (state) {
+    //     // 打开电磁阀
+    //     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+    // } else {
+    //     // 关闭电磁阀
+    //     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+    // }
 }

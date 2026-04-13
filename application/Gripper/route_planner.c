@@ -14,4 +14,5 @@ void route_planner_calculate_coefficients(Cubic_Polynomial *polynomial)
     polynomial->a1 = polynomial->v0;
     polynomial->a2 = 3.0f * (polynomial->qf - polynomial->q0) / (polynomial->tf - polynomial->t0) - 2.0f * polynomial->v0 - polynomial->vf;
     polynomial->a3 = 2.0f * (polynomial->q0 - polynomial->qf) / (polynomial->tf - polynomial->t0) + polynomial->v0 + polynomial->vf;
+
 }
