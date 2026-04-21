@@ -29,7 +29,6 @@
 /* USER CODE BEGIN Includes */
 #include "bsp_can.h"
 #include "bsp_usart.h"
-#include "DT7.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

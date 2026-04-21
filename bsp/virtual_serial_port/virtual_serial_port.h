@@ -9,6 +9,16 @@
 void vcp_init(void);
 
 /**
+ * @brief 查询虚拟串口是否已与上位机连通
+ *
+ * 判定依据：USB 设备状态是否为 USBD_STATE_CONFIGURED。
+ * 返回 1 表示可进行 CDC 收发，返回 0 表示未连通或尚未枚举完成。
+ *
+ * @return 1=已连通，0=未连通
+ */
+uint8_t vcp_is_connected(void);
+
+/**
  * @brief 通过 USB VCP 发送数据（内部封装 CDC_Transmit_FS，USB 忙时最多重试3次）
  * @param buf  待发送数据缓冲区指针
  * @param len  发送字节数

@@ -1,4 +1,5 @@
 #include "variables.h"
+#include "gimbal.h"
 
 /* 全局变量定义区 */
 
@@ -13,6 +14,9 @@ Planar_Robot_Arm Arm_RF;       //右前
 Planar_Robot_Arm Arm_LB;       //左后
 Planar_Robot_Arm Arm_RB;       //右后
 
+//云台实例定义
+Gimbal_s Gimbal;
+
 //斜波启动函数。
 ramp_function_source_t pump_ramp;
 
@@ -20,15 +24,9 @@ volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 volatile uint8_t g_system_alarm_active = 0;
 
 
-solenoid_state_t g_solenoid_state;
+Solenoid_state_s solenoid_state;
 
-led_strip_state_t g_led_strip_state = {
-		.brightness = 24,
-		.effect_mode = 0,
-		.frame_period_ms = 30,
-};
-
-float g_motor_target_speed = 1000.0f;
+//float g_motor_target_speed = 1000.0f;
 
 /* 全局变量定义区 */
 

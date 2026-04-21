@@ -50,8 +50,9 @@
 osThreadId defaultTaskHandle;
 osThreadId RobotArm_TASKHandle;
 osThreadId LED_TASKHandle;
-osThreadId Pump_control_TAHandle;
+osThreadId Pump_controlHandle;
 osThreadId debug_TASKHandle;
+osThreadId data_update_TASHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -63,6 +64,7 @@ void arm_control_task(void const * argument);
 void led_indicate_task(void const * argument);
 void pump_control_task(void const * argument);
 void usartr_debug_task(void const * argument);
+void update_task(void const * argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -111,24 +113,28 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityAboveNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of RobotArm_TASK */
-  osThreadDef(RobotArm_TASK, arm_control_task, osPriorityNormal, 0, 1024);
+  osThreadDef(RobotArm_TASK, arm_control_task, osPriorityAboveNormal, 0, 1024);
   RobotArm_TASKHandle = osThreadCreate(osThread(RobotArm_TASK), NULL);
 
   /* definition and creation of LED_TASK */
   osThreadDef(LED_TASK, led_indicate_task, osPriorityIdle, 0, 256);
   LED_TASKHandle = osThreadCreate(osThread(LED_TASK), NULL);
 
-  /* definition and creation of Pump_control_TA */
-  osThreadDef(Pump_control_TA, pump_control_task, osPriorityNormal, 0, 256);
-  Pump_control_TAHandle = osThreadCreate(osThread(Pump_control_TA), NULL);
+  /* definition and creation of Pump_control */
+  osThreadDef(Pump_control, pump_control_task, osPriorityAboveNormal, 0, 512);
+  Pump_controlHandle = osThreadCreate(osThread(Pump_control), NULL);
 
   /* definition and creation of debug_TASK */
-  osThreadDef(debug_TASK, usartr_debug_task, osPriorityNormal, 0, 256);
+  osThreadDef(debug_TASK, usartr_debug_task, osPriorityAboveNormal, 0, 256);
   debug_TASKHandle = osThreadCreate(osThread(debug_TASK), NULL);
+
+  /* definition and creation of data_update_TAS */
+  osThreadDef(data_update_TAS, update_task, osPriorityAboveNormal, 0, 256);
+  data_update_TASHandle = osThreadCreate(osThread(data_update_TAS), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -143,7 +149,7 @@ void MX_FREERTOS_Init(void) {
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
+__weak void StartDefaultTask(void const * argument)
 {
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
@@ -226,6 +232,24 @@ __weak void usartr_debug_task(void const * argument)
     osDelay(1);
   }
   /* USER CODE END usartr_debug_task */
+}
+
+/* USER CODE BEGIN Header_update_task */
+/**
+* @brief Function implementing the data_update_TAS thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_update_task */
+__weak void update_task(void const * argument)
+{
+  /* USER CODE BEGIN update_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END update_task */
 }
 
 /* Private application code --------------------------------------------------*/

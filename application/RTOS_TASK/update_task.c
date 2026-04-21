@@ -5,14 +5,10 @@
 #include "bsp_usart.h"
 #include "usart.h"
 #include "variables.h"
+#include "command_decode.h"
 
-#define HB_TIMEOUT_CTRL_MS 200U
-#define HB_TIMEOUT_SLOW_MS 1000U
 
-void heartbeat_monitor_task(void const *argument) {
-  uint32_t now = 0;
-
-  (void)argument;
+void update_task(void const *argument) {
   osDelay(1500);
 
   for (;;) {
@@ -35,8 +31,8 @@ void heartbeat_monitor_task(void const *argument) {
     //                   heartbeat_get_age_ms(HB_TASK_SOLENOID, now),
     //                   heartbeat_get_age_ms(HB_TASK_LED_STRIP, now));
     // }
+      cmd_send_feedback();
+      osDelay(20);
 
-    // heartbeat_kick(HB_TASK_MONITOR, now);
-    osDelay(20);
   }
 }

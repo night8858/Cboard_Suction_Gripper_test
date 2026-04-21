@@ -8,9 +8,10 @@
 #include "arm_control.h"
 #include "Planar_Robot_Arm.h"
 #include "user_lib.h"
+#include "pneumatic_control.h"
+#include "gimbal.h"
 
 #define APP_SERVO_COUNT 8
-#define APP_SOLENOID_COUNT 2
 #define APP_LED_STRIP_PIXELS 30
 
 typedef enum {
@@ -26,23 +27,7 @@ typedef enum {
 	HB_TASK_COUNT
 } heartbeat_task_id_t;
 
-typedef struct {
-	uint8_t id[APP_SERVO_COUNT];
-	int16_t target_position[APP_SERVO_COUNT];
-	uint16_t target_speed[APP_SERVO_COUNT];
-	uint8_t target_acc[APP_SERVO_COUNT];
-} servo_bus_state_t;
 
-typedef struct {
-	uint8_t command[APP_SOLENOID_COUNT];
-	uint8_t state[APP_SOLENOID_COUNT];
-} solenoid_state_t;
-
-typedef struct {
-	uint8_t brightness;
-	uint8_t effect_mode;
-	uint16_t frame_period_ms;
-} led_strip_state_t;
 
 extern s_DMmotor_data_t DMmotor_4340[3];
 extern s_DMmotor_data_t DMmotor_4310[3];
@@ -53,12 +38,15 @@ extern Planar_Robot_Arm Arm_RF;       //右前
 extern Planar_Robot_Arm Arm_LB;       //左后
 extern Planar_Robot_Arm Arm_RB;       //右后
 
+extern Gimbal_s Gimbal;
+
+
+extern Solenoid_state_s solenoid_state;   //电磁阀状态结构体
+
+
 extern volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 extern volatile uint8_t g_system_alarm_active;
 
-extern servo_bus_state_t g_servo_state;
-extern solenoid_state_t g_solenoid_state;
-extern led_strip_state_t g_led_strip_state;
 extern float g_motor_target_speed;
 
 void heartbeat_kick(heartbeat_task_id_t task_id, uint32_t tick_ms);

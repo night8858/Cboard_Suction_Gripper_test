@@ -57,19 +57,16 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     bsp/can/bsp_can.c
     bsp/usart/bsp_usart.c
     bsp/led/bsp_led.c
-    bsp/led/bsp_led_strip.c
-    bsp/solenoid/bsp_solenoid.c
+    bsp/led/bsp_led_strip.c 
+    bsp/virtual_serial_port/virtual_serial_port.c   
     application/RTOS_TASK/arm_control_task.c
     application/RTOS_TASK/pump_control_task.c
     application/RTOS_TASK/usart_debug_task.c
     application/RTOS_TASK/led_indicate_task.c
-    application/RTOS_TASK/solenoid_control_task.c
-    application/RTOS_TASK/led_strip_task.c
-    application/RTOS_TASK/heartbeat_monitor_task.c
+    application/RTOS_TASK/update_task.c
     application/Gripper/arm_control.c
     application/Gripper/Planar_Robot_Arm.c
-    application/Gripper/pump_control.c
-    application/Gripper/route_planner.c
+    application/Gripper/pneumatic_control.c
     application/Gripper/gimbal.c
     application/Gripper/command_decode.c
     application/variables/variables.c

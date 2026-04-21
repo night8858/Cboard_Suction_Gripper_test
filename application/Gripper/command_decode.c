@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "command_decode.h"
@@ -5,7 +6,6 @@
 #include "variables.h"
 #include "Planar_Robot_Arm.h"
 #include "gimbal.h"
-#include "bsp_solenoid.h"
 
 //帧头AA  01 代表 下位机向上位机的反馈，预计设定100hz
 //帧头 AA 01
@@ -44,6 +44,7 @@ extern Planar_Robot_Arm Arm_RF;
 extern Planar_Robot_Arm Arm_LB;
 extern Planar_Robot_Arm Arm_RB;
 extern Gimbal_s Gimbal;
+extern Solenoid_state_s solenoid_state;
 
 /* ════════════════════════════════════════════════════════════════
  * CRC8 查找表（poly = 0x07，SMBUS）
@@ -144,6 +145,11 @@ static inline int16_t float_to_int16(float v)
  */
 void cmd_send_feedback(void)
 {
+    /* 未与上位机连通时，不执行反馈帧组包与发送 */
+    if (vcp_is_connected() == 0u) {
+        return;
+    }
+
     uint8_t frame[FRAME_FEEDBACK_LEN];
     uint8_t idx = 0;
 
@@ -151,9 +157,15 @@ void cmd_send_feedback(void)
     frame[idx++] = FRAME_HEADER_BYTE1;   /* 0xAA */
     frame[idx++] = CMD_FEEDBACK;          /* 0x01 */
 
+    uint16_t a = 0x1123u; /* 测试用，验证大端序存储 */
+
     /* 四路机械臂末端坐标（float→int16_t，mm，大端序） */
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_x)); idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_y)); idx += 2;
+    // PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_x)); idx += 2;
+    // PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_y)); idx += 2;
+
+    PUT_INT16_BE(frame, idx, float_to_int16(a)); idx += 2;
+    PUT_INT16_BE(frame, idx, float_to_int16(a)); idx += 2;
+
 
     PUT_INT16_BE(frame, idx, float_to_int16(Arm_RF.end_effector_x)); idx += 2;
     PUT_INT16_BE(frame, idx, float_to_int16(Arm_RF.end_effector_y)); idx += 2;
@@ -172,10 +184,10 @@ void cmd_send_feedback(void)
      *   [22]: bits[0]=valve1状态, bits[1]=valve2状态
      *   [23]: bits[0]=valve3状态, bits[1]=valve4状态
      */
-    frame[idx++] = (uint8_t)((g_solenoid_state.state[0] & 0x01u) |
-                              ((g_solenoid_state.state[1] & 0x01u) << 1));
-    frame[idx++] = (uint8_t)((g_solenoid_state.state[2] & 0x01u) |
-                              ((g_solenoid_state.state[3] & 0x01u) << 1));
+    frame[idx++] = (uint8_t)((solenoid_state.state[0] & 0x01u) |
+                              ((solenoid_state.state[1] & 0x01u) << 1));
+    frame[idx++] = (uint8_t)((solenoid_state.state[2] & 0x01u) |
+                              ((solenoid_state.state[3] & 0x01u) << 1));
 
     /* 微动开关状态（暂填0，预留字节） */
     frame[idx++] = 0x00u;  /* 微动开关1/2，待接入实际GPIO */
@@ -379,10 +391,10 @@ static void handle_valve_control(const uint8_t *data)
     }
 
     /* 更新全局电磁阀指令状态 */
-    g_solenoid_state.command[valve_id] = state;
+    solenoid_state.command[valve_id] = state;
 
     /* 直接驱动硬件（bsp_solenoid 通道与 valveID 0-based 对应） */
-    bsp_solenoid_set(valve_id, state);
+    //bsp_solenoid_set(valve_id, state);
 }
 
 /**
@@ -437,6 +449,11 @@ static void cmd_dispatch_frame(const uint8_t *buf, uint8_t len)
 void cmd_rx_process(void)
 {
     uint8_t byte;
+
+    /* 未连通时不执行接收解析，直接返回 */
+    if (vcp_is_connected() == 0u) {
+        return;
+    }
 
     /* 一次性消耗当前缓冲区中所有字节，避免单帧跨周期积压 */
     while (vcp_rx_read_byte(&byte)) {

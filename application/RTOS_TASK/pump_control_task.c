@@ -5,7 +5,6 @@
 
 #include "DJI_motor.h"
 #include "variables.h"
-#include "pump_control.h"
 
 void pump_control_task(void const * argument)
 {

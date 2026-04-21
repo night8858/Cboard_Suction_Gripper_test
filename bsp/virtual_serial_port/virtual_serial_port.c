@@ -1,5 +1,7 @@
 #include "virtual_serial_port.h"
 #include "usbd_cdc_if.h"
+#include "usb_device.h"
+#include "usbd_def.h"
 #include "cmsis_os.h"
 
 /* ────────────────────────────────────────────────────────────────
@@ -12,18 +14,75 @@ static uint8_t  s_rx_buf[VCP_RX_BUF_SIZE]; /* 环形缓冲区存储 */
 static uint8_t  s_rx_head = 0;              /* 写指针（由回调写入） */
 static uint8_t  s_rx_tail = 0;              /* 读指针（由任务读取） */
 
+/* 连通状态缓存：1=上一次检测为已连通，0=未连通 */
+static uint8_t  s_last_connected = 0u;
+
+extern USBD_HandleTypeDef hUsbDeviceFS;
+
 /* USB 发送重试次数上限 */
 #define VCP_TX_RETRY_MAX  3u
 
 /* ──────────────────────────────────────────────────────────────── */
 
 /**
+ * @brief 判断 USB CDC 当前是否处于可通信状态
+ *
+ * 条件说明：
+ * 1) USB 设备已经进入 CONFIGURED 状态（枚举完成）；
+ * 2) CDC 类数据结构已就绪（pClassData 非空）。
+ *
+ * @return 1=可通信，0=不可通信
+ */
+static uint8_t vcp_is_usb_ready(void)
+{
+    if ((hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED) && (hUsbDeviceFS.pClassData != NULL)) {
+        return 1u;
+    }
+    return 0u;
+}
+
+/**
+ * @brief 刷新连通状态并在断连沿触发时清空接收缓冲
+ *
+ * 断连后清空缓冲可避免：
+ * - 上位机重新连接时误处理旧数据；
+ * - 业务层继续消费“历史残留字节”。
+ *
+ * @return 1=当前已连通，0=当前未连通
+ */
+static uint8_t vcp_refresh_connection(void)
+{
+    uint8_t connected = vcp_is_usb_ready();
+
+    if ((s_last_connected == 1u) && (connected == 0u)) {
+        /* 检测到由“连通→断开”的边沿，立即丢弃历史接收数据 */
+        s_rx_head = 0u;
+        s_rx_tail = 0u;
+    }
+
+    s_last_connected = connected;
+    return connected;
+}
+
+/**
+ * @brief 查询虚拟串口是否已与上位机连通
+ * @return 1=已连通，0=未连通
+ */
+uint8_t vcp_is_connected(void)
+{
+    return vcp_refresh_connection();
+}
+
+/**
  * @brief 初始化虚拟串口模块（环形缓冲区清零）
  */
 void vcp_init(void)
 {
-    s_rx_head = 0;
-    s_rx_tail = 0;
+    s_rx_head = 0u;
+    s_rx_tail = 0u;
+
+    /* 记录初始化时刻的连通状态，避免首次调用出现错误边沿判断 */
+    s_last_connected = vcp_is_usb_ready();
 }
 
 /**
@@ -42,7 +101,17 @@ uint8_t vcp_transmit(const uint8_t *buf, uint16_t len)
         return 1;
     }
 
+    /* 未连通时直接返回失败，不进入 CDC 发送流程 */
+    if (vcp_refresh_connection() == 0u) {
+        return 1;
+    }
+
     do {
+        /* 重试过程中若检测到断连，立即退出 */
+        if (vcp_refresh_connection() == 0u) {
+            return 1;
+        }
+
         result = CDC_Transmit_FS((uint8_t *)buf, len);
         if (result == 0 /* USBD_OK */) {
             return 0;
@@ -67,6 +136,11 @@ void vcp_on_receive(const uint8_t *buf, uint32_t len)
         return;
     }
 
+    /* 未连通时不接收数据，确保业务层不会拿到无效字节流 */
+    if (vcp_refresh_connection() == 0u) {
+        return;
+    }
+
     for (uint32_t i = 0; i < len; i++) {
         uint8_t next_head = (uint8_t)(s_rx_head + 1u);
         if (next_head == s_rx_tail) {
@@ -85,6 +159,11 @@ void vcp_on_receive(const uint8_t *buf, uint32_t len)
  */
 uint8_t vcp_rx_read_byte(uint8_t *byte)
 {
+    /* 未连通时禁止读取，且在 vcp_refresh_connection 内部会处理断连清缓冲 */
+    if (vcp_refresh_connection() == 0u) {
+        return 0u;
+    }
+
     if (byte == NULL || s_rx_tail == s_rx_head) {
         return 0; /* 缓冲区为空 */
     }
