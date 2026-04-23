@@ -27,29 +27,30 @@
 /**
  * 各帧总长度（字节）: 帧头(2) + 数据区 + 帧尾(2) + CRC8(1)
  *
- * AA 01 反馈帧（29字节）:
+ * AA 01 反馈帧（53字节）:
  *   AA 01
- *   LFx_H LFx_L LFy_H LFy_L   (4B)
- *   RFx_H RFx_L RFy_H RFy_L   (4B)
- *   LBx_H LBx_L LBy_H LBy_L   (4B)
- *   RBx_H RBx_L RBy_H RBy_L   (4B)
- *   YAW_H YAW_L PITCH_H PITCH_L (4B)
- *   SOL12 SOL34 SW12 SW34      (4B)
+ *   LFx(4B) LFy(4B)
+ *   RFx(4B) RFy(4B)
+ *   LBx(4B) LBy(4B)
+ *   RBx(4B) RBy(4B)
+ *   YAW(4B) PITCH(4B)
+ *   valve0 valve1 valve2 valve3 (4B)
+ *   sw0 sw1 sw2 sw3             (4B)
  *   FF EE CRC8
  */
-#define FRAME_FEEDBACK_LEN   29u
+#define FRAME_FEEDBACK_LEN   53u
 
 /**
- * AA 02 机械臂控制帧（10字节）:
- *   AA 02 armID x_H x_L y_H y_L FF EE CRC8
+ * AA 02 机械臂控制帧（14字节）:
+ *   AA 02 armID x(4B) y(4B) FF EE CRC8
  */
-#define FRAME_ARM_CTRL_LEN   10u
+#define FRAME_ARM_CTRL_LEN   14u
 
 /**
- * AA 03 云台控制帧（10字节）:
- *   AA 03 gimbalID YAW_H YAW_L PITCH_H PITCH_L FF EE CRC8
+ * AA 03 云台控制帧（14字节）:
+ *   AA 03 gimbalID yaw(4B) pitch(4B) FF EE CRC8
  */
-#define FRAME_GIMBAL_CTRL_LEN 10u
+#define FRAME_GIMBAL_CTRL_LEN 14u
 
 /**
  * AA 04 电磁阀控制帧（7字节）:
@@ -75,8 +76,8 @@
  */
 typedef struct {
     uint8_t arm_id;   /* 机械臂 ID，取值 ARM_LF ~ ARM_RB */
-    int16_t target_x; /* 末端目标 X 坐标，单位 mm */
-    int16_t target_y; /* 末端目标 Y 坐标，单位 mm */
+    float target_x;   /* 末端目标 X 坐标，单位 mm */
+    float target_y;   /* 末端目标 Y 坐标，单位 mm */
 } cmd_arm_t;
 
 /**
@@ -84,8 +85,8 @@ typedef struct {
  */
 typedef struct {
     uint8_t gimbal_id; /* 云台 ID（当前仅0） */
-    int16_t target_yaw;   /* 目标 YAW 角，单位度 */
-    int16_t target_pitch; /* 目标 PITCH 角，单位度 */
+    float target_yaw;     /* 目标 YAW 角，单位度 */
+    float target_pitch;   /* 目标 PITCH 角，单位度 */
 } cmd_gimbal_t;
 
 /**
@@ -95,6 +96,17 @@ typedef struct {
     uint8_t valve_id; /* 电磁阀 ID，取值 0~3 */
     uint8_t state;    /* 状态：1=打开，0=关闭 */
 } cmd_valve_t;
+
+/**
+ * @brief AA 05：气泵控制命令
+ */
+typedef struct{
+
+    uint8_t pump_state;
+    float speed;
+}PC_pump_instruction_s;
+
+
 
 /* ════════════════════════════════════════════════════════════════
  * 公开接口

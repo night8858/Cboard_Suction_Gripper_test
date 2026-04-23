@@ -51,13 +51,12 @@ void pump_speed_set(float target_speed)
 //         g_solenoid_state.state[i] = 1u;
 //         //HAL_GPIO_WritePin(s_solenoid_ports[i], s_solenoid_pins[i], GPIO_PIN_RESET);
 //     }
-
 // }
 
 
 // void Solenoid_Valve_control(uint8_t id, uint8_t state)
 // {
-//     if (id >= APP_SOLENOID_COUNT) {
+//     if (id >= 4) {
 //         return;
 //     }
 
@@ -80,5 +79,5 @@ void pump_speed_set(float target_speed)
 //             Solenoid_Valve_control(i, command);
 //         }
 //     }
-
 // }
+

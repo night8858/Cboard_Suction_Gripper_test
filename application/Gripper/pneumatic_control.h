@@ -25,7 +25,6 @@ typedef struct
     uint8_t command[4];
     uint8_t state[4];
 
-
 }Solenoid_state_s;
 
 

@@ -69,6 +69,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/pneumatic_control.c
     application/Gripper/gimbal.c
     application/Gripper/command_decode.c
+    application/Gripper/block_inspect.c
     application/variables/variables.c
     application/Algorithm/PID.c
     application/Algorithm/user_lib.c

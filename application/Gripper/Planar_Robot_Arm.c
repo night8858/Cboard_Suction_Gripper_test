@@ -17,12 +17,7 @@
 /*
 DH参数
 */
-//选择规划方式
-/* 轨迹插补模式选择：
- *   注释此宏 → 五次多项式插补（默认，平滑加减速）
- *   定义此宏 → 线性插补（匀速，计算量更小）
- */
-#define TRAJ_LINEAR_INTERPOLATION
+/* 轨迹规划固定使用五次多项式插补（关节空间平滑启停）。 */
 
 
 #ifndef M_PI
@@ -63,12 +58,6 @@ static float rad_to_deg(float rad)
     return rad * (180.0f / (float)M_PI);
 }
 
-// 将任意角度统一为“相对 x 正半轴”的有符号夹角，范围 [-180, 180]。
-static float normalize_to_x_positive_axis_deg(float deg)
-{
-    float rad = deg_to_rad(deg);
-    return rad_to_deg(atan2f(sinf(rad), cosf(rad)));
-}
 
 // 外部实际坐标系与内部运动学坐标系的 Y 方向相反。
 static float y_external_to_kinematics(float y_external)
@@ -336,13 +325,12 @@ void get_arm_servo_pos(Planar_Robot_Arm *arm)
 }
 
 // 机械臂正运动学计算函数，根据各关节角度计算末端执行器的位姿[good]
-void planar_arm_forward_kinematics(Planar_Robot_Arm *arm)
+static void planar_arm_forward_kinematics_from_cache(Planar_Robot_Arm *arm)
 {
     if (arm == NULL) {
         return;
     }
-    get_arm_servo_pos(arm);  // 获取当前舵机位置并更新关节角度信息（初始化时使用）
-    // 主控制环中由 batch_read_all_servo_pos() 替代此调用
+
     float theta1, theta2, x_kinematics, y_kinematics, theta1_geom;
     switch (arm->arm_id) 
     {
@@ -397,6 +385,17 @@ void planar_arm_forward_kinematics(Planar_Robot_Arm *arm)
                           y_kinematics,
                           &arm->end_effector_x,
                           &arm->end_effector_y);
+}
+
+void planar_arm_forward_kinematics(Planar_Robot_Arm *arm)
+{
+    if (arm == NULL) {
+        return;
+    }
+
+    /* 对外接口仍保持“先读舵机再做正解”的行为，保证兼容旧调用路径。 */
+    get_arm_servo_pos(arm);
+    planar_arm_forward_kinematics_from_cache(arm);
 }
 
 //需要修正偏置
@@ -737,6 +736,16 @@ bool planar_robot_arm_set_target_with_elbow(arm_id_e arm_id,
     return true;
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 // 计算五次多项式轨迹系数，使轨迹满足起终点的位置/速度/加速度边界条件。
 static void solve_quintic_coefficients(float p0,
                                        float v0,
@@ -796,7 +805,6 @@ static void plan_new_move(TrajectoryPlanner *planner,
         return;
     }
 
-#ifndef TRAJ_LINEAR_INTERPOLATION
     /* 五次多项式插补：满足起终点位置/速度/加速度边界条件 */
     solve_quintic_coefficients(start_pos,
                                start_vel,
@@ -806,15 +814,6 @@ static void plan_new_move(TrajectoryPlanner *planner,
                                end_acc,
                                duration_sec,
                                planner->current_segment.coeffs);
-#else
-    /* 线性插补：p(t) = p0 + (pf - p0) / T * t，忽略初速度边界条件 */
-    planner->current_segment.coeffs[0] = start_pos;
-    planner->current_segment.coeffs[1] = (end_pos - start_pos) / duration_sec;
-    planner->current_segment.coeffs[2] = 0.0f;
-    planner->current_segment.coeffs[3] = 0.0f;
-    planner->current_segment.coeffs[4] = 0.0f;
-    planner->current_segment.coeffs[5] = 0.0f;
-#endif
 }
 
 // 按当前时间采样轨迹，返回当前位置/速度/加速度；轨迹结束时自动钳位到终点。
@@ -897,17 +896,6 @@ static bool target_changed(const ArmTrajectoryContext *ctx, float x, float y)
            (fabsf(y - ctx->last_cmd_y) > CONTROLA_REPLAN_EPS_MM);
 }
 
-/* 目标偶差超过此阈値即强制重规划，防止轨迹执行期间目标漂移过大导致卡死。 */
-#define CONTROLA_EMERGENCY_REPLAN_MM 200.0f
-static bool target_emergency(const ArmTrajectoryContext *ctx, float x, float y)
-{
-    if (ctx == NULL) {
-        return false;
-    }
-    return (fabsf(x - ctx->last_cmd_x) > CONTROLA_EMERGENCY_REPLAN_MM) ||
-           (fabsf(y - ctx->last_cmd_y) > CONTROLA_EMERGENCY_REPLAN_MM);
-}
-
 // 对单臂执行“反馈 -> 必要时重规划 -> 轨迹采样 -> 控制输出”。
 static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_up, uint32_t now_ms)
 {
@@ -920,26 +908,14 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
         return false;
     }
 
-    /* 当前轨迹是否仍在运行 */
-    bool traj_running = ctx->initialized &&
-                        (ctx->planner_j1.is_running || ctx->planner_j2.is_running);
-
-    /* 重规划策略：
-     *  1. 首次初始化
-     *  2. 轨迹已自然结束 且 目标发生变化 → 执行下一段规划
-     *  3. 轨迹运行中 但 目标偏差超出紧急阈値 → 强制重规划防卡死
-     * 轨迹执行期间忽略小幅目标更新，保持当前轨迹平滑运行。 */
-    bool need_replan = !ctx->initialized ||
-                       (!traj_running && target_changed(ctx, arm->end_aim_x, arm->end_aim_y)) ||
-                       (traj_running  && target_emergency(ctx, arm->end_aim_x, arm->end_aim_y));
+    /* 首次进入或目标变化时重规划；其余周期只做轨迹采样。 */
+    bool need_replan = (!ctx->initialized) || target_changed(ctx, arm->end_aim_x, arm->end_aim_y);
 
     if (need_replan) {
         /* Snapshot the user target BEFORE IK to prevent end_aim_x/y corruption
            from polluting the replan trigger check in subsequent cycles. */
         arm->planned_target_x = arm->end_aim_x;
         arm->planned_target_y = arm->end_aim_y;
-
-        read_one_arm_servo_pos(arm);
 
         if (arm->state == ARM_STATE_ERROR) {
             return false;
@@ -971,18 +947,11 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
             return false;
         }
 
-        // 重规划时继承当前轨迹速度，避免发生速度突变导致卡顿
+        /* 若上段轨迹仍在运行，继承当前采样速度以保持速度连续。 */
         float cur_vel_j1 = 0.0f, cur_vel_j2 = 0.0f;
-        if (ctx->initialized) {
+        if (ctx->initialized && (ctx->planner_j1.is_running || ctx->planner_j2.is_running)) {
             update_trajectory(&ctx->planner_j1, now_ms, NULL, &cur_vel_j1, NULL);
             update_trajectory(&ctx->planner_j2, now_ms, NULL, &cur_vel_j2, NULL);
-        }
-        /* Cap inherited velocity: max-speed quintic over 2048 steps in
-           CONTROLA_TRAJ_DURATION_S peaks at ~1.875*(2048/T) steps/s ~= 2400.           Clamp tighter to prevent overshooting on mid-motion replan. */
-        {
-            const float max_replan_vel = 1500.0f;
-            cur_vel_j1 = clampf(cur_vel_j1, -max_replan_vel, max_replan_vel);
-            cur_vel_j2 = clampf(cur_vel_j2, -max_replan_vel, max_replan_vel);
         }
 
         /* Plan quintic polynomial trajectories in joint (servo-step) space */
@@ -1017,6 +986,7 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
     arm->state = ARM_STATE_MOVING;
     return true;
 }
+
 
 bool controlA_loop(void)
 {
@@ -1057,7 +1027,13 @@ bool controlA_loop(void)
     }
 #endif
     // Phase 1: 批量读取全部舵机位置（8 次 ReadPos，集中完成）
-    //batch_read_all_servo_pos();
+    ok &= batch_read_all_servo_pos();
+
+    // Phase 1.5: 每周期基于最新反馈做正运动学，更新末端位置数据。
+    planar_arm_forward_kinematics_from_cache(&Arm_LF);
+    planar_arm_forward_kinematics_from_cache(&Arm_RF);
+    planar_arm_forward_kinematics_from_cache(&Arm_LB);
+    planar_arm_forward_kinematics_from_cache(&Arm_RB);
 
     // Phase 2: 四臂轨迹计算（纯计算，无 I/O）
     ok &= arm_control_step_with_trajectory(&Arm_LF, g_arm_elbow_up[0], now_ms);
@@ -1066,7 +1042,7 @@ bool controlA_loop(void)
     ok &= arm_control_step_with_trajectory(&Arm_RB, g_arm_elbow_up[3], now_ms);
 
     // Phase 3: 8 舵机单次同步写入
-    planar_arm_all_servo_run(&Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB);
+    ok &= planar_arm_all_servo_run(&Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB);
     
 #ifdef arm_FKIK_debug
     ok &= arm_control_step(&Arm_LF, g_arm_elbow_up[0], Arm_LF.end_effector_x, Arm_LF.end_effector_y);
@@ -1082,4 +1058,5 @@ bool controlA_loop(void)
 bool planar_arm_control_loop(void)
 {
     return controlA_loop();
+
 }

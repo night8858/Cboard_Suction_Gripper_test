@@ -4,35 +4,38 @@
 #include "command_decode.h"
 #include "virtual_serial_port.h"
 #include "variables.h"
+
 #include "Planar_Robot_Arm.h"
 #include "gimbal.h"
 
-//帧头AA  01 代表 下位机向上位机的反馈，预计设定100hz
+//帧头AA  01 代表 下位机向上位机的反馈，预计设定20hz
 //帧头 AA 01
-//           LFx高八位 LFy低八位 LFx高八位 LFy低八位 
-//           RFx高八位 RFx低八位 RFp高八位 RF低八位
-//           LBx高八位 LBx低八位 LBp高八位 LB低八位 
-//           RBx高八位 RBx低八位 RBp高八位 RB低八位 
-//           YAW高八位 YAW低八位 PITCH高八位 PITCH低八位
-//           电磁阀1/2状态 电磁阀3/4状态 微动开关1/2状态 微动开关3/4状态
+//           LFx占四个uint8_t LFy占四个uint8_t
+//           RFx占四个uint8_t RFy占四个uint8_t 
+//           LBx占四个uint8_t LBy占四个uint8_t 
+//           RBx占四个uint8_t RBy占四个uint8_t 
+//           YAW占四个uint8_t PITCH占四个uint8_t 
+//           四个电磁阀状态各占一个  四个微动开关各占一个
 //帧尾 FF EE
 // CRC8校验
 
-//armID共0-3，x高八位 y低八位 x高八位 y低八位 例如：AA 01 00 64 00 C8 代表机械臂0的末端位置为(100,200)，AA 01 01 2C 01 90 代表机械臂1的末端位置为(300,400)
+//armID共0-3，x高八位 y低八位 x高八位 y低八位 
 //帧头 AA 02 代表 上位机向下位机的机械臂控制命令
-//帧头 AA 02  armID  x高八位 y低八位 x高八位 y低八位 
+//帧头 AA 02  
+//armID  x占四个uint8_t    y占四个uint8_t     
 //帧尾 FF EE
 // CRC8校验
+//并在接收后转换为
 
 //gimbal共一个，id为0
 //帧头 AA 03 代表 上位机向下位机的云台控制命令
-//帧头 AA 03  gimbalID  YAW高八位 YAW低八位 PITCH高八位 PITCH低八位
+//帧头 AA 03  gimbalID  YAW四个uint8_t     PITCH四个uint8_t
 //帧尾 FF EE
 // CRC8校验
 
 //valveID共0-3，状态共0-1，例如：AA 04 01 01 代表控制电磁阀1打开，AA 04 01 00 代表控制电磁阀1关闭
 //帧头 AA 04 代表 上位机向下位机的电磁阀控制命令
-//帧头 AA 04  valveID  状态
+//帧头 AA 04  valveID  状态占个uint8_t
 //帧尾 FF EE
 // CRC8校验
 
@@ -45,6 +48,15 @@ extern Planar_Robot_Arm Arm_LB;
 extern Planar_Robot_Arm Arm_RB;
 extern Gimbal_s Gimbal;
 extern Solenoid_state_s solenoid_state;
+
+extern cmd_arm_t cmd_arm;
+extern cmd_gimbal_t amd_gimbal;
+extern cmd_valve_t cmd_valve;
+
+typedef union {
+    float f;
+    uint8_t b[4];
+} float_bytes_u;
 
 /* ════════════════════════════════════════════════════════════════
  * CRC8 查找表（poly = 0x07，SMBUS）
@@ -105,43 +117,40 @@ uint8_t crc8_calc(const uint8_t *data, uint16_t len)
     return crc;
 }
 
-/* ════════════════════════════════════════════════════════════════
- * 辅助宏：将 float 四舍五入为 int16_t，并拆分为高/低字节，最大绝对误差为0.5
- * ════════════════════════════════════════════════════════════════ */
-static inline int16_t float_to_int16(float v)
+static inline void put_float_le(uint8_t *buf, uint8_t *idx, float v)
 {
-    int32_t i = (int32_t)(v + (v >= 0.0f ? 0.5f : -0.5f));
-    if      (i >  32767) { i =  32767; }
-    else if (i < -32768) { i = -32768; }
-    return (int16_t)i;
+    float_bytes_u fb;
+    fb.f = v;
+    buf[(*idx)++] = fb.b[0];
+    buf[(*idx)++] = fb.b[1];
+    buf[(*idx)++] = fb.b[2];
+    buf[(*idx)++] = fb.b[3];
 }
 
-#define PUT_INT16_BE(buf, idx, val) \
-    do { \
-        (buf)[(idx)]     = (uint8_t)(((int16_t)(val)) >> 8); \
-        (buf)[(idx) + 1] = (uint8_t)(((int16_t)(val)) & 0xFFu); \
-    } while (0)
+static inline float get_float_le(const uint8_t *data)
+{
+    float_bytes_u fb;
+    fb.b[0] = data[0];
+    fb.b[1] = data[1];
+    fb.b[2] = data[2];
+    fb.b[3] = data[3];
+    return fb.f;
+}
 
 /* ════════════════════════════════════════════════════════════════
  * AA 01 反馈帧发送
  * ════════════════════════════════════════════════════════════════ */
 
 /**
- * @brief 发送 AA 01 状态反馈帧（MCU→Host，29字节，建议100Hz调用）
+ * @brief 发送 AA 01 状态反馈帧（MCU→Host，53字节，建议20Hz调用）
  *
  * 帧结构：
  *   [0]  0xAA  [1]  0x01
- *   [2-3]   LF x(int16 BE mm)   [4-5]   LF y
- *   [6-7]   RF x                [8-9]   RF y
- *   [10-11] LB x                [12-13] LB y
- *   [14-15] RB x                [16-17] RB y
- *   [18-19] YAW(int16 BE 度)    [20-21] PITCH
- *   [22] 电磁阀1/2状态 bits[0]=valve1, bits[1]=valve2
- *   [23] 电磁阀3/4状态 bits[0]=valve3, bits[1]=valve4
- *   [24] 微动开关1/2状态（暂填0）
- *   [25] 微动开关3/4状态（暂填0）
- *   [26] 0xFF  [27] 0xEE
- *   [28] CRC8（计算范围 [0]~[27]）
+ *   [2..41]  LFx/LFy/RFx/RFy/LBx/LBy/RBx/RBy/YAW/PITCH（每个 float 占 4 字节）
+ *   [42..45] 四个电磁阀状态（每个 1 字节）
+ *   [46..49] 四个微动开关状态（每个 1 字节，当前填 0）
+ *   [50] 0xFF  [51] 0xEE
+ *   [52] CRC8（计算范围 [0]~[51]）
  */
 void cmd_send_feedback(void)
 {
@@ -157,41 +166,33 @@ void cmd_send_feedback(void)
     frame[idx++] = FRAME_HEADER_BYTE1;   /* 0xAA */
     frame[idx++] = CMD_FEEDBACK;          /* 0x01 */
 
-    uint16_t a = 0x1123u; /* 测试用，验证大端序存储 */
+    float a = 2.547f; /* 测试用，验证大端序存储 */
 
-    /* 四路机械臂末端坐标（float→int16_t，mm，大端序） */
-    // PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_x)); idx += 2;
-    // PUT_INT16_BE(frame, idx, float_to_int16(Arm_LF.end_effector_y)); idx += 2;
+    /* 四路机械臂末端坐标与云台角度按 float 原始字节发送（LE） */
+    // put_float_le(frame, &idx, Arm_LF.end_effector_x);
+    // put_float_le(frame, &idx, Arm_LF.end_effector_y);
+    put_float_le(frame, &idx, a);
+    put_float_le(frame, &idx, a);
+    put_float_le(frame, &idx, Arm_RF.end_effector_x);
+    put_float_le(frame, &idx, Arm_RF.end_effector_y);
+    put_float_le(frame, &idx, Arm_LB.end_effector_x);
+    put_float_le(frame, &idx, Arm_LB.end_effector_y);
+    put_float_le(frame, &idx, Arm_RB.end_effector_x);
+    put_float_le(frame, &idx, Arm_RB.end_effector_y);
+    put_float_le(frame, &idx, Gimbal.current_YAW);
+    put_float_le(frame, &idx, Gimbal.current_PITCH);
 
-    PUT_INT16_BE(frame, idx, float_to_int16(a)); idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(a)); idx += 2;
+    /* 四个电磁阀状态（每个 1 字节） */
+    frame[idx++] = (uint8_t)(solenoid_state.state[0] & 0x01u);
+    frame[idx++] = (uint8_t)(solenoid_state.state[1] & 0x01u);
+    frame[idx++] = (uint8_t)(solenoid_state.state[2] & 0x01u);
+    frame[idx++] = (uint8_t)(solenoid_state.state[3] & 0x01u);
 
-
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_RF.end_effector_x)); idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_RF.end_effector_y)); idx += 2;
-
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_LB.end_effector_x)); idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_LB.end_effector_y)); idx += 2;
-
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_RB.end_effector_x)); idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(Arm_RB.end_effector_y)); idx += 2;
-
-    /* 云台当前角度（float→int16_t，度，大端序） */
-    PUT_INT16_BE(frame, idx, float_to_int16(Gimbal.current_YAW));   idx += 2;
-    PUT_INT16_BE(frame, idx, float_to_int16(Gimbal.current_PITCH)); idx += 2;
-
-    /* 电磁阀状态字节
-     *   [22]: bits[0]=valve1状态, bits[1]=valve2状态
-     *   [23]: bits[0]=valve3状态, bits[1]=valve4状态
-     */
-    frame[idx++] = (uint8_t)((solenoid_state.state[0] & 0x01u) |
-                              ((solenoid_state.state[1] & 0x01u) << 1));
-    frame[idx++] = (uint8_t)((solenoid_state.state[2] & 0x01u) |
-                              ((solenoid_state.state[3] & 0x01u) << 1));
-
-    /* 微动开关状态（暂填0，预留字节） */
-    frame[idx++] = 0x00u;  /* 微动开关1/2，待接入实际GPIO */
-    frame[idx++] = 0x00u;  /* 微动开关3/4，待接入实际GPIO */
+    /* 微动开关状态（暂填0，预留4字节） */
+    frame[idx++] = 0x00u;
+    frame[idx++] = 0x00u;
+    frame[idx++] = 0x00u;
+    frame[idx++] = 0x00u;
 
     /* 帧尾 */
     frame[idx++] = FRAME_TAIL_BYTE1;   /* 0xFF */
@@ -199,9 +200,10 @@ void cmd_send_feedback(void)
 
     /* CRC8（覆盖 [0]~[idx-1]，即 AA 到 EE 全帧内容） */
     frame[idx] = crc8_calc(frame, (uint16_t)idx);
-    /* idx 此时等于 FRAME_FEEDBACK_LEN - 1，加上 CRC 共29字节 */
+    /* idx 此时等于 FRAME_FEEDBACK_LEN - 1，加上 CRC 共53字节 */
 
     vcp_transmit(frame, FRAME_FEEDBACK_LEN);
+
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -242,8 +244,8 @@ static uint8_t     s_data_remain  = 0;         /* 数据区剩余待收字节数
 static uint8_t get_data_len_by_cmd(uint8_t cmd)
 {
     switch (cmd) {
-        case CMD_ARM_CONTROL:    return (uint8_t)(FRAME_ARM_CTRL_LEN    - 5u); /* 10-5=5: armID x_H x_L y_H y_L */
-        case CMD_GIMBAL_CONTROL: return (uint8_t)(FRAME_GIMBAL_CTRL_LEN - 5u); /* 10-5=5: gimbalID YAW_H YAW_L PITCH_H PITCH_L */
+        case CMD_ARM_CONTROL:    return (uint8_t)(FRAME_ARM_CTRL_LEN    - 5u); /* 14-5=9: armID x(4B) y(4B) */
+        case CMD_GIMBAL_CONTROL: return (uint8_t)(FRAME_GIMBAL_CTRL_LEN - 5u); /* 14-5=9: gimbalID yaw(4B) pitch(4B) */
         case CMD_VALVE_CONTROL:  return (uint8_t)(FRAME_VALVE_CTRL_LEN  - 5u); /* 7-5=2:  valveID state */
         default:                 return 0u;
     }
@@ -345,35 +347,35 @@ static void cmd_rx_state_machine(uint8_t byte)
 
 /**
  * @brief 解析并执行 AA 02 机械臂末端控制命令
- *        帧数据区：[armID] [x_H] [x_L] [y_H] [y_L]
+ *        帧数据区：[armID] [x(4B)] [y(4B)]
  * @param data  数据区起始指针（命令字之后的第一字节）
  */
 static void handle_arm_control(const uint8_t *data)
 {
     uint8_t arm_id = data[0];
-    int16_t x = (int16_t)(((uint16_t)data[1] << 8) | data[2]); /* 大端序还原 */
-    int16_t y = (int16_t)(((uint16_t)data[3] << 8) | data[4]);
+    float x = get_float_le(&data[1]);
+    float y = get_float_le(&data[5]);
 
     if (arm_id > ARM_ID_RB) {
         return; /* 非法 ID，丢弃 */
     }
 
     /* 调用平面机械臂接口设置末端目标位置（mm） */
-    planar_robot_arm_set_target((arm_id_e)arm_id, (float)x, (float)y);
+    planar_robot_arm_set_target((arm_id_e)arm_id, x, y);
 }
 
 /**
  * @brief 解析并执行 AA 03 云台控制命令
- *        帧数据区：[gimbalID] [YAW_H] [YAW_L] [PITCH_H] [PITCH_L]
+ *        帧数据区：[gimbalID] [yaw(4B)] [pitch(4B)]
  * @param data  数据区起始指针
  */
 static void handle_gimbal_control(const uint8_t *data)
 {
     /* gimbalID 当前仅支持0，此处保留字段但不强制判断 */
-    int16_t yaw   = (int16_t)(((uint16_t)data[1] << 8) | data[2]);
-    int16_t pitch = (int16_t)(((uint16_t)data[3] << 8) | data[4]);
+    float yaw   = get_float_le(&data[1]);
+    float pitch = get_float_le(&data[5]);
 
-    gimbal_set_target_position(&Gimbal, (float)yaw, (float)pitch);
+    gimbal_set_target_position(&Gimbal, yaw, pitch);
 }
 
 /**

@@ -172,3 +172,5 @@ uint8_t vcp_rx_read_byte(uint8_t *byte)
     s_rx_tail = (uint8_t)(s_rx_tail + 1u);
     return 1;
 }
+
+

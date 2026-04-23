@@ -6,6 +6,7 @@
 #include "usart.h"
 #include "variables.h"
 #include "command_decode.h"
+#include "block_inspect.h"
 
 
 void update_task(void const *argument) {
@@ -32,6 +33,7 @@ void update_task(void const *argument) {
     //                   heartbeat_get_age_ms(HB_TASK_LED_STRIP, now));
     // }
       cmd_send_feedback();
+      block_inspect_process();
       osDelay(20);
 
   }
