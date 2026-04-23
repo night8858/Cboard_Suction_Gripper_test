@@ -16,6 +16,12 @@
 
 // }
 
+
+///物块检测任务，负责处理物块吸附状态的更新//
+
+
+
+
 SwitchInput g_switch_input;
 
 static volatile uint8_t sw0_debounce_pending = 0;
@@ -37,6 +43,7 @@ void switch_state_update(uint16_t GPIO_Pin)
         }
     }
 }
+
 
 void block_inspect_process(void)
 {

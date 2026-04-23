@@ -20,8 +20,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_it.h"
-/* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "SCSerail.h"   /* SCS_UART_IRQHandler：舵机串口中断接收 */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -213,7 +213,9 @@ void TIM4_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-
+  /* 优先调用 SCS 环形缓冲区处理，消费 RXNE 字节后 HAL 不会再重复读取。
+     必须在 HAL_UART_IRQHandler 之前调用，防止 HAL 的 RxState 检查拒绝中断。 */
+  SCS_UART_IRQHandler();
   /* USER CODE END USART1_IRQn 0 */
   HAL_UART_IRQHandler(&huart1);
   /* USER CODE BEGIN USART1_IRQn 1 */

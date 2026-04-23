@@ -1,4 +1,4 @@
-#include <stdbool.h>
+﻿#include <stdbool.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdint.h>
@@ -147,6 +147,15 @@ static float clampf(float value, float min_val, float max_val)
     return value;
 }
 
+// 将角度归一化到 [-180, 180) 度
+static float normalize_angle_180(float deg)
+{
+    float a = fmodf(deg, 360.0f);
+    if (a > 180.0f)  a -= 360.0f;
+    if (a < -180.0f) a += 360.0f;
+    return a;
+}
+
 // static int16_t deg_to_servo_pos(float deg)
 // {
 //     // float normalized = fmodf(deg, 360.0f);
@@ -270,58 +279,43 @@ void get_arm_servo_pos(Planar_Robot_Arm *arm)
     // arm->servo_move_state[0] = ReadMove(arm->SERVO_ID1); // 更新第1个舵机运动状态
     // arm->servo_move_state[1] = ReadMove(arm->SERVO_ID2); // 更新第2个舵机运动状态
 
+    /* 读取失败（ReadPos 返回负值）时保留上次有效值，不中断控制循环。
+     * 原实现在此处设置 ARM_STATE_ERROR 并 return，导致本周期完全跳过
+     * 轨迹采样和指令发送，舵机停在原位直到下次成功——这是串口卡顿时
+     * 运动指令离散化的直接原因。
+     * 改为容错：最多允许 5 次连续失败后才标记 ERROR，期间沿用缓存位置。 */
+     
+    static uint8_t s_fail_cnt[4] = {0};
+    int arm_idx = (int)arm->arm_id;
+    if (arm_idx < 0 || arm_idx > 3) return;
+
     if (pos1 < 0 || pos2 < 0) {
-        arm->state = ARM_STATE_ERROR;
-        return;
-    }
-
-    arm->current_servo_positions[0] = pos1 ;//* (arm->servo_Reverse_installation[0] ? -1 : 1); // 获取第1个舵机位置
-    arm->current_servo_positions[1] = pos2 ;//* (arm->servo_Reverse_installation[1] ? -1 : 1); // 获取第2个舵机位置
-
-        switch (arm->arm_id) {
-        case ARM_ID_LF:
-            // 左前机械臂的舵机反馈处理
-                arm->current_joint_angles[0] = 
-                (arm->current_servo_positions[0] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-                
-                arm->current_joint_angles[1] = 
-                (arm->current_servo_positions[1] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-
-            break;
-        case ARM_ID_RF:
-                arm->current_joint_angles[0] = 
-                (arm->current_servo_positions[0] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-                
-                arm->current_joint_angles[1] = 
-                (arm->current_servo_positions[1] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-
-            // 右前机械臂的舵机反馈处理
-            break;
-        case ARM_ID_LB:
-            // 左后机械臂的舵机反馈处理
-                arm->current_joint_angles[0] = 
-                (arm->current_servo_positions[0] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-                
-                arm->current_joint_angles[1] = 
-                (arm->current_servo_positions[1] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-
-            break;
-        case ARM_ID_RB:
-            // 右后机械臂的舵机反馈处理
-                arm->current_joint_angles[0] = 
-                (arm->current_servo_positions[0] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-                
-                arm->current_joint_angles[1] = 
-                (arm->current_servo_positions[1] / 4095.0 * 360.0 ) - 180.0; // 单位转换为角度
-
-            break;
-        default:
-            // 未知机械臂ID，进入错误状态
+        /* 读取失败：保留 current_servo_positions 上次值，计数器累加 */
+        s_fail_cnt[arm_idx]++;
+        if (s_fail_cnt[arm_idx] >= 5U) {
+            /* 连续多次失败才真正标记为错误（防止偶发超时被误判） */
             arm->state = ARM_STATE_ERROR;
-            return;
+        }
+        return; /* 提前返回，joint_angles 保留上次值 */
     }
-    // 根据舵机位置转换为关节角度，更新arm结构体中的关节角度信息
 
+    /* 读取成功，更新位置并清零失败计数 */
+    s_fail_cnt[arm_idx] = 0;
+    arm->current_servo_positions[0] = pos1;
+    arm->current_servo_positions[1] = pos2;
+
+    /* 四臂角度换算逻辑相同，统一计算，不再逐 case 重复 */
+    arm->current_joint_angles[0] =
+        (arm->current_servo_positions[0] / 4095.0f * 360.0f) - 180.0f;
+    arm->current_joint_angles[1] =
+        (arm->current_servo_positions[1] / 4095.0f * 360.0f) - 180.0f;
+
+    if (arm->arm_id == ARM_ID_LF || arm->arm_id == ARM_ID_RF ||
+        arm->arm_id == ARM_ID_LB || arm->arm_id == ARM_ID_RB) {
+        /* 合法 ID，不做额外处理 */
+    } else {
+        arm->state = ARM_STATE_ERROR;
+    }
 }
 
 // 机械臂正运动学计算函数，根据各关节角度计算末端执行器的位姿[good]
@@ -488,13 +482,8 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
             arm->state = ARM_STATE_ERROR;
             return false;
     }
-    if (arm->target_joint_angles[1] >180.0f) 
-    {
-    arm->target_joint_angles[1] -= 180.0f;
-    }else if(arm->target_joint_angles[1] < -180.0f)
-    {
-        arm->target_joint_angles[1] += 180.0f;
-    }
+    arm->target_joint_angles[0] = normalize_angle_180(arm->target_joint_angles[0]);
+    arm->target_joint_angles[1] = normalize_angle_180(arm->target_joint_angles[1]);
 
     // 逆解输出角度统一定义为“相对 x 正半轴”的夹角。
     // arm->target_joint_angles[0] = normalize_to_x_positive_axis_deg(arm->target_joint_angles[0]);
@@ -588,13 +577,16 @@ static void update_joint_angles_from_servo_pos(Planar_Robot_Arm *arm)
 }
 
 // 单臂读取舵机位置（2 次 ReadPos），成功后更新 joint_angles。
+// 读取失败时保留上次缓存值，连续失败 5 次才标记 ERROR，
+// 防止通信偶发超时导致本周期完全跳过轨迹输出。
 static bool read_one_arm_servo_pos(Planar_Robot_Arm *arm)
 {
     if (arm == NULL) return false;
     int16_t pos1 = ReadPos(arm->SERVO_ID1);
     int16_t pos2 = ReadPos(arm->SERVO_ID2);
     if (pos1 < 0 || pos2 < 0) {
-        arm->state = ARM_STATE_ERROR;
+        /* 失败：不立即设 ERROR，保留旧值，由 get_arm_servo_pos 的
+         * 连续失败计数器统一管理状态，这里直接返回 false 即可。 */
         return false;
     }
     arm->current_servo_positions[0] = pos1;
@@ -604,6 +596,7 @@ static bool read_one_arm_servo_pos(Planar_Robot_Arm *arm)
 }
 
 // 批量读取全部 4 臂 8 舵机位置，一次完成所有 I/O。
+// 返回值仅供上层统计，不影响控制循环的继续执行（读取失败时各臂保留缓存值）。
 bool batch_read_all_servo_pos(void)
 {
     bool ok = true;
@@ -611,7 +604,7 @@ bool batch_read_all_servo_pos(void)
     ok &= read_one_arm_servo_pos(&Arm_RF);
     ok &= read_one_arm_servo_pos(&Arm_LB);
     ok &= read_one_arm_servo_pos(&Arm_RB);
-    return ok;
+    return ok; /* false 表示本周期有读取失败，但控制循环不中断 */
 }
 
 bool planar_robot_arm_all_init(void)
@@ -920,8 +913,6 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
         if (arm->state == ARM_STATE_ERROR) {
             return false;
         }
-        float cur_j1 = (float)arm->current_servo_positions[0];
-        float cur_j2 = (float)arm->current_servo_positions[1];
 
         /* Solve IK once for the new target */
         bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
@@ -947,39 +938,58 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
             return false;
         }
 
-        /* 若上段轨迹仍在运行，继承当前采样速度以保持速度连续。 */
-        float cur_vel_j1 = 0.0f, cur_vel_j2 = 0.0f;
-        if (ctx->initialized && (ctx->planner_j1.is_running || ctx->planner_j2.is_running)) {
-            update_trajectory(&ctx->planner_j1, now_ms, NULL, &cur_vel_j1, NULL);
-            update_trajectory(&ctx->planner_j2, now_ms, NULL, &cur_vel_j2, NULL);
+        /* Bootstrap on first entry from actual servo feedback (cold start).
+           On subsequent replans: sample current trajectory pos/vel/acc as start
+           to guarantee command continuity even if previous segment is mid-flight. */
+        if (!ctx->initialized) {
+            ctx->cmd_j1 = (float)arm->current_servo_positions[0];
+            ctx->cmd_j2 = (float)arm->current_servo_positions[1];
+            ctx->vel_j1 = 0.0f; ctx->vel_j2 = 0.0f;
+            ctx->acc_j1 = 0.0f; ctx->acc_j2 = 0.0f;
+        } else {
+            update_trajectory(&ctx->planner_j1, now_ms,
+                              &ctx->cmd_j1, &ctx->vel_j1, &ctx->acc_j1);
+            update_trajectory(&ctx->planner_j2, now_ms,
+                              &ctx->cmd_j2, &ctx->vel_j2, &ctx->acc_j2);
         }
 
-        /* Plan quintic polynomial trajectories in joint (servo-step) space */
+        /* Adaptive duration: scale with Euclidean distance in servo-step space */
+        float d1 = tgt_j1 - ctx->cmd_j1;
+        float d2 = tgt_j2 - ctx->cmd_j2;
+        float dist = sqrtf(d1 * d1 + d2 * d2);
+        float duration = dist / CONTROLA_MAX_SERVO_SPEED_STEP_PER_S;
+        if (duration < CONTROLA_TRAJ_MIN_S) duration = CONTROLA_TRAJ_MIN_S;
+        if (duration > CONTROLA_TRAJ_MAX_S) duration = CONTROLA_TRAJ_MAX_S;
+
+        /* Plan quintic polynomial from current traj state to new target */
         plan_new_move(&ctx->planner_j1, now_ms,
-                      cur_j1, cur_vel_j1, 0.0f,
+                      ctx->cmd_j1, ctx->vel_j1, ctx->acc_j1,
                       tgt_j1, 0.0f, 0.0f,
-                      CONTROLA_TRAJ_DURATION_S);
+                      duration);
         plan_new_move(&ctx->planner_j2, now_ms,
-                      cur_j2, cur_vel_j2, 0.0f,
+                      ctx->cmd_j2, ctx->vel_j2, ctx->acc_j2,
                       tgt_j2, 0.0f, 0.0f,
-                      CONTROLA_TRAJ_DURATION_S);
+                      duration);
 
         /* Use the snapshot value so last_cmd always reflects the true user
            intent, never a value potentially modified by IK internals. */
         ctx->last_cmd_x  = arm->planned_target_x;
         ctx->last_cmd_y  = arm->planned_target_y;
-        ctx->initialized = true                                                                                                 ;
+        ctx->initialized = true;
     }
 
     // 采样轨迹得到本控制周期目标点。若轨迹结束，输出会自动钳位到终点。
-    /* Sample joint-space trajectories for this control cycle */
+    /* Sample this control cycle; update ctx vel/acc for next replan.
+       After trajectory ends the output clamps to the final setpoint. */
     float j1_cmd = ctx->planner_j1.current_segment.pf;
     float j2_cmd = ctx->planner_j2.current_segment.pf;
-    update_trajectory(&ctx->planner_j1, now_ms, &j1_cmd, NULL, NULL);
-    update_trajectory(&ctx->planner_j2, now_ms, &j2_cmd, NULL, NULL);
+    update_trajectory(&ctx->planner_j1, now_ms, &j1_cmd, &ctx->vel_j1, &ctx->acc_j1);
+    update_trajectory(&ctx->planner_j2, now_ms, &j2_cmd, &ctx->vel_j2, &ctx->acc_j2);
+    ctx->cmd_j1 = j1_cmd;
+    ctx->cmd_j2 = j2_cmd;
 
-    // arm_control_step 会把 end_aim 写成当前插值点。这里在调用后恢复外部目标点，
-    // 避免下一周期误判“目标已变更”并把轨迹重规划回当前位置。
+
+
     arm->target_servo_positions[0] = (int16_t)clampf(j1_cmd, 1024.0f, 3072.0f);
     arm->target_servo_positions[1] = (int16_t)clampf(j2_cmd, 1024.0f, 3072.0f);
 
@@ -1001,9 +1011,9 @@ bool controlA_loop(void)
 
     // TODO: 将下面4个占位符替换成你的实际目标点坐标（单位:mm）。
     const float TARGET_P0_X[4]= {-50.0f , -50.0f , 50.0f ,50.0f  }; // 占位符点0 X
-    const float TARGET_P0_Y[4]= {20.0f , - 20.0f , 20.0f ,-20.0f }; // 占位符点0 Y
-    const float TARGET_P1_X[4]= {50.0f , 50.0f , -50.0f , -50.0f }; // 占位符点1 X
-    const float TARGET_P1_Y[4]= {540.0f , -540.0f , 540.0f , -540.0f }; // 占位符点1 Y
+    const float TARGET_P0_Y[4]= {50.0f , - 50.0f , 50.0f ,-50.0f }; // 占位符点0 Y
+    const float TARGET_P1_X[4]= {250.0f , 250.0f , -250.0f , -250.0f }; // 占位符点1 X
+    const float TARGET_P1_Y[4]= {440.0f , -440.0f , 440.0f , -440.0f }; // 占位符点1 Y
 
     if (!lf_toggle_initialized) {
         lf_toggle_initialized = true;
@@ -1026,8 +1036,9 @@ bool controlA_loop(void)
         planar_robot_arm_set_target(ARM_ID_RB, TARGET_P1_X[3], TARGET_P1_Y[3]);
     }
 #endif
-    // Phase 1: 批量读取全部舵机位置（8 次 ReadPos，集中完成）
-    ok &= batch_read_all_servo_pos();
+    // Phase 1: 批量读取全部舵机位置（8 次 ReadPos，集中完成）。
+    // 读取失败时保留缓存值，不中断后续轨迹计算和指令发送。
+    (void)batch_read_all_servo_pos();
 
     // Phase 1.5: 每周期基于最新反馈做正运动学，更新末端位置数据。
     planar_arm_forward_kinematics_from_cache(&Arm_LF);

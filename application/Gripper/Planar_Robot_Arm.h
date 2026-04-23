@@ -8,9 +8,12 @@
 #define ARM_TYPE_2 1
 
 
-// 重规划阈值的定义：当末端位置误差小于该值时，认为当前轨迹仍然有效，无需重新规划。
-#define CONTROLA_TRAJ_DURATION_S 1.6f
-#define CONTROLA_REPLAN_EPS_MM   10.0f
+// 重规划阈值：当末端目标变化超过该值时触发重规划。
+#define CONTROLA_REPLAN_EPS_MM              10.0f
+// 自适应轨迹时长：按舵机步进空间距离缩放，避免高速振荡或超慢响应。
+#define CONTROLA_TRAJ_MIN_S                 0.3f    /* 最短单段轨迹时长 (s) */
+#define CONTROLA_TRAJ_MAX_S                 2.5f    /* 最长单段轨迹时长 (s) */
+#define CONTROLA_MAX_SERVO_SPEED_STEP_PER_S 1280.0f /* 舵机步进空间目标速度 (步/s) */
 
 
 
@@ -102,6 +105,10 @@ typedef struct {
     TrajectoryPlanner planner_j2; /* joint 2 servo-step trajectory */
     float last_cmd_x;
     float last_cmd_y;
+    /* 上周期末端指令状态（步进空间）——重规划起点，保证指令位置连续 */
+    float cmd_j1, cmd_j2;   /* 指令位置 (步) */
+    float vel_j1, vel_j2;   /* 指令速度 (步/s) */
+    float acc_j1, acc_j2;   /* 指令加速度 (步/s²) */
     bool initialized;
 } ArmTrajectoryContext;
 
