@@ -94,6 +94,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     bsp/led
     bsp/solenoid
     bsp/virtual_serial_port
+    bsp/virtual_serial_port
     # Add user defined include paths
 )
 
