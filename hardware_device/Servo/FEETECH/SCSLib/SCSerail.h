@@ -9,10 +9,25 @@
 void SCS_SetUART(UART_HandleTypeDef *huart);
 UART_HandleTypeDef *SCS_GetUART(void);
 
+/*
+ * SCS_SetHalfDuplex：配置总线模式。
+ *   enable=1：半双工单线总线（TX/RX 物理共线，发送后有回声），wFlushSCS 会丢弃回声。
+ *   enable=0：全双工（TX/RX 独立，无回声），wFlushSCS 不丢弃数据（默认）。
+ * 须在 SCS_SetUART() 之后、第一次读写舵机之前调用。
+ */
+void SCS_SetHalfDuplex(uint8_t enable);
+
 /* 发送/接收底层接口 */
 void ftUart_Send(uint8_t *nDat, int nLen);
 int  ftUart_Read(uint8_t *nDat, int nLen);
 void ftBus_Delay(void);
+
+/*
+ * rFlushSCS：清空 UART 接收环形缓冲区中的残留字节。
+ * 在发送新读取请求前调用，防止上帧残留或总线回声污染本帧应答解析。
+ * 也供 my_feetech.c 等共用 USART1 总线的模块调用。
+ */
+void rFlushSCS(void);
 
 /*
  * SCS_UART_RxIRQ_Enable：开启 UART RXNE 中断，在 SCS_SetUART 后自动调用，

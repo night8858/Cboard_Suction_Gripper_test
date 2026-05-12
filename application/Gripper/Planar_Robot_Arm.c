@@ -5,14 +5,17 @@
 #include "Planar_Robot_Arm.h"
 
 //#include "my_feetech.h"
+#include "DT7.h"
 #include "SCSerail.h"
 #include "SCS.h"
 #include "SMS_STS.h"
 #include "SCSCL.h"
 #include "usart.h"
 #include "variables.h"
+#include "pneumatic_control.h"
 
 #include "cmsis_os.h"
+
 
 /*
 DH参数
@@ -24,12 +27,24 @@ DH参数
 #define M_PI 3.14159265358979323846
 #endif
 
-#define ARM1_LINK1_LONG_EDGE_MM 290.1f
+#define ARM1_LINK1_LONG_EDGE_MM 295.1f
 #define ARM1_LINK1_SHORT_EDGE_MM 25.0f
 #define ARM2_LINK2_LONG_EDGE_MM 337.27f
 
+
+//169.6，纵向
+//351.81，横向
+#define offset_X  84.8f
+#define offset_Y  175.9f
+
+/////////////////////////////////////////////////
+
+#define USE_FISH
 //#define arm_FKIK_debug 
-#define movedebug 
+//#define movedebug 
+
+/////////////////////////////////////////////////
+
 
 // 机械臂参数配置和控制函数实现
 extern Planar_Robot_Arm Arm_LF;       //左前
@@ -42,11 +57,32 @@ static ArmTrajectoryContext g_ctx_rf = {0};
 static ArmTrajectoryContext g_ctx_lb = {0};
 static ArmTrajectoryContext g_ctx_rb = {0};
 
-// 每只机械臂的当前肘型配置：LF/RF 默认上肘，LB/RB 默认下肘。
+// 每只机械臂的当前肘型配置：LF/RB 默认上肘，RF/LB 默认下肘。
 static bool g_arm_elbow_up[4] = {true, false, false, true};
 
+static  float all_offset_x[4] = { offset_X , offset_X ,-offset_X ,-offset_X};
+static  float all_offset_y[4] = { offset_Y , -offset_Y ,offset_Y ,-offset_Y};
 
+float target_x_test[4];
+float target_y_test[4];
 
+    const float TARGET_P0_X[4] = {  180.0f, 600.0f,  -180.0f,  -180.0f };
+    const float TARGET_P0_Y[4] = {  240.0f, -330.0f,  240.0f, -240.0f };
+    //机械臂伸直吸取物块的位置
+    const float TARGET_P1_X[4] = { 425.0f,  425.0f, -425.0f, -425.0f };
+    const float TARGET_P1_Y[4] = { 425.0f, -425.0f,  425.0f, -425.0f };
+    // const float TARGET_P1_X[4] = { 650.0f,  650.0f, -250.0f, -250.0f };
+    // const float TARGET_P1_Y[4] = { 360.0f, -360.0f,  360.0f, -360.0f };
+    //机械臂携带物块的位置
+    const float TARGET_P2_X[4] = { 250.0f,  250.0f, -250.0f, -250.0f };
+    const float TARGET_P2_Y[4] = { 400.0f, -400.0f,  400.0f, -400.0f };
+    //机械臂伸直放置物块的位置
+    const float TARGET_P3_X[4] = { 60.0f,  60.0f, -60.0f, -60.0f };
+    const float TARGET_P3_Y[4] = { 900.0f, -900.0f,  900.0f, -900.0f };
+    //伸直放置物块中段的位置
+    const float TARGET_P4_X[4] = { 280.0f,  280.0f, -280.0f, -280.0f };
+    const float TARGET_P4_Y[4] = { 600.0f, -600.0f,  600.0f, -600.0f };
+    
 
 static float deg_to_rad(float deg)
 {
@@ -70,6 +106,11 @@ static float y_kinematics_to_external(float y_kinematics)
     return y_kinematics;
 }
 
+
+//外部运动坐标系指的是与基座相对的坐标系，原点在基座中心，X轴指向前方，Y轴指向左方；
+//内部运动学坐标系指的是机械臂运动学计算使用的坐标系，存在与外部坐标系的偏移。
+
+// 机械臂末端位置的坐标系转换：外部实际坐标系 <-> 内部运动学坐标系
 static void external_to_kinematics_xy(const Planar_Robot_Arm *arm,
                                       float x_external,
                                       float y_external,
@@ -93,6 +134,7 @@ static void external_to_kinematics_xy(const Planar_Robot_Arm *arm,
     }
 }
 
+// 内部运动学坐标系与外部实际坐标系的转换。
 static void kinematics_to_external_xy(const Planar_Robot_Arm *arm,
                                       float x_kinematics,
                                       float y_kinematics,
@@ -147,13 +189,59 @@ static float clampf(float value, float min_val, float max_val)
     return value;
 }
 
-// 将角度归一化到 [-180, 180) 度
+/* 将角度归一化到 (-180, +180] 度 */
 static float normalize_angle_180(float deg)
 {
     float a = fmodf(deg, 360.0f);
     if (a > 180.0f)  a -= 360.0f;
     if (a < -180.0f) a += 360.0f;
     return a;
+}
+
+/**
+ * @brief 将运动学坐标系下的目标点投影到可达环形域内（含安全余量）。
+ *
+ * 当目标距离臂基超出物理可达范围时，沿当前方向将其拉回到边界圆上，
+ * 不改变运动方向，只调整径向距离，以避免 IK 中 acos 参数越界。
+ *
+ * 可达环形域边界：
+ *   r_max = link1 + link2 - ARM_WORKSPACE_MARGIN_MM  （防全伸奇异）
+ *   r_min = |link1 - link2| + ARM_WORKSPACE_MARGIN_MM （防全折奇异）
+ *
+ * @param arm  机械臂实例（用于读取连杆长度）
+ * @param x    [in/out] 运动学坐标系 X 分量 (mm)
+ * @param y    [in/out] 运动学坐标系 Y 分量 (mm)
+ */
+static void clamp_to_reachable_workspace(const Planar_Robot_Arm *arm,
+                                         float *x, float *y)
+{
+    if (arm == NULL || x == NULL || y == NULL) {
+        return;
+    }
+
+    const float margin = ARM_WORKSPACE_MARGIN_MM;
+    float r_max = arm->link1_length + arm->link2_length - margin;
+    float r_min = fabsf(arm->link1_length - arm->link2_length) + margin;
+
+    float r = sqrtf(*x * *x + *y * *y);
+
+    /* 目标极近原点：无法确定方向，推到最小可达圆上（沿 +X 方向）*/
+    if (r < 1e-6f) {
+        *x = r_min;
+        *y = 0.0f;
+        return;
+    }
+
+    /* 超出环形域时沿方向等比缩放，保持指向角不变 */
+    if (r < r_min) {
+        float scale = r_min / r;
+        *x *= scale;
+        *y *= scale;
+    } else if (r > r_max) {
+        float scale = r_max / r;
+        *x *= scale;
+        *y *= scale;
+    }
 }
 
 // static int16_t deg_to_servo_pos(float deg)
@@ -218,46 +306,20 @@ void planar_robot_arm_config_init(int arm_type , Planar_Robot_Arm *arm ,
     arm->current_servo_positions[0] = 0;
     arm->current_servo_positions[1] = 0;
 
+    /* 默认软件限位覆盖全量程，由 planar_robot_arm_all_init 按各臂实际结构覆盖 */
+    arm->servo_pos_min[0] = 0;    arm->servo_pos_max[0] = 4095;
+    arm->servo_pos_min[1] = 0;    arm->servo_pos_max[1] = 4095;
+
+    /* 默认工作空间无限制；由 planar_robot_arm_all_init 按各臂安装位置覆盖 */
+    arm->workspace_x_min = -1e6f;  arm->workspace_x_max = 1e6f;
+    arm->workspace_y_min = -1e6f;  arm->workspace_y_max = 1e6f;
+
     planar_arm_forward_kinematics(arm);
     arm->state = ARM_STATE_IDLE;
 
 }
 
-// void planar_robot_arm_move_to_position(Planar_Robot_Arm *arm, float x, float y)
-// {
-//     if (arm == NULL) {
-//         return;
-//     }
-
-//     arm->end_aim_x = x;
-//     arm->end_aim_y = y;
-//     bool solved = planar_arm_inverse_kinematics(arm, true);
-//     if (!solved) {
-//         arm->state = ARM_STATE_ERROR;
-//         EnableTorque(arm->SERVO_ID1, 0); 
-//         EnableTorque(arm->SERVO_ID2, 0); // 进入错误状态，禁用舵机扭矩
-//         return;
-//     }
-
-//     planar_arm_forward_kinematics(arm);
-
-//     arm->target_servo_positions[0] = deg_to_servo_pos(arm->target_joint_angles[0]);
-//     arm->target_servo_positions[1] = deg_to_servo_pos(arm->target_joint_angles[1]);
-
-//     uint8_t ID[2]       = {(uint8_t)arm->SERVO_ID1, (uint8_t)arm->SERVO_ID2}; // 舵机ID数组
-//     int16_t Position[2] = {arm->target_servo_positions[0], arm->target_servo_positions[1]}; // 目标位置数组
-//     uint16_t Speed[2]   = {800, 800}; // 速度数组
-//     uint8_t ACC[2]      = {0, 0}; // 加速度数组
-
-//      // 同步写位置指令，控制多个舵机同时运动
-//     //SyncWritePosEx(ID, 2, Position, Speed, ACC);
-//     // 使用舵机控制器发送位置命令
-//     // WritePosEx(1, joint1_pos, 100, 10); // 控制第1个舵机
-//     // WritePosEx(2, joint2_pos, 100, 10); // 控制第2个舵机
-
-//}
-
-// 获取机械臂当前状态，更新arm结构体中的状态信息
+/* 获取机械臂末端当前位姿（正运动学结果），供外部状态查询使用 */
 void planar_robot_arm_feedback(Planar_Robot_Arm *arm)
 {
     // 从舵机反馈中获取当前关节位置，更新arm结构体中的关节角度和末端位姿信息
@@ -275,9 +337,6 @@ void get_arm_servo_pos(Planar_Robot_Arm *arm)
     // 从舵机反馈中获取当前关节位置，更新arm结构体中的关节角度信息
     int16_t pos1 = ReadPos(arm->SERVO_ID1);
     int16_t pos2 = ReadPos(arm->SERVO_ID2);
-
-    // arm->servo_move_state[0] = ReadMove(arm->SERVO_ID1); // 更新第1个舵机运动状态
-    // arm->servo_move_state[1] = ReadMove(arm->SERVO_ID2); // 更新第2个舵机运动状态
 
     /* 读取失败（ReadPos 返回负值）时保留上次有效值，不中断控制循环。
      * 原实现在此处设置 ARM_STATE_ERROR 并 return，导致本周期完全跳过
@@ -400,10 +459,14 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
         return false;
     }
 
-    // 根据elbow_up参数选择肘部方向，计算关节角度
+    /* Step 1: 将外部坐标系目标点转换到运动学坐标系（以臂基为原点） */
     float x = 0.0f;
     float y = 0.0f;
     external_to_kinematics_xy(arm, arm->end_aim_x, arm->end_aim_y, &x, &y);
+
+    /* Step 2: 工作空间限幅——将目标点限制在可达环形域内，保护结构安全。
+     * 若目标超出范围，沿径向方向拉回到边界处，方向不变。              */
+    clamp_to_reachable_workspace(arm, &x, &y);
 
     float l1 = arm->link1_length;
     float l2 = arm->link2_length;
@@ -455,7 +518,7 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
     
     arm->target_joint_angles[0] =  -rad_to_deg(arm->target_joint_angles[0])  -  arm->servo_angle_offset[0] ;
     arm->target_joint_angles[1] =  (rad_to_deg(arm->target_joint_angles[1])  -  arm->servo_angle_offset[1]);
-
+ 
             break;
         case ARM_ID_LB:
             // 左后机械臂的逆运动学计算
@@ -482,62 +545,58 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
             arm->state = ARM_STATE_ERROR;
             return false;
     }
+    /* Step 5: 归一化到 (-180, +180] 度，避免角度跳变 */
     arm->target_joint_angles[0] = normalize_angle_180(arm->target_joint_angles[0]);
     arm->target_joint_angles[1] = normalize_angle_180(arm->target_joint_angles[1]);
 
-    // 逆解输出角度统一定义为“相对 x 正半轴”的夹角。
-    // arm->target_joint_angles[0] = normalize_to_x_positive_axis_deg(arm->target_joint_angles[0]);
-    // arm->target_joint_angles[1] = normalize_to_x_positive_axis_deg(arm->target_joint_angles[1]);
-    // // arm->target_joint_angles[0] = clampf(arm->target_joint_angles[0], -90.0f, 90.0f);
-    // arm->target_joint_angles[1] = clampf(arm->target_joint_angles[1], -90.0f, 90.0f);
-
-    return true;
-
-}
-
-// 单臂控制步骤：逆运动学 -> 发送位置指令（反馈由调用方在外部统一完成，避免重复读取）
-static __attribute__((unused)) bool arm_control_step(Planar_Robot_Arm *arm, bool elbow_up ,float x, float y)
-{
-    if (arm == NULL) {
-        return false;
-    }
-    planar_arm_forward_kinematics(arm); // 获取当前末端位姿，更新arm结构体中的位置信息
-    // 逆运动学求解目标关节角
-    arm->end_aim_x = x;
-    arm->end_aim_y = y;
-    bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
-    if (!solved) 
-    {
-        arm->state = ARM_STATE_ERROR;
-        EnableTorque(arm->SERVO_ID1, 0);
-        EnableTorque(arm->SERVO_ID2, 0);
-        return false;
-    }
-
-    arm->state = ARM_STATE_MOVING;
-
-    // 3. 将目标关节角转换为舵机位置并同步写入
-    arm->target_servo_positions[0] =  ((arm->target_joint_angles[0]  + 180.0f) / 360.0f * 4095.0f);
-    arm->target_servo_positions[1] =  ((arm->target_joint_angles[1]  + 180.0f) / 360.0f * 4095.0f);
-
-    arm->target_servo_positions[0] = (int16_t)clampf(arm->target_servo_positions[0], 1024.0f, 3072.0f);
-    arm->target_servo_positions[1] = (int16_t)clampf(arm->target_servo_positions[1], 1024.0f, 3072.0f);
-    // 保留转换逻辑，发送接口在此路径暂未启用。
-    // (void)arm->target_servo_positions[0];
-    // (void)arm->target_servo_positions[1];
-    uint8_t  ID[2]       = {arm->SERVO_ID1, arm->SERVO_ID2}; // 舵机ID数组
-    int16_t  Position[2] = {arm->target_servo_positions[0], arm->target_servo_positions[1]}; // 目标位置数组
-    uint16_t Speed[2]   = {0, 0}; // 速度数组
-    uint8_t  ACC[2]      = {0, 0}; // 加速度数组
-
-    // WritePosEx(arm->SERVO_ID1, arm->target_servo_positions[0], Speed[0], ACC[0]);
-    // osDelay(1);
-    // WritePosEx(arm->SERVO_ID2, arm->target_servo_positions[1], Speed[1], ACC[1]);
-    
-    SyncWritePosEx(ID, 2, Position, Speed, ACC);
-
     return true;
 }
+
+// // 单臂控制步骤：逆运动学 -> 发送位置指令（反馈由调用方在外部统一完成，避免重复读取）
+// static __attribute__((unused)) bool arm_control_step(Planar_Robot_Arm *arm, bool elbow_up ,float x, float y)
+// {
+//     if (arm == NULL) {
+//         return false;
+//     }
+//     //planar_arm_forward_kinematics(arm); // 获取当前末端位姿，更新arm结构体中的位置信息
+//     // 逆运动学求解目标关节角
+//     arm->end_aim_x = x;
+//     arm->end_aim_y = y;
+//     bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
+//     if (!solved) 
+//     {
+//         arm->state = ARM_STATE_ERROR;
+//         EnableTorque(arm->SERVO_ID1, 0);
+//         EnableTorque(arm->SERVO_ID2, 0);
+//         return false;
+//     }
+
+//     arm->state = ARM_STATE_MOVING;
+
+//     // 3. 将目标关节角转换为舵机位置并同步写入
+//     arm->target_servo_positions[0] =  ((arm->target_joint_angles[0]  + 180.0f) / 360.0f * 4095.0f);
+//     arm->target_servo_positions[1] =  ((arm->target_joint_angles[1]  + 180.0f) / 360.0f * 4095.0f);
+
+//     arm->target_servo_positions[0] = (int16_t)clampf(arm->target_servo_positions[0], 1024.0f, 3072.0f);
+//     arm->target_servo_positions[1] = (int16_t)clampf(arm->target_servo_positions[1], 1024.0f, 3072.0f);
+//     // 保留转换逻辑，发送接口在此路径暂未启用。
+//     // (void)arm->target_servo_positions[0];
+//     // (void)arm->target_servo_positions[1];
+//     uint8_t  ID[2]       = {arm->SERVO_ID1, arm->SERVO_ID2}; // 舵机ID数组
+//     int16_t  Position[2] = {arm->target_servo_positions[0], arm->target_servo_positions[1]}; // 目标位置数组
+//     uint16_t Speed[2]   = {0, 0}; // 速度数组
+//     uint8_t  ACC[2]      = {0, 0}; // 加速度数组
+
+//     // WritePosEx(arm->SERVO_ID1, arm->target_servo_positions[0], Speed[0], ACC[0]);
+//     // osDelay(1);
+//     // WritePosEx(arm->SERVO_ID2, arm->target_servo_positions[1], Speed[1], ACC[1]);
+
+//     /* 同步写入两个舵机目标位置：SCSerail（USART1 RXNE 中断）统一管理总线，
+//      * 此处直接发送，无需额外 osDelay。                                     */
+//     //SyncWritePosEx(ID, 2, Position, Speed, ACC);
+
+//     return true;
+// }
 
 
 // 四臂同时控制函数，批量发送位置指令,各个臂测试完后使用。
@@ -559,8 +618,8 @@ bool planar_arm_all_servo_run(Planar_Robot_Arm *arm_LF, Planar_Robot_Arm *arm_RF
         arm_LB->target_servo_positions[0], arm_LB->target_servo_positions[1],
         arm_RB->target_servo_positions[0], arm_RB->target_servo_positions[1]
     };
-    uint16_t Speed[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // 速度数组
-    uint8_t ACC[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // 加速度数组
+    uint16_t Speed[8] = {3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000}; // 速度数组
+    uint8_t ACC[8]    = {0, 0, 0, 0, 0, 0, 0, 0}; // 加速度数组
 
     SyncWritePosEx(ID, 8, Position, Speed, ACC);
     return true;
@@ -582,7 +641,7 @@ static void update_joint_angles_from_servo_pos(Planar_Robot_Arm *arm)
 static bool read_one_arm_servo_pos(Planar_Robot_Arm *arm)
 {
     if (arm == NULL) return false;
-    int16_t pos1 = ReadPos(arm->SERVO_ID1);
+     int16_t pos1 = ReadPos(arm->SERVO_ID1);
     int16_t pos2 = ReadPos(arm->SERVO_ID2);
     if (pos1 < 0 || pos2 < 0) {
         /* 失败：不立即设 ERROR，保留旧值，由 get_arm_servo_pos 的
@@ -610,54 +669,75 @@ bool batch_read_all_servo_pos(void)
 bool planar_robot_arm_all_init(void)
 {
     SCS_SetUART(&huart1);
+    /* 根据硬件接线配置总线模式：
+     *   SCS_SetHalfDuplex(1) — PA9(TX) 与 PB7(RX) 在 PCB 上物理连接到同一总线导线（有回声）
+     *   SCS_SetHalfDuplex(0) — TX/RX 走独立线路经收发器连接（无回声，默认）
+     * 若发现 ReadPos 始终返回 -1，且硬件为单线总线，请改为 SCS_SetHalfDuplex(1)。 */
+    SCS_SetHalfDuplex(0);
     setEnd(0);
+    /* 等待舵机总线上电稳定：USART 外设初始化完成后，舵机侧需要一段时间完成
+     * 自检并准备好响应读取命令，过早发送 ReadPos 会导致失败，使
+     * current_servo_positions 保留初始值 0，进而引发冷启动异常运动。 */
+    
+    osDelay(300);
     // 配置四个机械臂参数，分别为左前、右前、左后、右后
     planar_robot_arm_config_init(ARM_TYPE_1, &Arm_LF, 1, 2, 
-                                 ARM_ID_LF, 0.0f, 0.0f,  -90.0f, 90.0f);
+                                 ARM_ID_LF, all_offset_x[0], all_offset_y[0],  -90.0f, 90.0f);
     planar_robot_arm_config_init(ARM_TYPE_1, &Arm_RF, 3, 4,
-                                 ARM_ID_RF, 0.0f, 0.0f, 90.0f,  -90.0f);
+                                 ARM_ID_RF, all_offset_x[1], all_offset_y[1], 90.0f,  -90.0f);
     planar_robot_arm_config_init(ARM_TYPE_1, &Arm_LB, 5, 6,
-                                 ARM_ID_LB, 0.0f, 0.0f, -90.0f, -90.0f);
+                                 ARM_ID_LB, all_offset_x[2], all_offset_y[2], -90.0f, -90.0f);
     planar_robot_arm_config_init(ARM_TYPE_1, &Arm_RB, 7, 8,
-                                 ARM_ID_RB, 0.0f, 0.0f, 90.0f, 90.0f);
-    // 初始位置设置，测试用
-        return true;
+                                 ARM_ID_RB, all_offset_x[3], all_offset_y[3], 90.0f, 90.0f);
 
+    /* ---- 各臂各关节软件限位（步进值，0~4095 对应 -180°~+180°）----
+     * 根据实际机械结构和装配方向配置，防止连杆碰撞或舵机过载。
+     * 关节1 = 大臂舵机，关节2 = 小臂舵机。                        */
+    
+    //230添加是为了拓展角度//
+    Arm_LF.servo_pos_min[0] = 1024 - 230; Arm_LF.servo_pos_max[0] = 3072 + 230; /* LF J1: -90°~+90° */
+    Arm_LF.servo_pos_min[1] = 1024;       Arm_LF.servo_pos_max[1] = 3072; /* LF J2: -90°~+90° */
+
+    Arm_RF.servo_pos_min[0] = 1024 - 230; Arm_RF.servo_pos_max[0] = 3072 + 230; /* RF J1 */
+    Arm_RF.servo_pos_min[1] = 1024;       Arm_RF.servo_pos_max[1] = 3072; /* RF J2 */
+
+    Arm_LB.servo_pos_min[0] = 1024 - 230; Arm_LB.servo_pos_max[0] = 3072 + 230; /* LB J1 */
+    Arm_LB.servo_pos_min[1] = 1024;       Arm_LB.servo_pos_max[1] = 3072; /* LB J2 */
+
+    Arm_RB.servo_pos_min[0] = 1024 - 230; Arm_RB.servo_pos_max[0] = 3072 + 230; /* RB J1 */
+    Arm_RB.servo_pos_min[1] = 1024;       Arm_RB.servo_pos_max[1] = 3072; /* RB J2 */
+
+    /* ---- 各臂末端工作空间矩形限位（外部坐标系，单位 mm）----
+     * 超出范围的目标将被自动钳位到矩形内最近的边界点。
+     * 坐标系：X 轴指向前方，Y 轴指向左方，原点在机体中心。
+     * 各臂安装于各自象限，限位矩形应包含各臂所有有效目标点。 */
+    Arm_LF.workspace_x_min =   60.0f; Arm_LF.workspace_x_max = 800.0f;   /* LF: 前半空间 */
+    Arm_LF.workspace_y_min =   180.0f; Arm_LF.workspace_y_max = 900.0f;   /* LF: 左半空间 */
+
+    Arm_RF.workspace_x_min =   60.0f;  Arm_RF.workspace_x_max = 800.0f;   /* RF: 前半空间 */
+    Arm_RF.workspace_y_min = -900.0f; Arm_RF.workspace_y_max =  -180.0f;  /* RF: 右半空间 */
+
+    Arm_LB.workspace_x_min = -800.0f; Arm_LB.workspace_x_max =   -60.0f; /* LB: 后半空间 */
+    Arm_LB.workspace_y_min =   180.0f;  Arm_LB.workspace_y_max = 900.0f; /* LB: 左半空间 */
+
+    Arm_RB.workspace_x_min = -800.0f; Arm_RB.workspace_x_max =   -60.0f; /* RB: 后半空间 */
+    Arm_RB.workspace_y_min = -900.0f; Arm_RB.workspace_y_max =  -180.0f; /* RB: 右半空间 */
+
+    /* 所有臂初始化完成，将末端目标设置为归位点。
+     * 控制任务启动后第一个轨迹段将自动规划并执行归位运动。  */
+    return true;
 }
 
-// int16_t* planar_arm_control_cmd(int16_t* cmd_array, size_t array_size)
-// {
-//     static int16_t cmd_buffer[4] = {0}; // 静态缓冲区存储命令数据
-
-//     if (cmd_array == NULL || array_size < 4) {
-//         return NULL; // 输入无效，返回NULL
-//     }
-
-//     // 从输入数组中提取命令数据，假设前4个元素分别对应四个机械臂的目标位置
-//     for (size_t i = 0; i < 4; i++) {
-//         cmd_buffer[i] = cmd_array[i];
-//     }
-
-//     return cmd_buffer; // 返回指向命令数据的指针
-// }
-
-// bool planar_robot_arm_process_cmd(int16_t* cmd_array, size_t array_size)
-// {
-//     int16_t* cmd_buffer = planar_arm_control_cmd(cmd_array, array_size);
-//     if (cmd_buffer == NULL) {
-//         return false; // 命令处理失败
-//     }
-
-//     // 解析命令数据，更新四个机械臂的目标位置
-//     Arm_LF.end_aim_x = (float)cmd_buffer[0];
-//     Arm_RF.end_aim_x = (float)cmd_buffer[1];
-//     Arm_LB.end_aim_x = (float)cmd_buffer[2];
-//     Arm_RB.end_aim_x = (float)cmd_buffer[3];
-
-//     // 可以添加更多的命令解析逻辑，例如根据命令类型设置不同的目标位置或执行不同的动作
-
-//     return true; // 命令处理成功
-// }
+/**
+ * @brief 将四臂末端目标设为预定义归位坐标（外部坐标系）。
+ *
+ * 归位位置已通过逆解计算验证可达，且各臂处于各自象限内，
+ * 互不干涉，也不穿过机体区域。可在任意时刻调用以触发归位动作。
+ *
+ * 归位点（外部坐标系，单位 mm）：
+ *   LF (+250, +440)  RF (+250, -440)
+ *   LB (-250, +440)  RB (-250, -440)
+ */
 
 
 
@@ -698,6 +778,7 @@ Planar_Robot_Arm *planar_robot_arm_get_by_id(arm_id_e arm_id)
 }
 
 // 外部控制入口：仅更新目标位置，保留该机械臂当前肘型配置。
+// 目标超出该臂 workspace 矩形时，自动钳位到矩形内最近边界点（各轴独立钳位）。
 bool planar_robot_arm_set_target(arm_id_e arm_id, float target_x, float target_y)
 {
     Planar_Robot_Arm *arm = planar_robot_arm_get_by_id(arm_id);
@@ -705,8 +786,8 @@ bool planar_robot_arm_set_target(arm_id_e arm_id, float target_x, float target_y
         return false;
     }
 
-    arm->end_aim_x = target_x;
-    arm->end_aim_y = target_y;
+    arm->end_aim_x = clampf(target_x, arm->workspace_x_min, arm->workspace_x_max);
+    arm->end_aim_y = clampf(target_y, arm->workspace_y_min, arm->workspace_y_max);
     return true;
 }
 
@@ -896,25 +977,35 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
         return false;
     }
 
+    // 获取对应机械臂的轨迹上下文，确保每只臂独立管理轨迹状态。
     ArmTrajectoryContext *ctx = get_arm_traj_ctx(arm);
     if (ctx == NULL) {
         return false;
     }
 
+    /* 原子快照目标位置对：end_aim_x/y 可由 USB 中断（cmd_rx_feed）随时写入，
+     * 控制任务须在临界区内一次性读取，防止读到 x 新值 + y 旧值的中间态，
+     * 避免 IK 以非法坐标求解触发错误重规划和舵机指令跳变。              */
+    taskENTER_CRITICAL();
+    float snap_aim_x = arm->end_aim_x;
+    float snap_aim_y = arm->end_aim_y;
+    taskEXIT_CRITICAL();
+
     /* 首次进入或目标变化时重规划；其余周期只做轨迹采样。 */
-    bool need_replan = (!ctx->initialized) || target_changed(ctx, arm->end_aim_x, arm->end_aim_y);
+    bool need_replan = (!ctx->initialized) || target_changed(ctx, snap_aim_x, snap_aim_y);
 
     if (need_replan) {
-        /* Snapshot the user target BEFORE IK to prevent end_aim_x/y corruption
-           from polluting the replan trigger check in subsequent cycles. */
-        arm->planned_target_x = arm->end_aim_x;
-        arm->planned_target_y = arm->end_aim_y;
+        /*在启动逆运动学（IK）计算之前，先“冻结”并保存一份机器人的当前状态，以防止在计算过程中因为数据被更新而导致逻辑判断出错 */
+        arm->planned_target_x = snap_aim_x;
+        arm->planned_target_y = snap_aim_y;
+        arm->end_aim_x        = snap_aim_x;
+        arm->end_aim_y        = snap_aim_y;
 
         if (arm->state == ARM_STATE_ERROR) {
             return false;
         }
 
-        /* Solve IK once for the new target */
+        /* 逆解 */
         bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
         if (!solved) {
             arm->state = ARM_STATE_ERROR;
@@ -923,13 +1014,13 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
             return false;
         }
 
-        /* Convert target joint angles to servo step counts */
+        /* Convert target joint angles to servo step counts, clamped by per-joint software limits */
         float tgt_j1 = clampf(
             (arm->target_joint_angles[0] + 180.0f) / 360.0f * 4095.0f,
-            1024.0f, 3072.0f);
+            (float)arm->servo_pos_min[0], (float)arm->servo_pos_max[0]);
         float tgt_j2 = clampf(
             (arm->target_joint_angles[1] + 180.0f) / 360.0f * 4095.0f,
-            1024.0f, 3072.0f);
+            (float)arm->servo_pos_min[1], (float)arm->servo_pos_max[1]);
 
         /* Guard against NaN/Inf from IK numerical failure (e.g. atan2(0,0),
            sqrtf of negative, or out-of-workspace target) */
@@ -942,9 +1033,14 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
            On subsequent replans: sample current trajectory pos/vel/acc as start
            to guarantee command continuity even if previous segment is mid-flight. */
         if (!ctx->initialized) {
+            /* 冷启动保护：current_servo_positions 初始化为 0，若通信失败仍为 0，
+             * 以步进值 0 作为起点规划轨迹会让舵机从 -180° 极端位置高速冲向目标。
+             * 当两个位置均为 0（上电默认值）时推迟初始化，等待至少一帧有效反馈。 */
+            if (arm->current_servo_positions[0] == 0 && arm->current_servo_positions[1] == 0) {
+                return false;
+            }
             ctx->cmd_j1 = (float)arm->current_servo_positions[0];
-            ctx->cmd_j2 = (float)arm->current_servo_positions[1];
-            ctx->vel_j1 = 0.0f; ctx->vel_j2 = 0.0f;
+            ctx->cmd_j2 = (float)arm->current_servo_positions[1];            ctx->vel_j1 = 0.0f; ctx->vel_j2 = 0.0f;
             ctx->acc_j1 = 0.0f; ctx->acc_j2 = 0.0f;
         } else {
             update_trajectory(&ctx->planner_j1, now_ms,
@@ -989,13 +1085,13 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
     ctx->cmd_j2 = j2_cmd;
 
 
-
-    arm->target_servo_positions[0] = (int16_t)clampf(j1_cmd, 1024.0f, 3072.0f);
-    arm->target_servo_positions[1] = (int16_t)clampf(j2_cmd, 1024.0f, 3072.0f);
+    arm->target_servo_positions[0] = (int16_t)clampf(j1_cmd, (float)arm->servo_pos_min[0], (float)arm->servo_pos_max[0]);
+    arm->target_servo_positions[1] = (int16_t)clampf(j2_cmd, (float)arm->servo_pos_min[1], (float)arm->servo_pos_max[1]);
 
     arm->state = ARM_STATE_MOVING;
     return true;
 }
+
 
 
 bool controlA_loop(void)
@@ -1003,28 +1099,32 @@ bool controlA_loop(void)
     bool ok = true;
     uint32_t now_ms = HAL_GetTick();
 #ifdef movedebug
-    // LF单臂调试：每3秒在两个占位符目标点之间切换。
-    static bool lf_toggle_initialized = false;
-    static uint8_t lf_target_index = 0U;
-    static uint32_t lf_last_switch_ms = 0U;
-    const uint32_t lf_switch_interval_ms = 3000U;
+    /* ---- 运动调试模式 (movedebug) ----
+     * 每 3 秒在两组目标点之间切换，用于验证运动学和轨迹规划的正确性。
+     * P0：收拢位（各臂靠近机体）  P1：展开位（各臂向外伸展，与归位点相同）
+     * 外部坐标系，单位 mm。若需修改测试点，直接修改下面的坐标数组即可。 */
+    static bool     s_dbg_init      = false;
+    static uint8_t  s_dbg_idx       = 0U;
+    static uint32_t s_dbg_switch_ms = 0U;
+    const  uint32_t DBG_INTERVAL_MS = 3000U;
 
-    // TODO: 将下面4个占位符替换成你的实际目标点坐标（单位:mm）。
-    const float TARGET_P0_X[4]= {-50.0f , -50.0f , 50.0f ,50.0f  }; // 占位符点0 X
-    const float TARGET_P0_Y[4]= {50.0f , - 50.0f , 50.0f ,-50.0f }; // 占位符点0 Y
-    const float TARGET_P1_X[4]= {250.0f , 250.0f , -250.0f , -250.0f }; // 占位符点1 X
-    const float TARGET_P1_Y[4]= {440.0f , -440.0f , 440.0f , -440.0f }; // 占位符点1 Y
+    /* P0：收拢位（各臂向内伸展，与上电归位点一致）*/
+    const float TARGET_P0_X[4] = {  160.0f, 160.0f,  -160.0f,  -160.0f };
+    const float TARGET_P0_Y[4] = {  120.0f, -120.0f,  120.0f, -120.0f };
+    /* P1：展开位*/
+    const float TARGET_P1_X[4] = { 250.0f,  250.0f, -250.0f, -250.0f };
+    const float TARGET_P1_Y[4] = { 440.0f, -440.0f,  440.0f, -440.0f };
 
-    if (!lf_toggle_initialized) {
-        lf_toggle_initialized = true;
-        lf_last_switch_ms = (uint32_t)now_ms;
-        lf_target_index = 0U;
-    } else if (((uint32_t)now_ms - lf_last_switch_ms) >= lf_switch_interval_ms) {
-        lf_last_switch_ms = (uint32_t)now_ms;
-        lf_target_index ^= 1U;
+    if (!s_dbg_init) {
+        s_dbg_init      = true;
+        s_dbg_switch_ms = now_ms;
+        s_dbg_idx       = 0U;
+    } else if ((now_ms - s_dbg_switch_ms) >= DBG_INTERVAL_MS) {
+        s_dbg_switch_ms = now_ms;
+        s_dbg_idx ^= 1U;  /* 在 0 和 1 之间交替 */
     }
 
-    if (lf_target_index == 0U) {
+    if (s_dbg_idx == 0U) {
         planar_robot_arm_set_target(ARM_ID_LF, TARGET_P0_X[0], TARGET_P0_Y[0]);
         planar_robot_arm_set_target(ARM_ID_RF, TARGET_P0_X[1], TARGET_P0_Y[1]);
         planar_robot_arm_set_target(ARM_ID_LB, TARGET_P0_X[2], TARGET_P0_Y[2]);
@@ -1035,32 +1135,264 @@ bool controlA_loop(void)
         planar_robot_arm_set_target(ARM_ID_LB, TARGET_P1_X[2], TARGET_P1_Y[2]);
         planar_robot_arm_set_target(ARM_ID_RB, TARGET_P1_X[3], TARGET_P1_Y[3]);
     }
-#endif
-    // Phase 1: 批量读取全部舵机位置（8 次 ReadPos，集中完成）。
+#endif  /* movedebug */
+    // const float TARGET_P1_X[4] = { 380.0f,  380.0f, -380.0f, -380.0f };
+    // const float TARGET_P1_Y[4] = { 510.0f, -510.0f,  510.0f, -510.0f };
+
+    // const float TARGET_P1_X[4] = { 650.0f,  650.0f, -650.0f, -650.0f };
+    // const float TARGET_P1_Y[4] = { 400.0f, -400.0f,  400.0f, -400.0f };
+#ifdef USE_DT7_DEBUG
+    if(get_remote_control_point()->rc.s[1] == 3) 
+    {
+        //单独控制一个臂运动
+        if (get_remote_control_point()->rc.s[0] == 1)
+        {
+            if (get_remote_control_point()->rc.ch[0] > 400)
+            {
+                target_x_test[0] = TARGET_P3_X[0];
+                target_y_test[0] = TARGET_P3_Y[0];
+            }else {
+                target_x_test[0] = TARGET_P2_X[0];
+                target_y_test[0] = TARGET_P2_Y[0];
+            }
+            //LF 放出位置
+            if (get_remote_control_point()->rc.ch[0] < -400)
+            {
+                target_x_test[1] = TARGET_P3_X[1];
+                target_y_test[1] = TARGET_P3_Y[1];
+            }else {
+                target_x_test[1] = TARGET_P2_X[1];
+                target_y_test[1] = TARGET_P2_Y[1];
+            }
+            //LF 放出位置
+            //电磁阀控制
+            if(get_remote_control_point()->rc.ch[2] > 400)
+            {
+                    //LB 放出位置
+                relay_control(0, 0);
+            }else {
+                relay_control(0, 1);
+            }
+
+            if(get_remote_control_point()->rc.ch[2] < -400)
+            {
+                    //LB 放出位置
+                relay_control(1, 0);
+            }else {
+                relay_control(1, 1);
+            }
+        
+       }else if (get_remote_control_point()->rc.s[0] == 2)
+         {
+            if (get_remote_control_point()->rc.ch[0] > 400)
+            {
+          //RF
+          //放置位置
+                target_x_test[2] = TARGET_P3_X[2];
+                target_y_test[2] = TARGET_P3_Y[2];
+            
+             }else {
+                target_x_test[2] = TARGET_P2_X[2];
+                target_y_test[2] = TARGET_P2_Y[2];
+            }
+            
+            if (get_remote_control_point()->rc.ch[0] < -400)
+            {
+          //RF
+          //放置位置
+                target_x_test[3] = TARGET_P3_X[3];
+                target_y_test[3] = TARGET_P3_Y[3];
+            
+             }else {
+                target_x_test[3] = TARGET_P2_X[3];
+                target_y_test[3] = TARGET_P2_Y[3];
+            }
+
+            if(get_remote_control_point()->rc.ch[2] > 400)
+            {
+                    //LB 放出位置
+                relay_control(2, 0);
+            }else {
+                relay_control(2, 1);
+            }
+
+            if(get_remote_control_point()->rc.ch[2] < -400)
+            {
+                    //LB 放出位置
+                relay_control(3, 0);
+            }else {
+                relay_control(3, 1);
+            }
+
+         }else if(get_remote_control_point()->rc.s[0] == 3)
+         {
+            if (get_remote_control_point()->rc.ch[0] > 400)
+            {
+        //运块的收起位置
+        for (int i = 0; i < 4; i++) {
+            target_x_test[i] = TARGET_P1_X[i];
+            target_y_test[i] = TARGET_P1_Y[i];
+        }
+            }else {
+        //运块的收起位置
+                 for (int i = 0; i < 4; i++) {
+            target_x_test[i] = TARGET_P2_X[i];
+            target_y_test[i] = TARGET_P2_Y[i];
+                 }
+                }
+         }
+    }else
+    {
+        for (int i = 0; i < 4; i++) {
+            target_x_test[i] = TARGET_P0_X[i];
+            target_y_test[i] = TARGET_P0_Y[i];
+        }
+    }
+
+
+    //     if(get_remote_control_point()->rc.s[1] == 3) 
+    // {
+    //    if (get_remote_control_point()->rc.s[0] == 2)
+    // {
+    //    if (get_remote_control_point()->rc.ch[0] > 400)
+    //    {
+    //     //RF
+    //         target_x_test[1] = TARGET_P0_X[0];
+    //         target_y_test[1] = TARGET_P0_Y[0];
+    //     }else {
+    //         target_x_test[1] = TARGET_P2_X[0];
+    //         target_y_test[1] = TARGET_P2_Y[0];
+    //     }
+        
+    //    }else if (get_remote_control_point()->rc.s[0] == 2)
+    //      {
+    //       if (get_remote_control_point()->rc.ch[0] < -400)
+    //      {
+    //       //RF
+    //             target_x_test[0] = TARGET_P1_X[0];
+    //             target_y_test[0] = TARGET_P1_Y[0];
+    //       }else {
+    //             target_x_test[0] = TARGET_P3_X[0];
+    //             target_y_test[0] = TARGET_P3_Y[0];
+    //    }
+    // } 
+
+    // if (get_remote_control_point()->rc.s[0] == 1 &&
+    //     get_remote_control_point()->rc.s[1] == 3) 
+    // {
+    //     //归位，放置物块的位置
+    //     for (int i = 0; i < 4; i++) {
+    //         target_x_test[i] = TARGET_P3_X[i];
+    //         target_y_test[i] = TARGET_P3_Y[i];
+    //     }
+    // }else if (get_remote_control_point()->rc.s[0] == 3 &&
+    //           get_remote_control_point()->rc.s[1] == 3) 
+    // {
+    //     //运块的收起位置
+    //     for (int i = 0; i < 4; i++) {
+    //         target_x_test[i] = TARGET_P2_X[i];
+    //         target_y_test[i] = TARGET_P2_Y[i];
+    //     }
+    // }else if (get_remote_control_point()->rc.s[0] == 2 &&
+    //           get_remote_control_point()->rc.s[1] == 3) 
+    // {
+    //     //吸取物块的位置
+    //     for (int i = 0; i < 4; i++) {
+    //         target_x_test[i] = TARGET_P1_X[i];
+    //         target_y_test[i] = TARGET_P1_Y[i];
+    //     }
+    // }else {
+    //     for (int i = 0; i < 4; i++) {
+    //         target_x_test[i] = TARGET_P0_X[i];
+    //         target_y_test[i] = TARGET_P0_Y[i];
+    //     }
+    // }
+
+
+    /* ── 路径点状态机：P2→P3 切换时先经过 P4 ──
+     * 当目标从 P2（携带位）切换到 P3（伸直放置位）时，
+     * 先发往中间路径点 P4，停留 WP_HOLD_MS 后再前进到 P3，
+     * 避免末端轨迹突变导致机械结构冲击。            */
+    {
+        static uint8_t  s_wp_phase[4] = {0,0,0,0}; /* 0=idle/P2, 1=P4, 2=P3 */
+        static uint32_t s_wp_tick[4]  = {0,0,0,0};
+        const  uint32_t WP_HOLD_MS    = 400U;
+
+        for (int i = 0; i < 4; i++)
+        {
+            /* 判断当前期望目标是否为 P3（伸直放置位）*/
+            bool want_p3 = (fabsf(target_x_test[i] - TARGET_P3_X[i]) < 1.0f &&
+                            fabsf(target_y_test[i] - TARGET_P3_Y[i]) < 1.0f);
+
+            if (want_p3)
+            {
+                if (s_wp_phase[i] == 0)
+                {
+                    /* 刚从 P2 切换到 P3 → 先发往 P4 */
+                    s_wp_phase[i] = 1;
+                    s_wp_tick[i]  = HAL_GetTick();
+                    target_x_test[i] = TARGET_P4_X[i];
+                    target_y_test[i] = TARGET_P4_Y[i];
+                }
+                else if (s_wp_phase[i] == 1)
+                {
+                    if ((HAL_GetTick() - s_wp_tick[i]) >= WP_HOLD_MS)
+                    {
+                        /* P4 停留时间到 → 前进到 P3 */
+                        s_wp_phase[i] = 2;
+                        target_x_test[i] = TARGET_P3_X[i];
+                        target_y_test[i] = TARGET_P3_Y[i];
+                    }
+                    else
+                    {
+                        /* 仍在 P4，保持目标 */
+                        target_x_test[i] = TARGET_P4_X[i];
+                        target_y_test[i] = TARGET_P4_Y[i];
+                    }
+                }
+                /* phase == 2: 目标已是 P3，保持不变 */
+            }
+            else
+            {
+                /* 目标不是 P3 → 复位状态机 */
+                s_wp_phase[i] = 0;
+            }
+        }
+    }
+
+    planar_robot_arm_set_target(ARM_ID_LF, target_x_test[0], target_y_test[0]);
+    planar_robot_arm_set_target(ARM_ID_RF, target_x_test[1], target_y_test[1]);
+    planar_robot_arm_set_target(ARM_ID_LB, target_x_test[2], target_y_test[2]);
+    planar_robot_arm_set_target(ARM_ID_RB, target_x_test[3], target_y_test[3]);
+
+    #endif /* USE_DT7_DEBUG */
+
+
+    // 批量读取全部舵机位置（8 次 ReadPos，集中完成）。
     // 读取失败时保留缓存值，不中断后续轨迹计算和指令发送。
     (void)batch_read_all_servo_pos();
 
-    // Phase 1.5: 每周期基于最新反馈做正运动学，更新末端位置数据。
+    // 每周期基于最新反馈做正运动学，更新末端位置数据。
     planar_arm_forward_kinematics_from_cache(&Arm_LF);
     planar_arm_forward_kinematics_from_cache(&Arm_RF);
     planar_arm_forward_kinematics_from_cache(&Arm_LB);
     planar_arm_forward_kinematics_from_cache(&Arm_RB);
 
-    // Phase 2: 四臂轨迹计算（纯计算，无 I/O）
+    //四臂轨迹计算（纯计算，无 I/O）
     ok &= arm_control_step_with_trajectory(&Arm_LF, g_arm_elbow_up[0], now_ms);
     ok &= arm_control_step_with_trajectory(&Arm_RF, g_arm_elbow_up[1], now_ms);
     ok &= arm_control_step_with_trajectory(&Arm_LB, g_arm_elbow_up[2], now_ms);
     ok &= arm_control_step_with_trajectory(&Arm_RB, g_arm_elbow_up[3], now_ms);
 
-    // Phase 3: 8 舵机单次同步写入
+    //8 舵机单次同步写入
     ok &= planar_arm_all_servo_run(&Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB);
     
-#ifdef arm_FKIK_debug
-    ok &= arm_control_step(&Arm_LF, g_arm_elbow_up[0], Arm_LF.end_effector_x, Arm_LF.end_effector_y);
-    ok &= arm_control_step(&Arm_RF, g_arm_elbow_up[1], Arm_RF.end_effector_x, Arm_RF.end_effector_y);
-    ok &= arm_control_step(&Arm_LB, g_arm_elbow_up[2], Arm_LB.end_effector_x, Arm_LB.end_effector_y);
-    ok &= arm_control_step(&Arm_RB, g_arm_elbow_up[3], Arm_RB.end_effector_x, Arm_RB.end_effector_y);
-#endif
+// #ifdef arm_FKIK_debug
+//     ok &= arm_control_step(&Arm_LF, g_arm_elbow_up[0], Arm_LF.end_effector_x, Arm_LF.end_effector_y);
+//     ok &= arm_control_step(&Arm_RF, g_arm_elbow_up[1], Arm_RF.end_effector_x, Arm_RF.end_effector_y);
+//     ok &= arm_control_step(&Arm_LB, g_arm_elbow_up[2], Arm_LB.end_effector_x, Arm_LB.end_effector_y);
+//     ok &= arm_control_step(&Arm_RB, g_arm_elbow_up[3], Arm_RB.end_effector_x, Arm_RB.end_effector_y);
+// #endif
     return ok;
 
 }
@@ -1071,3 +1403,341 @@ bool planar_arm_control_loop(void)
     return controlA_loop();
 
 }
+
+
+#ifdef USE_FISH
+//此处是使用绞盘的控制逻辑
+//此处使用舵机的速度控制逻辑，
+
+const uint8_t FISH_SERVO_ID[4] = {0x15, 0x16, 0x17, 0x18}; //假设使用4个舵机控制绞盘
+
+void fish_servo_init(void)
+{
+  
+    for (int i = 0; i < 4; i++) 
+    {
+        EnableTorque(FISH_SERVO_ID[i], 1); //使能舵机
+    }  
+  
+}
+
+void fish_servo_set_speed(uint8_t servo_id, int16_t speed)
+{
+    
+
+
+}
+
+
+#endif /* USE_FISH */
+
+// 机械臂物块交接状态机
+typedef enum 
+{
+
+    BLOCK_ASSOCIATE_IDLE,            //空闲状态，等待交接指令
+    BLOCK_ASSOCIATE_TO_MIDDLE,       //准备交接，机械臂移动到交接位置
+    BLOCK_ASSOCIATE_WAIT,            //等待对方机械臂都到位
+    BLOCK_ASSOCIATE_ADSORB,          //等待一定时间吸取物块
+    BLOCK_ASSOCIATE_VALVE_CONTROL,   //电磁阀控制启动交接
+    BLOCK_ASSOCIATE_COMPLETE,        //交接完成，机械臂移动到目标位置
+
+}block_associate_state_e;
+
+block_associate_state_e LEFT;   //左臂物块交接的状态机
+block_associate_state_e RIGHT;  //右臂物块交接的状态机
+//此处是机械臂物块交接的控制逻辑
+
+/* ==============================================================
+ *  以下为第 1434 行后新增代码：机械臂物块交接状态机完整实现
+ *  不能修改此前已有的任何代码
+ *
+ *  设计说明：
+ *    支持两组交接对同时独立运行：
+ *      - 前侧 (pair_idx=0): LF(ARM_ID_LF) ↔ RF(ARM_ID_RF)
+ *      - 后侧 (pair_idx=1): LB(ARM_ID_LB) ↔ RB(ARM_ID_RB)
+ *    每对交接各有独立的状态机上下文，通过 ACTION_loop() 周期驱动。
+ *    LEFT / RIGHT 全局变量在 ACTION_loop() 末尾同步刷新，供外部查询。
+ *
+ *  交接流程：
+ *    IDLE → TO_MIDDLE(移动到交接位) → WAIT(等待就绪)
+ *    → ADSORB(吸取物块) → VALVE_CONTROL(阀切换) → COMPLETE(完成) → IDLE
+ *
+ *  使用说明：
+ *    1. 在 RTOS 任务或主循环中周期调用 ACTION_loop()（建议 10~20ms 周期）
+ *    2. 调用 associate_trigger(pair_idx) 触发指定交接对的移交流程
+ *    3. 交接过程中的空间坐标由 ASSOC_xxx 宏定义，可按需修改
+ * ============================================================== */
+
+/* ── 交接时序参数（占位符，后续根据实测调整）── */
+#define ASSOC_TIMEOUT_MS        5000U   /* 单步最大超时 (ms) */
+#define ASSOC_MOVE_DELAY_MS     1500U   /* 机械臂移动到位预估时间 (ms) */
+#define ASSOC_WAIT_DELAY_MS     500U    /* 双方到位后的稳定等待 (ms) */
+#define ASSOC_ADSORB_TIMEOUT_MS 2000U   /* 吸取物块最大等待时间 (ms) */
+#define ASSOC_VALVE_DELAY_MS    300U    /* 电磁阀切换间隔 (ms) */
+#define ASSOC_HOLD_MS           500U    /* 交接完成后保持时间 (ms) */
+
+/* ── 交接空间位置（占位坐标，外部坐标系，单位 mm，后续根据实际机械结构调整）── */
+#define ASSOC_MID_X         350.0f      /* 交接中间点 X 坐标 */
+#define ASSOC_MID_Y         0.0f        /* 交接中间点 Y 坐标 */
+#define ASSOC_DONE_LF_X     200.0f      /* LF 完成位 X 坐标 */
+#define ASSOC_DONE_LF_Y     100.0f      /* LF 完成位 Y 坐标 */
+#define ASSOC_DONE_RF_X     200.0f      /* RF 完成位 X 坐标 */
+#define ASSOC_DONE_RF_Y    -100.0f      /* RF 完成位 Y 坐标 */
+#define ASSOC_DONE_LB_X    -200.0f      /* LB 完成位 X 坐标 */
+#define ASSOC_DONE_LB_Y     100.0f      /* LB 完成位 Y 坐标 */
+#define ASSOC_DONE_RB_X    -200.0f      /* RB 完成位 X 坐标 */
+#define ASSOC_DONE_RB_Y    -100.0f      /* RB 完成位 Y 坐标 */
+
+/* ── 内部状态机上下文结构体 ──
+ *  每对交接臂独立拥有一个实例，封装当前状态、计时信息、吸附标志等。
+ */
+typedef struct {
+    block_associate_state_e state;         /* 当前主状态 */
+    uint32_t                enter_tick;    /* 进入当前状态的系统 tick */
+    uint32_t                state_timeout; /* 当前状态的超时时间 (ms)，0 表示无超时 */
+    bool                    block_grabbed; /* 物块已成功被吸附 */
+} AssociateCtx;
+
+/* 两组交接对的内部上下文：
+ *   idx 0 = 前侧 (LF ↔ RF)
+ *   idx 1 = 后侧 (LB ↔ RB)
+ */
+static AssociateCtx s_assoc_ctx[2] = {
+    { .state = BLOCK_ASSOCIATE_IDLE, .enter_tick = 0, .state_timeout = 0, .block_grabbed = false },
+    { .state = BLOCK_ASSOCIATE_IDLE, .enter_tick = 0, .state_timeout = 0, .block_grabbed = false },
+};
+
+/* ── assoc_set_state ──
+ *  功能：切换到新状态，记录进入时刻和超时时间。
+ *  参数：
+ *    pair_idx  : 交接对索引（0=前侧，1=后侧）
+ *    new_state : 目标状态
+ *    timeout_ms: 该状态的超时时间 (ms)，0 表示永不超时
+ */
+static void assoc_set_state(uint8_t pair_idx, block_associate_state_e new_state, uint32_t timeout_ms)
+{
+    if (pair_idx >= 2) {
+        return;
+    }
+    s_assoc_ctx[pair_idx].state         = new_state;
+    s_assoc_ctx[pair_idx].enter_tick    = HAL_GetTick();
+    s_assoc_ctx[pair_idx].state_timeout = timeout_ms;
+}
+
+/* ── assoc_is_timed_out ──
+ *  功能：检查当前状态是否超时。
+ *  返回 true 表示超时（仅当 state_timeout > 0 时有效）。
+ */
+static inline bool assoc_is_timed_out(const AssociateCtx *ctx)
+{
+    if (ctx == NULL || ctx->state_timeout == 0) {
+        return false;
+    }
+    return ((HAL_GetTick() - ctx->enter_tick) >= ctx->state_timeout);
+}
+
+/* ── associate_run_one_pair ──
+ *  功能：单对交接臂的状态机核心推进逻辑。
+ *  根据当前状态执行相应动作，并在条件满足时切换到下一状态。
+ *  所有状态均包含超时保护，防止流程卡死。
+ *  参数：
+ *    pair_idx: 交接对索引（0=前侧，1=后侧）
+ */
+static void associate_run_one_pair(uint8_t pair_idx)
+{
+    if (pair_idx >= 2) {
+        return;
+    }
+
+    AssociateCtx *ctx = &s_assoc_ctx[pair_idx];
+
+    /* 空闲态不执行任何动作 */
+    if (ctx->state == BLOCK_ASSOCIATE_IDLE) {
+        return;
+    }
+
+    /* 超时保护：任何非空闲状态超时后自动回退到 IDLE，
+     * 防止因机械故障、通信中断等异常导致流程死锁。 */
+    if (assoc_is_timed_out(ctx)) {
+        assoc_set_state(pair_idx, BLOCK_ASSOCIATE_IDLE, 0);
+        return;
+    }
+
+    /* ── 根据交接对索引选择对应的机械臂 ID 和电磁阀 ID ── */
+    arm_id_e armA, armB;       /* armA = 供给方, armB = 接收方 */
+    uint8_t  solenoidA, solenoidB;
+    float    done_xA, done_yA, done_xB, done_yB;
+
+    if (pair_idx == 0) {
+        /* 前侧：LF（供给方）↔ RF（接收方） */
+        armA      = ARM_ID_LF;
+        armB      = ARM_ID_RF;
+        solenoidA = SOLENOID_1;
+        solenoidB = SOLENOID_2;
+        done_xA   = ASSOC_DONE_LF_X;
+        done_yA   = ASSOC_DONE_LF_Y;
+        done_xB   = ASSOC_DONE_RF_X;
+        done_yB   = ASSOC_DONE_RF_Y;
+    } else {
+        /* 后侧：LB（供给方）↔ RB（接收方） */
+        armA      = ARM_ID_LB;
+        armB      = ARM_ID_RB;
+        solenoidA = SOLENOID_3;
+        solenoidB = SOLENOID_4;
+        done_xA   = ASSOC_DONE_LB_X;
+        done_yA   = ASSOC_DONE_LB_Y;
+        done_xB   = ASSOC_DONE_RB_X;
+        done_yB   = ASSOC_DONE_RB_Y;
+    }
+
+    /* ── 状态机主分支 ── */
+    switch (ctx->state)
+    {
+        case BLOCK_ASSOCIATE_TO_MIDDLE:
+            /* Step 1: 双方机械臂同时向交接中间位置移动。
+             * 实际轨迹规划由 controlA_loop 完成，此处仅设置目标点。
+             * 等待 MOVE_DELAY 时间后视为到位，转入下一步。 */
+            planar_robot_arm_set_target(armA, ASSOC_MID_X, ASSOC_MID_Y);
+            planar_robot_arm_set_target(armB, ASSOC_MID_X, ASSOC_MID_Y);
+            if ((HAL_GetTick() - ctx->enter_tick) >= ASSOC_MOVE_DELAY_MS) {
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_WAIT, ASSOC_TIMEOUT_MS);
+            }
+            break;
+
+        case BLOCK_ASSOCIATE_WAIT:
+            /* Step 2: 等待双方机械臂稳定就绪。
+             * 当前实现采用固定延时，后续可替换为基于末端位置误差的判断逻辑。 */
+            if ((HAL_GetTick() - ctx->enter_tick) >= ASSOC_WAIT_DELAY_MS) {
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_ADSORB, ASSOC_ADSORB_TIMEOUT_MS);
+            }
+            break;
+
+        case BLOCK_ASSOCIATE_ADSORB:
+            /* Step 3: 开启供给方电磁阀/真空泵，尝试吸附物块。
+             * 通过微动开关（g_switch_input）检测物块是否已吸附。
+             * 超时后无论是否吸附成功都继续推进，防止流程卡死。 */
+            Solenoid_Valve_control(solenoidA, 1);
+            if (g_switch_input.state[armA] != 0) {
+                ctx->block_grabbed = true;
+            }
+            if (ctx->block_grabbed) {
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_VALVE_CONTROL, ASSOC_TIMEOUT_MS);
+            }
+            /* 超时后即使未吸附也尝试交接（容错处理） */
+            if (assoc_is_timed_out(ctx)) {
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_VALVE_CONTROL, ASSOC_TIMEOUT_MS);
+            }
+            break;
+
+        case BLOCK_ASSOCIATE_VALVE_CONTROL:
+            /* Step 4: 电磁阀切换控制。
+             * 先关闭供给方电磁阀释放物块，延时后开启接收方电磁阀吸附物块。
+             * 两步之间的延时防止气路串扰导致物块掉落。 */
+            Solenoid_Valve_control(solenoidA, 0);
+            if ((HAL_GetTick() - ctx->enter_tick) >= ASSOC_VALVE_DELAY_MS) {
+                Solenoid_Valve_control(solenoidB, 1);
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_COMPLETE, ASSOC_TIMEOUT_MS);
+            }
+            break;
+
+        case BLOCK_ASSOCIATE_COMPLETE:
+            /* Step 5: 交接完成，双方机械臂移动到各自的目标完成位置。
+             * 短暂保持后自动回到 IDLE，准备接受下一次交接指令。 */
+            planar_robot_arm_set_target(armA, done_xA, done_yA);
+            planar_robot_arm_set_target(armB, done_xB, done_yB);
+            if ((HAL_GetTick() - ctx->enter_tick) >= ASSOC_HOLD_MS) {
+                ctx->block_grabbed = false;
+                assoc_set_state(pair_idx, BLOCK_ASSOCIATE_IDLE, 0);
+            }
+            break;
+
+        default:
+            /* 未知状态防御性处理：回退到 IDLE */
+            assoc_set_state(pair_idx, BLOCK_ASSOCIATE_IDLE, 0);
+            break;
+    }
+}
+
+/* ── associate_trigger ──
+ *  功能：外部触发指定交接对开始物块移交流程。
+ *  仅在交接对当前处于 IDLE 状态时才能成功触发。
+ *  参数：
+ *    pair_idx: 交接对索引（0=前侧 LF↔RF，1=后侧 LB↔RB）
+ *  返回：
+ *    true  = 成功触发（已切换到 TO_MIDDLE）
+ *    false = 触发失败（交接对正忙，流程未完成）
+ */
+bool associate_trigger(uint8_t pair_idx)
+{
+    if (pair_idx >= 2) {
+        return false;
+    }
+    if (s_assoc_ctx[pair_idx].state != BLOCK_ASSOCIATE_IDLE) {
+        /* 当前交接流程尚未完成，拒绝重复触发 */
+        return false;
+    }
+    assoc_set_state(pair_idx, BLOCK_ASSOCIATE_TO_MIDDLE, ASSOC_TIMEOUT_MS);
+    return true;
+}
+
+/* ── associate_abort ──
+ *  功能：强制中止指定交接对的当前流程，立即回到 IDLE。
+ *  可用于紧急停止或故障恢复场景。
+ *  参数：
+ *    pair_idx: 交接对索引（0=前侧，1=后侧）
+ */
+void associate_abort(uint8_t pair_idx)
+{
+    if (pair_idx >= 2) {
+        return;
+    }
+    AssociateCtx *ctx = &s_assoc_ctx[pair_idx];
+    ctx->block_grabbed = false;
+    assoc_set_state(pair_idx, BLOCK_ASSOCIATE_IDLE, 0);
+}
+
+/* ── associate_get_state ──
+ *  功能：查询指定交接对的当前状态。
+ *  参数：
+ *    pair_idx: 交接对索引（0=前侧，1=后侧）
+ *  返回：
+ *    当前状态枚举值的 uint8_t 表示，非法索引返回 BLOCK_ASSOCIATE_IDLE
+ */
+uint8_t associate_get_state(uint8_t pair_idx)
+{
+    if (pair_idx >= 2) {
+        return (uint8_t)BLOCK_ASSOCIATE_IDLE;
+    }
+    return (uint8_t)s_assoc_ctx[pair_idx].state;
+}
+
+/* ── ACTION_loop ──
+ *  功能：专用动作循环，需在 RTOS 任务或主循环中周期调用（建议 10~20ms 周期）。
+ *  负责：
+ *    1. 驱动所有交接对的状态机推进
+ *    2. 同步更新 LEFT / RIGHT 全局状态变量，供外部模块查询
+ *
+ *  集成方式示例（在 arm_control_task 或新建任务中调用）：
+ *    for (;;) {
+ *        planar_arm_control_loop();  // 原有机械臂控制
+ *        ACTION_loop();              // 新增动作处理
+ *        osDelay(5);
+ *    }
+ */
+void ACTION_loop(void)
+{
+    /* 驱动前侧交接对（LF ↔ RF）状态机 */
+    associate_run_one_pair(0);
+
+    /* 驱动后侧交接对（LB ↔ RB）状态机 */
+    associate_run_one_pair(1);
+
+    /* ── 同步外部全局状态变量 ──
+     * LEFT  = 前侧交接对的状态（LF 视角）
+     * RIGHT = 后侧交接对的状态（RB 视角）
+     * 此映射关系可根据实际业务逻辑调整。 */
+    LEFT  = s_assoc_ctx[0].state;
+    RIGHT = s_assoc_ctx[1].state;
+}
+

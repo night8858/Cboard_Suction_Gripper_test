@@ -50,6 +50,7 @@ static uint8_t vcp_is_usb_ready(void)
  *
  * @return 1=当前已连通，0=当前未连通
  */
+ 
 static uint8_t vcp_refresh_connection(void)
 {
     uint8_t connected = vcp_is_usb_ready();
@@ -133,11 +134,6 @@ uint8_t vcp_transmit(const uint8_t *buf, uint16_t len)
 void vcp_on_receive(const uint8_t *buf, uint32_t len)
 {
     if (buf == NULL) {
-        return;
-    }
-
-    /* 未连通时不接收数据，确保业务层不会拿到无效字节流 */
-    if (vcp_refresh_connection() == 0u) {
         return;
     }
 

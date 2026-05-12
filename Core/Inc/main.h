@@ -57,6 +57,22 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define BLOCK_NSPECT_LB_Pin GPIO_PIN_13
+#define BLOCK_NSPECT_LB_GPIO_Port GPIOE
+#define BLOCK_NSPECT_LF_Pin GPIO_PIN_9
+#define BLOCK_NSPECT_LF_GPIO_Port GPIOE
+#define BLOCK_NSPECT_RF_Pin GPIO_PIN_11
+#define BLOCK_NSPECT_RF_GPIO_Port GPIOE
+#define BLOCK_NSPECT_RB_Pin GPIO_PIN_14
+#define BLOCK_NSPECT_RB_GPIO_Port GPIOE
+#define RELAY1_Pin_Pin GPIO_PIN_12
+#define RELAY1_Pin_GPIO_Port GPIOB
+#define RELAY2_Pin_Pin GPIO_PIN_13
+#define RELAY2_Pin_GPIO_Port GPIOB
+#define RELAY3_Pin_Pin GPIO_PIN_14
+#define RELAY3_Pin_GPIO_Port GPIOB
+#define RELAY4_Pin_Pin GPIO_PIN_15
+#define RELAY4_Pin_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

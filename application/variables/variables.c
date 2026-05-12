@@ -1,5 +1,6 @@
 #include "variables.h"
 #include "gimbal.h"
+#include "DT7.h"
 
 /* 全局变量定义区 */
 
@@ -20,11 +21,17 @@ Gimbal_s Gimbal;
 //斜波启动函数。
 ramp_function_source_t pump_ramp;
 
+// 全局命令结构体实例定义
+all_pc_command all_pc_command_t;
+
 volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 volatile uint8_t g_system_alarm_active = 0;
 
-
 Solenoid_state_s solenoid_state;
+
+SwitchInput g_switch_input;
+    //收起位置
+
 
 //float g_motor_target_speed = 1000.0f;
 

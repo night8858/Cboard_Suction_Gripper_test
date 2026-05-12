@@ -213,17 +213,32 @@ void rFlushSCS(void)
  * 发送完成后等待回声字节到达环形缓冲区并丢弃，避免污染下一帧应答。
  * 等待超时设为 2ms，防止回声丢失时死锁。
  * ===================================================================== */
+/* s_half_duplex：置 1 时 wFlushSCS() 在发送后丢弃等量回声字节（半双工单线总线）；
+ * 置 0 时不做回声丢弃（全双工独立 TX/RX，无物理回声）。
+ * 根据实际硬件接线在 SCS_SetUART() 后调用 SCS_SetHalfDuplex() 配置。
+ * 默认 0（全双工），避免误把舵机应答当回声丢弃。 */
+static uint8_t s_half_duplex = 0U;
+
+void SCS_SetHalfDuplex(uint8_t enable)
+{
+    s_half_duplex = enable ? 1U : 0U;
+}
+
 void wFlushSCS(void)
 {
     if (wLen == 0) return;
 
-    uint8_t sent_len = wLen;   /* 记录本次发送字节数，用于丢弃等量回声 */
+    uint8_t sent_len = wLen;
     ftUart_Send(wBuf, wLen);
     wLen = 0;
 
-    /* 丢弃本帧发送产生的回声字节（半双工单线总线）。
-     * 若使用独立 TX/RX 引脚（全双工）则不会有回声，此处读到超时即退出。 */
-    uint8_t discard_buf[128];
-    (void)scs_ringbuf_read(discard_buf, sent_len, 2U);
+    /* 仅在半双工（TX/RX 物理共线）模式下丢弃回声字节。
+     * HAL_UART_Transmit() 等待 TC（传输完成）后才返回，此时所有回声字节
+     * 已进入环形缓冲区，立即读取即可清除，无需等待。
+     * 全双工模式下无回声，跳过此步骤，避免把舵机应答误认为回声丢弃。 */
+    if (s_half_duplex) {
+        uint8_t discard_buf[128];
+        (void)scs_ringbuf_read(discard_buf, sent_len, 1U);
+    }
 }
 

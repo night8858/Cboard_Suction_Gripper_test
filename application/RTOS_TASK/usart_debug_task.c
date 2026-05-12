@@ -145,15 +145,24 @@ void usartr_debug_task(void const *argument)
                 //         Arm_RF.current_servo_positions[0],
                 //         Arm_RF.current_servo_positions[1]);
 
-                uart_dma_printf(&huart6, "%d,%d,%d,%d,%d,%d,%d,%d\n", 
-                        Arm_LF.target_servo_positions[0], 
+                // uart_dma_printf(&huart6, "%d,%d,%d,%d,%d,%d,%d,%d\n", 
+                //         Arm_LF.target_servo_positions[0], 
+                //         Arm_LF.target_servo_positions[1],
+                //         Arm_RF.target_servo_positions[0],
+                //         Arm_RF.target_servo_positions[1],
+                //         Arm_LB.target_servo_positions[0],
+                //         Arm_LB.target_servo_positions[1],
+                //         Arm_RB.target_servo_positions[0],
+                //         Arm_RB.target_servo_positions[1]);
+                uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%d,%d\n", 
+                        Arm_LF.end_effector_x, 
+                        Arm_LF.end_effector_y,
+                        Arm_LF.end_aim_x,
+                        Arm_LF.end_aim_y,
+                        Arm_LF.target_servo_positions[0],
                         Arm_LF.target_servo_positions[1],
-                        Arm_RF.target_servo_positions[0],
-                        Arm_RF.target_servo_positions[1],
-                        Arm_LB.target_servo_positions[0],
-                        Arm_LB.target_servo_positions[1],
-                        Arm_RB.target_servo_positions[0],
-                        Arm_RB.target_servo_positions[1]);
+                        Arm_LF.current_servo_positions[0],
+                        Arm_LF.current_servo_positions[1]);
 
       osDelay(4);
   }

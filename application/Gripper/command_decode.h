@@ -2,7 +2,7 @@
 #define COMMAND_DECODE_H
 
 #include <stdint.h>
-
+#include "variables.h"
 /* ════════════════════════════════════════════════════════════════
  * 通讯协议帧格式常量
  * ════════════════════════════════════════════════════════════════
@@ -23,6 +23,8 @@
 #define CMD_ARM_CONTROL      0x02u  /* AA 02：Host→MCU 机械臂控制 */
 #define CMD_GIMBAL_CONTROL   0x03u  /* AA 03：Host→MCU 云台控制   */
 #define CMD_VALVE_CONTROL    0x04u  /* AA 04：Host→MCU 电磁阀控制 */
+#define CMD_ANSWER_CONTROL   0x05u  /* AA 05：Host→MCU 语音模块控制 */
+#define CMD_PUMP_CONTROL     0x06u  /* AA 06：Host→MCU 气泵控制     */
 
 /**
  * 各帧总长度（字节）: 帧头(2) + 数据区 + 帧尾(2) + CRC8(1)
@@ -58,8 +60,33 @@
  */
 #define FRAME_VALVE_CTRL_LEN  7u
 
+/**
+ * AA 05 语音模块控制帧（8字节）:
+ *   AA 05 answer(1B) 00 00 FF EE CRC
+ */
+#define FRAME_ANSWER_CTRL_LEN  8u
+
+/**
+ * AA 06 气泵控制帧（10字节）:
+ *   AA 06 on_off(1B) speed(4B float) FF EE CRC
+ */
+#define FRAME_PUMP_CTRL_LEN  10u
+
+/**
+ * AA 07 全量控制帧（58字节）:
+ *   AA 07
+ *   LFx(4B) LFy(4B) RFx(4B) RFy(4B)
+ *   LBx(4B) LBy(4B) RBx(4B) RBy(4B)
+ *   YAW(4B) PITCH(4B)
+ *   valve0(1B) valve1(1B) valve2(1B) valve3(1B)
+ *   electromagnet0(1B) electromagnet1(1B) electromagnet2(1B) electromagnet3(1B)
+ *   pump_state(1B) pump_speed(4B float)
+ *   FF EE CRC
+ */
+#define FRAME_ALL_CTRL_LEN  58u
+
 /* 接收状态机能处理的最大帧长 */
-#define FRAME_MAX_LEN        FRAME_FEEDBACK_LEN
+#define FRAME_MAX_LEN        FRAME_ALL_CTRL_LEN
 
 /* 机械臂 ID（与 arm_id_e 一致，此处重定义供上位机协议使用） */
 #define ARM_LF            0u  /* 左前 */
@@ -127,11 +154,21 @@ uint8_t crc8_calc(const uint8_t *data, uint16_t len);
  */
 void cmd_send_feedback(void);
 
+void cmd_execute_all(const all_pc_command *cmd);
+
 /**
  * @brief 处理接收到的数据流（任务循环中周期调用）
  *        内部从 VCP 缓冲区逐字节读取并送入状态机，
  *        解析完整有效帧后自动分发执行对应控制命令
  */
 void cmd_rx_process(void);
+
+/**
+ * @brief 直接将原始数据缓冲区送入接收状态机（绕过环形缓冲区）
+ *        在 CDC_Receive_FS 回调中直接调用，实现零拷贝即时解析
+ * @param buf  数据指针
+ * @param len  数据字节数
+ */
+void cmd_rx_feed(const uint8_t *buf, uint32_t len);
 
 #endif /* COMMAND_DECODE_H */

@@ -7,33 +7,24 @@
 #include "variables.h"
 #include "command_decode.h"
 #include "block_inspect.h"
+#include "DT7.h"
 
 
-void update_task(void const *argument) {
+// 机械臂状态反馈任务，周期约50ms
+// 通过串口发送当前机械臂末端位置、目标位置、当前舵机位置等信息，供上位机调试使用
+// 同时也通过这个任务周期性地处理接收到的命令并发送反馈，确保命令的及时响应和系统状态的实时监控
+
+void update_task(void const *argument) 
+{
+  remote_control_init();  // 初始化遥控器接收
   osDelay(1500);
 
   for (;;) {
-    // now = HAL_GetTick();
-    // g_system_alarm_active = 0;
 
-    // if (heartbeat_get_age_ms(HB_TASK_ARM, now) > HB_TIMEOUT_CTRL_MS ||
-    //     heartbeat_get_age_ms(HB_TASK_PUMP, now) > HB_TIMEOUT_CTRL_MS ||
-    //     heartbeat_get_age_ms(HB_TASK_MOTOR_CAN, now) > HB_TIMEOUT_CTRL_MS ||
-    //     heartbeat_get_age_ms(HB_TASK_SERVO, now) > HB_TIMEOUT_CTRL_MS ||
-    //     heartbeat_get_age_ms(HB_TASK_SOLENOID, now) > HB_TIMEOUT_CTRL_MS ||
-    //     heartbeat_get_age_ms(HB_TASK_LED_STRIP, now) > HB_TIMEOUT_SLOW_MS) {
-    //   g_system_alarm_active = 1;
-    //   uart_dma_printf(&huart6,
-    //                   "HB WARN A:%lu P:%lu M:%lu S:%lu V:%lu L:%lu\r\n",
-    //                   heartbeat_get_age_ms(HB_TASK_ARM, now),
-    //                   heartbeat_get_age_ms(HB_TASK_PUMP, now),
-    //                   heartbeat_get_age_ms(HB_TASK_MOTOR_CAN, now),
-    //                   heartbeat_get_age_ms(HB_TASK_SERVO, now),
-    //                   heartbeat_get_age_ms(HB_TASK_SOLENOID, now),
-    //                   heartbeat_get_age_ms(HB_TASK_LED_STRIP, now));
-    // }
-      cmd_send_feedback();
+      cmd_rx_process();
+      //cmd_execute_all(NULL);    /* 统一执行上位机命令 */
       block_inspect_process();
+      cmd_send_feedback();
       osDelay(20);
 
   }

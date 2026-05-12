@@ -8,13 +8,20 @@
 #define ARM_TYPE_2 1
 
 
-// 重规划阈值：当末端目标变化超过该值时触发重规划。
-#define CONTROLA_REPLAN_EPS_MM              10.0f
-// 自适应轨迹时长：按舵机步进空间距离缩放，避免高速振荡或超慢响应。
-#define CONTROLA_TRAJ_MIN_S                 0.3f    /* 最短单段轨迹时长 (s) */
-#define CONTROLA_TRAJ_MAX_S                 2.5f    /* 最长单段轨迹时长 (s) */
-#define CONTROLA_MAX_SERVO_SPEED_STEP_PER_S 1280.0f /* 舵机步进空间目标速度 (步/s) */
+/* ---- 轨迹规划参数 ---- */
+/* 重规划阈值：末端目标变化超过该距离时触发轨迹重规划 */
+#define CONTROLA_REPLAN_EPS_MM              20.0f
+/* 自适应轨迹时长上下限：防止运动过快(振荡)或过慢(响应迟钝) */
+#define CONTROLA_TRAJ_MIN_S                 0.5f    /* 单段轨迹最短时间 (s) */
+#define CONTROLA_TRAJ_MAX_S                 2.0f    /* 单段轨迹最长时间 (s) */
+/* 轨迹时长缩放基准：步进空间目标运动速度 (步/s) */
+#define CONTROLA_MAX_SERVO_SPEED_STEP_PER_S 4096.0f
 
+/* ---- 工作空间安全参数 ---- */
+/* 在最大/最小可达半径处各留出的安全余量 (mm)，
+ * 防止末端趋近全伸(theta2≈0°)或全折(theta2≈±180°)奇异构型，
+ * 避免 cos_theta2 趋近 ±1 时 IK 数值不稳定。             */
+#define ARM_WORKSPACE_MARGIN_MM             2.0f
 
 
 typedef enum
@@ -75,6 +82,19 @@ typedef struct {
     float origin_point_x_offset ; // 原点X坐标偏移
     float origin_point_y_offset ; // 原点Y坐标偏移
 
+    /* 各关节舵机步进值软件限位（0~4095 为硬件全量程）。
+     * 在 planar_robot_arm_all_init 中按各臂实际机械结构配置。
+     * IK 转步进值和轨迹输出两处均引用此字段，保证计划与执行一致。 */
+    int16_t servo_pos_min[2]; // 关节1/2最小步进值
+    int16_t servo_pos_max[2]; // 关节1/2最大步进值
+
+    /* 末端工作空间矩形限位（外部坐标系，单位 mm）。
+     * set_target 入口处自动将目标钳位到该矩形内的最近边界点。
+     * 在 planar_robot_arm_all_init 中按各臂安装位置配置。     */
+    float workspace_x_min;   /* X 轴下界 */
+    float workspace_x_max;   /* X 轴上界 */
+    float workspace_y_min;   /* Y 轴下界 */
+    float workspace_y_max;   /* Y 轴上界 */
 
 } Planar_Robot_Arm;
 
@@ -129,8 +149,7 @@ bool planar_robot_arm_set_target_with_elbow(arm_id_e arm_id,
                                             bool elbow_up);
 
 void planar_arm_forward_kinematics(Planar_Robot_Arm *arm);
-bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
-                                   bool elbow_up);
+bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm, bool elbow_up);
 bool controlA_loop(void);
 bool planar_arm_control_loop(void);
 bool planar_robot_arm_all_init(void);
@@ -142,4 +161,30 @@ void planar_robot_arm_config_init(int arm_type , Planar_Robot_Arm *arm ,
                                   float origin_point_y_offset , 
                                   float servo_angle_offset1   ,
                                   float servo_angle_offset2);
+
+/* 将四臂末端目标设为预定义归位点；控制任务下一周期起自动规划并执行归位轨迹。
+ * 归位位置已验证可达且各臂互不干涉，可在任意时刻调用以触发归位动作。        */
+void planar_robot_arm_go_home(void);
+
+/* ════════════════════════════════════════════════════════════════
+ *  物块交接动作控制接口
+ *
+ *  使用方式：
+ *    1. 在 RTOS 任务中周期调用 ACTION_loop()（建议 10~20ms 周期）
+ *    2. 调用 associate_trigger(pair_idx) 启动指定交接对的流程
+ *    3. pair_idx: 0=前侧(LF↔RF), 1=后侧(LB↔RB)
+ * ════════════════════════════════════════════════════════════════ */
+
+/** @brief 触发指定交接对开始物块移交流程（仅 IDLE 状态有效） */
+bool associate_trigger(uint8_t pair_idx);
+
+/** @brief 强制中止指定交接对的当前流程，立即回到 IDLE */
+void associate_abort(uint8_t pair_idx);
+
+/** @brief 查询指定交接对的当前状态（返回枚举值的 uint8_t 表示） */
+uint8_t associate_get_state(uint8_t pair_idx);
+
+/** @brief 专用动作循环，周期处理所有交接对状态机并同步全局状态变量 */
+void ACTION_loop(void);
+
 #endif // PLANAR_ROBOT_ARM_H

@@ -25,7 +25,7 @@ void arm_control_task(void *argument)
     //uint32_t start_time = HAL_GetTick();
     // angle_set1();
     planar_robot_arm_all_init();
-
+    osDelay(500);  // 等待机械臂上电完成自检，确保通信链路稳定后再进入控制循环
     for (;;)
     {
         // if (HAL_GetTick() - start_time >= 3000)
@@ -37,7 +37,7 @@ void arm_control_task(void *argument)
         // gripper_loop();
         // heartbeat_kick(HB_TASK_ARM, HAL_GetTick());
         // // Add arm control logic here
-        osDelay(4); // 控制周期 4ms，250Hz
+        osDelay(5); // 控制周期 5ms，200Hz
     }
     /* USER CODE END arm_control_task */
 }
