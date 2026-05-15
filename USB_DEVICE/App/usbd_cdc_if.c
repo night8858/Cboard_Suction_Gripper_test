@@ -23,10 +23,9 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include "virtual_serial_port.h"
-<<<<<<< HEAD
+
 #include "command_decode.h"
-=======
->>>>>>> e29f1d71a67c0ac9ec9949b80ff7725aff7218b9
+
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/

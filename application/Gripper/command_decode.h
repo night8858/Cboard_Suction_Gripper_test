@@ -25,6 +25,7 @@
 #define CMD_VALVE_CONTROL    0x04u  /* AA 04：Host→MCU 电磁阀控制 */
 #define CMD_ANSWER_CONTROL   0x05u  /* AA 05：Host→MCU 语音模块控制 */
 #define CMD_PUMP_CONTROL     0x06u  /* AA 06：Host→MCU 气泵控制     */
+#define CMD_ACTION_CONTROL   0x08u  /* AA 08：Host→MCU 动作控制     */
 
 /**
  * 各帧总长度（字节）: 帧头(2) + 数据区 + 帧尾(2) + CRC8(1)
@@ -71,6 +72,12 @@
  *   AA 06 on_off(1B) speed(4B float) FF EE CRC
  */
 #define FRAME_PUMP_CTRL_LEN  10u
+
+/**
+ * AA 08 动作控制帧（9字节）:
+ *   AA 08 pair_idx(1B) dir_id(1B) trigger(1B) 00 00 FF EE CRC
+ */
+#define FRAME_ACTION_CTRL_LEN  9u
 
 /**
  * AA 07 全量控制帧（58字节）:

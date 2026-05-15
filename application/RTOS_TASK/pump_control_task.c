@@ -20,8 +20,8 @@ void pump_control_task(void const * argument)
     
         /* Infinite loop */
     /* Infinite loop */
-    float target_speed = 2200.0f;
-    uint8_t prev_s0 = 0xFF, prev_s1 = 0xFF;  /* 记录上次拨杆状态 */
+    float target_speed = 2500.0f;
+
     for(;;)
     {   
         #ifdef USE_DT7_DEBUG

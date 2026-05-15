@@ -6,6 +6,8 @@
 #include "variables.h"
 
 #include "Planar_Robot_Arm.h"
+#include "action_scheduler.h"
+#include "input_arbiter.h"
 #include "gimbal.h"
 #include "pneumatic_control.h"
 
@@ -226,6 +228,7 @@ void cmd_send_feedback(void)
  *  WAIT_T2   → 等待帧尾第2字节 0xEE
  *  VERIFY    → 接收并验证 CRC8
  */
+
 typedef enum {
     RX_WAIT_H1 = 0,
     RX_WAIT_H2,
@@ -255,6 +258,7 @@ static uint8_t get_data_len_by_cmd(uint8_t cmd)
         case CMD_VALVE_CONTROL:       return (uint8_t)(FRAME_VALVE_CTRL_LEN       - 5u); /* 7-5=2:   valveID state */
         case CMD_PUMP_CONTROL:        return (uint8_t)(FRAME_PUMP_CTRL_LEN        - 5u); /* 10-5=5:  pump_state(1B) speed(4B) */
         case CMD_ANSWER_CONTROL:      return (uint8_t)(FRAME_ANSWER_CTRL_LEN      - 5u); /* 8-5=3:   answer(1B) 00 00 */
+        case CMD_ACTION_CONTROL:      return (uint8_t)(FRAME_ACTION_CTRL_LEN      - 5u); /* 9-5=4:   pair_idx(1B) dir_id(1B) trigger(1B) 00 */
         default:                      return 0u;
     }
 }
@@ -398,6 +402,13 @@ static void handle_arm_control(const uint8_t *data)
         default:
             break;
     }
+
+    /*
+     * 通知输入仲裁器更新 PC 缓冲区，使仲裁器在下一周期
+     * 能将此数据写入 target_x_test/y_test。
+     * 注意：必须放在 all_pc_command_t 赋值之后。
+     */
+    input_arbiter_update_pc(&all_pc_command_t);
 }
 
 /**
@@ -470,6 +481,32 @@ static void handle_pump_control(const uint8_t *data)
     all_pc_command_t.pump_target_speed = (pump_on != 0u) ? speed : 0.0f;
 }
 
+/**
+ * @brief 解析 AA 08 动作控制命令并执行动作触发/中止
+ *        帧数据区：[pair_idx(1B)] [dir_id(1B)] [trigger(1B)] [00(1B)]
+ *
+ *        trigger=1 → 调用 associate_trigger(pair_idx, dir_id)
+ *        trigger=0 → 调用 associate_abort(pair_idx)
+ *
+ * @param data  数据区起始指针
+ */
+static void handle_action_control(const uint8_t *data)
+{
+    uint8_t pair_idx = data[0];
+    uint8_t dir_id   = data[1];
+    uint8_t trigger  = data[2];
+
+    /* 参数合法性校验 */
+    if (pair_idx >= 2u || dir_id > 1u) {
+        return;
+    }
+
+    if (trigger != 0u) {
+        associate_trigger(pair_idx, dir_id);
+    } else {
+        associate_abort(pair_idx);
+    }
+}
 
 
 /* ════════════════════════════════════════════════════════════════
@@ -519,6 +556,21 @@ void cmd_execute_all(const all_pc_command *cmd)
 
     /* ── 气泵控制（通过模块 API） ── */
     pump_speed_set(cmd->pump_target_speed);
+    /* ── 动作控制（通过 action_scheduler API） ──
+     * action_trigger=1 时触发交接, =0 时中止.
+     * 与 AA 08 帧的 handle_action_control 等效, 但通过 all_pc_command 统一入口. */
+    if (cmd->action_trigger != 0u) {
+        associate_trigger(cmd->action_pair_idx, cmd->action_dir_id);
+    } else if (cmd->action_pair_idx < 2u) {
+        /* trigger=0 且 pair_idx 合法时视为中止指令 */
+        associate_abort(cmd->action_pair_idx);
+    }
+    /*
+     * 将 PC 指令数据同步至输入仲裁器。
+     * input_arbiter_resolve() 在控制循环中按优先级
+     * 将仲裁结果写入 target_x_test/y_test。
+     */
+    input_arbiter_update_pc(cmd);
 }
 
 /**
@@ -555,6 +607,10 @@ static void cmd_dispatch_frame(const uint8_t *buf, uint8_t len)
 
         case CMD_ANSWER_CONTROL:
             handle_answer_control(data);
+            break;
+
+        case CMD_ACTION_CONTROL:
+            handle_action_control(data);
             break;
         default:
             /* 未知命令字，忽略 */

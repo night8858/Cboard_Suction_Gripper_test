@@ -12,6 +12,7 @@
 #include "gimbal.h"
 #include "DT7.h"
 #include "block_inspect.h"
+#include "action_scheduler.h"
 
 #define APP_SERVO_COUNT 8
 #define APP_LED_STRIP_PIXELS 30
@@ -58,6 +59,11 @@ typedef struct
 	uint8_t LB_Electromagnet_target_state; // 左后电磁铁目标状态，0=关闭，1=打开
 	uint8_t RB_Electromagnet_target_state; // 右后电磁铁目标状态，0=关闭，1=打开
 
+	/* 新增：动作控制指令（由 AA 08 帧写入） */
+	uint8_t action_trigger;		/* 0=无动作，1=触发交接 */
+	uint8_t action_pair_idx;	/* 交接对索引（ASSOC_PAIR_FRONT/REAR） */
+	uint8_t action_dir_id;		/* 交接方向（LEFT_TO_RIGHT/RIGHT_TO_LEFT） */
+
 }all_pc_command;
 
 
@@ -79,6 +85,12 @@ extern RC_ctrl_t rc_ctrl;   //遥控器数据结构体
 extern all_pc_command all_pc_command_t;  //全局命令结构体实例定义
 
 extern SwitchInput g_switch_input;        //物块检测微动开关状态结构体实例定义
+
+/* 交接对状态全局变量 (兼容旧 LEFT/RIGHT 名称)
+ * 类型定义: action_scheduler.h -> block_associate_state_e
+ * 实际值由 ACTION_loop() 每周期刷新                          */
+extern block_associate_state_e LEFT;     //前侧交接对(LF↔RF)状态
+extern block_associate_state_e RIGHT;    //后侧交接对(LB↔RB)状态
 
 extern volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 extern volatile uint8_t g_system_alarm_active;

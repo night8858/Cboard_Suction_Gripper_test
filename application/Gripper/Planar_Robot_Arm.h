@@ -12,8 +12,8 @@
 /* 重规划阈值：末端目标变化超过该距离时触发轨迹重规划 */
 #define CONTROLA_REPLAN_EPS_MM              20.0f
 /* 自适应轨迹时长上下限：防止运动过快(振荡)或过慢(响应迟钝) */
-#define CONTROLA_TRAJ_MIN_S                 0.5f    /* 单段轨迹最短时间 (s) */
-#define CONTROLA_TRAJ_MAX_S                 2.0f    /* 单段轨迹最长时间 (s) */
+#define CONTROLA_TRAJ_MIN_S                 0.2f    /* 单段轨迹最短时间 (s) */
+#define CONTROLA_TRAJ_MAX_S                 1.0f    /* 单段轨迹最长时间 (s) */
 /* 轨迹时长缩放基准：步进空间目标运动速度 (步/s) */
 #define CONTROLA_MAX_SERVO_SPEED_STEP_PER_S 4096.0f
 
@@ -21,7 +21,13 @@
 /* 在最大/最小可达半径处各留出的安全余量 (mm)，
  * 防止末端趋近全伸(theta2≈0°)或全折(theta2≈±180°)奇异构型，
  * 避免 cos_theta2 趋近 ±1 时 IK 数值不稳定。             */
-#define ARM_WORKSPACE_MARGIN_MM             2.0f
+#define ARM_WORKSPACE_MARGIN_MM             0.0f
+
+/* IK 可达性检测阈值：IK 解算出的舵机步进值经 servo_pos_min/max 钳位后，
+ * 若钳位前后的差值超过此阈值，判定目标不可达，拒绝执行本次重规划。
+ * 50 步 ≈ 4.4°（4095 步对应 360°），用于防止 IK 输出超出物理限位
+ * 时被静默截断导致末端偏离目标。                                    */
+#define IK_CLAMP_THRESHOLD_STEP             50
 
 
 typedef enum
@@ -169,14 +175,25 @@ void planar_robot_arm_go_home(void);
 /* ════════════════════════════════════════════════════════════════
  *  物块交接动作控制接口
  *
+ *  【重要】交接状态机已迁移至 action_scheduler 模块.
+ *   以下函数为兼容性包装 (wrapper), 委托给 action_scheduler 中的实现.
+ *   新代码应直接引用 action_scheduler.h 并调用其中的 API.
+ *
  *  使用方式：
- *    1. 在 RTOS 任务中周期调用 ACTION_loop()（建议 10~20ms 周期）
- *    2. 调用 associate_trigger(pair_idx) 启动指定交接对的流程
+ *    1. 在 RTOS 任务中周期调用 ACTION_loop()（建议 5~20ms 周期）
+ *    2. 调用 associate_trigger(pair_idx, dir_id) 启动指定交接对的流程
  *    3. pair_idx: 0=前侧(LF↔RF), 1=后侧(LB↔RB)
+ *    4. dir_id: 0=左→右(L→R), 1=右→左(R→L)
  * ════════════════════════════════════════════════════════════════ */
 
-/** @brief 触发指定交接对开始物块移交流程（仅 IDLE 状态有效） */
-bool associate_trigger(uint8_t pair_idx);
+/**
+ * @brief 触发指定交接对开始物块移交流程（仅 IDLE 状态有效）
+ * @param pair_idx  交接对索引: 0=前侧(LF↔RF), 1=后侧(LB↔RB)
+ * @param dir_id    交接方向: 0=左→右, 1=右→左
+ * @retval true   成功触发
+ * @retval false  触发失败 (交接对正忙或参数非法)
+ */
+bool associate_trigger(uint8_t pair_idx, uint8_t dir_id);
 
 /** @brief 强制中止指定交接对的当前流程，立即回到 IDLE */
 void associate_abort(uint8_t pair_idx);
