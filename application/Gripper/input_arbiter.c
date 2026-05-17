@@ -14,6 +14,7 @@
 #include "input_arbiter.h"
 #include "Planar_Robot_Arm.h"
 #include "pneumatic_control.h"
+#include "action_scheduler.h"
 #include "DT7.h"
 #include "stm32f4xx_hal.h"
 
@@ -65,6 +66,23 @@ static RC_ctrl_t s_rc_snapshot;
 
 /** @brief RC 数据是否已初始化 (上电后首次收到有效帧后置 true) */
 static bool s_rc_initialized = false;
+
+/** @brief 输入源最后更新时间戳 (ms, 来自 HAL_GetTick)
+ *
+ * s_rc_last_feed_ms  — 最后一次 input_arbiter_update_rc() 调用时刻
+ * s_pc_last_feed_ms  — 最后一次 input_arbiter_update_pc() 调用时刻
+ *
+ * 用于实现思路 A (数据新鲜度看门狗):
+ *   若 (当前时刻 - 最后更新时间) > INPUT_FRESHNESS_TIMEOUT_MS,
+ *   则认为该来源数据过期, 拒绝消费.
+ *
+ * 冷启动时两个时间戳均为 0, is_ready() 返回 false,
+ * 直到至少一个来源被首次更新 (思路 B: 初始化就绪门).            */
+static uint32_t s_rc_last_feed_ms = 0;
+static uint32_t s_pc_last_feed_ms = 0;
+
+/** @brief PC 是否收到过有效数据 (用于 is_ready 判断) */
+static bool s_pc_ever_valid = false;
 
 /* ════════════════════════════════════════════════════════════════
  * 路径点状态机 (迁移自 controlA_loop)
@@ -133,18 +151,15 @@ static void waypoint_smooth_filter(void)
 }
 
 /* ════════════════════════════════════════════════════════════════
- * 遥控器 → 目标位置映射 (迁移自 controlA_loop 的 USE_DT7_DEBUG 块)
- *
- * 原始逻辑:
- *   拨杆 s[1]==3 时进入手动控制模式:
- *     s[0]==1 → 分别控制 LF(x=ch0) + 电磁阀(ch2)
- *     s[0]==2 → 分别控制 RF(x=ch0) + 电磁阀(ch2)
- *     s[0]==3 → 四臂群控 P1↔P2 切换
- *
- * 此函数保留原始实现逻辑不变, 仅将 relay_control 调用保留在此处
- * (因为 RC 手动电磁阀控制属于输入层职责).
- * ════════════════════════════════════════════════════════════════ */
-
+rc_map_to_targets() 指令一览:
+  s[1]==3:
+    s[0]==1  → LF/RF 单臂 P2↔P3 + 电磁阀 ch2
+    s[0]==2  → RF/LB 单臂 P2↔P3 + 电磁阀 ch2
+    s[0]==3  → 四臂群控 P1↔P2
+  s[0]==2, s[1]==2:
+    ch[3] 上升沿 → 切换气泵启停
+  s[0]==1, s[1]==1:              ← 新迁移
+    ch[0] > 400 → 触发后侧交接(LB↔RB, 左→右)
 /** @brief 遥控器摇杆/拨杆阈值: 绝对值超过此值视为有效操作 */
 #define RC_CH_THRESHOLD  400
 
@@ -168,7 +183,7 @@ static void rc_map_to_targets(void)
         if (rc->rc.s[0] == 1)
         {
             /* ── s[0]==1: 单独控制 LF(前左侧)臂 ── */
-            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+            if (rc->rc.ch[0] < -RC_CH_THRESHOLD)
             {
                 target_x_test[0] = TARGET_P3_X[0];
                 target_y_test[0] = TARGET_P3_Y[0];
@@ -180,7 +195,7 @@ static void rc_map_to_targets(void)
             }
 
             /* 摇杆反向: 控制 RF 臂 */
-            if (rc->rc.ch[0] < -RC_CH_THRESHOLD)
+            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
             {
                 target_x_test[1] = TARGET_P3_X[1];
                 target_y_test[1] = TARGET_P3_Y[1];
@@ -192,7 +207,7 @@ static void rc_map_to_targets(void)
             }
 
             /* 电磁阀控制: ch2 映射到 relay 0/1 */
-            if (rc->rc.ch[2] > RC_CH_THRESHOLD)
+            if (rc->rc.ch[2] < -RC_CH_THRESHOLD)
             {
                 relay_control(0, 0);
             }
@@ -201,7 +216,7 @@ static void rc_map_to_targets(void)
                 relay_control(0, 1);
             }
 
-            if (rc->rc.ch[2] < -RC_CH_THRESHOLD)
+            if (rc->rc.ch[2] > RC_CH_THRESHOLD)
             {
                 relay_control(1, 0);
             }
@@ -213,7 +228,7 @@ static void rc_map_to_targets(void)
         else if (rc->rc.s[0] == 2)
         {
             /* ── s[0]==2: 单独控制 RF/LB/RB 臂 ── */
-            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+            if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
             {
                 target_x_test[2] = TARGET_P3_X[2];
                 target_y_test[2] = TARGET_P3_Y[2];
@@ -224,7 +239,7 @@ static void rc_map_to_targets(void)
                 target_y_test[2] = TARGET_P2_Y[2];
             }
 
-            if (rc->rc.ch[0] < -RC_CH_THRESHOLD)
+            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
             {
                 target_x_test[3] = TARGET_P3_X[3];
                 target_y_test[3] = TARGET_P3_Y[3];
@@ -236,7 +251,7 @@ static void rc_map_to_targets(void)
             }
 
             /* 电磁阀控制: ch2 映射到 relay 2/3 */
-            if (rc->rc.ch[2] > RC_CH_THRESHOLD)
+            if (rc->rc.ch[2] < -RC_CH_THRESHOLD)
             {
                 relay_control(2, 0);
             }
@@ -245,7 +260,7 @@ static void rc_map_to_targets(void)
                 relay_control(2, 1);
             }
 
-            if (rc->rc.ch[2] < -RC_CH_THRESHOLD)
+            if (rc->rc.ch[2] > RC_CH_THRESHOLD)
             {
                 relay_control(3, 0);
             }
@@ -273,6 +288,50 @@ static void rc_map_to_targets(void)
             }
         }
     }
+            /* ════════════════════════════════════════════════════════
+         * 气泵手动控制: s[0]==1 且 s[1]==1 时,
+         * ch[3] 上升沿 (>RC_CH_THRESHOLD) 切换气泵启停.
+         *
+         * 使用 static 变量记录 ch[3] 上一次电平状态,
+         * 实现边沿检测: 仅当 ch[3] 从低→高跳变时触发一次,
+         * 避免摇杆持续推高时反复切换导致气泵抖动.            */
+    if (rc->rc.s[0] == 2 )
+    {
+        if(rc->rc.s[1] == 2)
+        {
+            static bool s_ch3_was_high = false;
+            bool ch3_high = (rc->rc.ch[3] > RC_CH_THRESHOLD);
+            /* 上升沿: 上一次 ≤ 阈值, 本次 > 阈值 → 切换 */
+            if (ch3_high && !s_ch3_was_high) {
+                extern PumpCtrl g_pump;  /* pneumatic_control.c 定义 */
+                pump_ctrl_toggle(&g_pump);
+            }
+            s_ch3_was_high = ch3_high;
+            }
+    }
+
+        /* ════════════════════════════════════════════════════════
+         * 物块交接触发: s[0]==1 且 s[1]==1 时,
+         * ch[0] 高电平 (>RC_CH_THRESHOLD) 触发后侧交接对
+         * (LB↔RB), 方向: 左→右.
+         *
+         * 此逻辑从 action_scheduler.c 的 ACTION_recvie() 迁移,
+         * 统一所有 RC 遥控器指令在 rc_map_to_targets() 中处理.  */
+    if (rc->rc.s[0] == 1 && rc->rc.s[1] == 1) {
+        if (rc->rc.ch[0] > RC_CH_THRESHOLD) {
+            associate_trigger(1, ARM_DIR_L_TO_R);
+        }
+        else if (rc->rc.ch[0] < -RC_CH_THRESHOLD) {
+            associate_trigger(1, ARM_DIR_R_TO_L);
+        }
+        if (rc->rc.ch[2] > RC_CH_THRESHOLD) {
+            associate_trigger(0, ARM_DIR_L_TO_R);
+        }
+        else if (rc->rc.ch[2] < -RC_CH_THRESHOLD) {
+            associate_trigger(0, ARM_DIR_R_TO_L);
+        }
+    }
+    
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -307,6 +366,9 @@ static void pc_map_to_targets(void)
 void input_arbiter_init(void)
 {
     s_rc_initialized = false;
+    s_pc_ever_valid  = false;
+    s_rc_last_feed_ms = 0;
+    s_pc_last_feed_ms = 0;
     for (int i = 0; i < 4; i++) {
         s_pc_data_valid[i] = false;
         s_pc_target_x[i]   = 0.0f;
@@ -328,6 +390,8 @@ void input_arbiter_update_rc(const RC_ctrl_t *rc)
     /* 全量拷贝: RC_ctrl_t 结构体较小 (约 20 字节), 拷贝开销可忽略 */
     s_rc_snapshot   = *rc;
     s_rc_initialized = true;
+    /* 记录本次喂入时间戳, 供新鲜度看门狗使用 (思路 A) */
+    s_rc_last_feed_ms = HAL_GetTick();
 }
 
 /**
@@ -365,6 +429,15 @@ void input_arbiter_update_pc(const all_pc_command *cmd)
     if (!isnan(val) && !isinf(val)) { s_pc_target_x[3] = val; s_pc_data_valid[3] = true; }
     val = cmd->RB_target_y;
     if (!isnan(val) && !isinf(val)) { s_pc_target_y[3] = val; s_pc_data_valid[3] = true; }
+
+    /* 若本次至少有一个臂的坐标有效, 标记 PC 已就绪并更新时间戳 */
+    for (int i = 0; i < 4; i++) {
+        if (s_pc_data_valid[i]) {
+            s_pc_ever_valid   = true;
+            s_pc_last_feed_ms = HAL_GetTick();
+            break;
+        }
+    }
 }
 
 /**
@@ -385,27 +458,75 @@ void input_arbiter_resolve(bool action_active)
         return;
     }
 
-    /*
-     * 优先级: PC > RC
-     * 先检查是否有 PC 数据待消费 (s_pc_data_valid[]).
-     * 若有 PC 数据, 使用 PC 数据; 否则降级到 RC 手柄.
-     */
-    bool has_pc = false;
-    for (int i = 0; i < 4; i++) {
-        if (s_pc_data_valid[i]) {
-            has_pc = true;
-            break;
-        }
+    /* ════════════════════════════════════════════════════════════
+     * 思路 A: 数据新鲜度看门狗 (Data Freshness Watchdog)
+     *
+     * 检查 RC 和 PC 两个输入源的最后更新时间.
+     * 若两个来源均过期 (超过 INPUT_FRESHNESS_TIMEOUT_MS 无更新),
+     * 则本轮不修改 target_x_test/y_test, 机械臂保持在上一个
+     * 有效指令位置不动.
+     *
+     * 这解决了:
+     *   - RC 掉线后快照残留导致持续运动的问题
+     *   - PC 断连后回退到过期 RC/无数据的问题
+     * ════════════════════════════════════════════════════════════ */
+    uint32_t now = HAL_GetTick();
+    bool rc_fresh = s_rc_initialized &&
+                    ((now - s_rc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
+    bool pc_fresh = s_pc_ever_valid &&
+                    ((now - s_pc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
+
+    /* uint32 减法对 HAL_GetTick 溢出是安全的 (模 2^32 运算) */
+
+    if (!rc_fresh && !pc_fresh) {
+        /* 两个输入源均过期: 本轮不修改 target,
+         * 机械臂保持在最后有效指令位置.
+         * waypoint_smooth_filter 也跳过 (没有新目标无需平滑).   */
+        return;
     }
 
-    if (has_pc) {
+    /*
+     * 优先级: PC > RC
+     * PC 优先仅在 PC 数据新鲜时生效; 若 PC 过期但 RC 新鲜,
+     * 则降级到 RC 映射.                                        */
+    if (pc_fresh) {
         /* PC 模式: 仅消费已 valid 的臂, 未 valid 的臂保持 target 不变 */
         pc_map_to_targets();
-    } else {
+    } else if (rc_fresh) {
         /* RC 模式: 遥控器数据映射到 target 数组 (保留原有 DT7 控制逻辑) */
         rc_map_to_targets();
     }
+    /* 两者都过期已在上面 return, 此处不会到达 else 分支 */
 
     /* 路径点平滑: P2→P3 切换通过 P4 中继 */
     waypoint_smooth_filter();
+}
+
+/**
+ * @brief 查询输入仲裁器是否已就绪 (思路 B: 初始化就绪门)
+ *
+ * 就绪条件: RC 或 PC 中至少一个来源收到过有效数据且处于新鲜期内.
+ *
+ * 冷启动时 RC DMA 尚未收到第一帧、PC 也未连接,
+ * s_rc_last_feed_ms 和 s_pc_last_feed_ms 均为 0,
+ * 本函数返回 false, 调用方应跳过运动控制.
+ *
+ * 一旦任一来源更新 (input_arbiter_update_rc/pc 被调用),
+ * 对应时间戳变为非零, 本函数返回 true.
+ *
+ * 注意: 若运行中两个来源均掉线超过 INPUT_FRESHNESS_TIMEOUT_MS,
+ *       则 is_ready() 会重新变为 false (因为两个源都过期).
+ *       此时 resolve() 也会停止写入 target, 双重保护.
+ *
+ * @retval true   至少一个输入源就绪且新鲜
+ * @retval false  无有效输入源, 应跳过运动控制
+ */
+bool input_arbiter_is_ready(void)
+{
+    uint32_t now = HAL_GetTick();
+    bool rc_ready = s_rc_initialized &&
+                    ((now - s_rc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
+    bool pc_ready = s_pc_ever_valid &&
+                    ((now - s_pc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
+    return rc_ready || pc_ready;
 }

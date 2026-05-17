@@ -23,7 +23,6 @@
 #include <math.h>
 #include "action_scheduler.h"
 #include "Planar_Robot_Arm.h"
-#include "DT7.h"
 #include "pneumatic_control.h"
 #include "stm32f4xx_hal.h"
 
@@ -51,10 +50,15 @@ extern float target_y_test[4];
  * 按 arm_id 索引: [ARM_ID_LF, ARM_ID_RF, ARM_ID_LB, ARM_ID_RB]
  * ════════════════════════════════════════════════════════════════ */
 
-/* 交接中间位置 — 前侧/后侧共用 X 坐标, Y 对称 */
-#define ASSOC_MID_X_FRONT    550.0f      /**< 前侧交接中间 X (mm) */
-#define ASSOC_MID_X_REAR    -600.0f      /**< 后侧交接中间 X (mm) */
-#define ASSOC_MID_Y          40.0f       /**< 交接中间 |Y| (mm, armA=+Y, armB=-Y) */
+/* 交接中间位置 — 前侧/后侧共用 X 坐标, Y 对称
+ *
+ * 【注意】交接位置需确保各臂舵机在限位范围内可达.
+ * 当前取大 X 值(接近完全伸展)配合小 Y 值, 需验证
+ * 实际舵机限位是否支持. 若机械臂未能移动到交接位,
+ * 请检查 IK_CLAMP_THRESHOLD_STEP 检测是否触发.          */
+#define ASSOC_MID_X_FRONT    710.0f      /**< 前侧交接中间 X (mm), 留 J1 3°裕量 */
+#define ASSOC_MID_X_REAR    -710.0f      /**< 后侧交接中间 X (mm) */
+#define ASSOC_MID_Y          60.0f       /**< 交接中间 |Y| (mm, armA=+Y, armB=-Y) */
 
 /* 各臂安全位置 (占位数值, 后续根据实际机械结构调整) */
 static const float ASSOC_SAFE_X[4] = {
@@ -342,23 +346,14 @@ static void associate_run_one_pair(uint8_t pair_idx, uint8_t dir_id)
  * ════════════════════════════════════════════════════════════════ */
 
 /**
- * @brief 接收遥控器控制指令, 在满足条件时触发交接流程
+ * @brief 接收遥控器控制指令 (占位)
  *
- * 当前逻辑: 当 DT7 遥控器 s[0]==1 且 s[1]==1 且 ch[0]>400 时,
- * 触发后侧交接对 (LB↔RB) 的左→右方向交接.
- *
- * 此函数保留原始实现逻辑不变, 仅独立为单独函数以便维护和替换.
+ * 遥控器交接触发已迁移至 input_arbiter.c 的 rc_map_to_targets(),
+ * 统一所有 RC 指令处理. 此处保留空函数以维持 API 兼容.
  */
 void ACTION_recvie(void)
 {
-    if (get_remote_control_point()->rc.s[0] == 1 && get_remote_control_point()->rc.s[1] == 1)
-    {
-        if (get_remote_control_point()->rc.ch[0] > 400)
-        {
-            /* 触发后侧交接对(LB↔RB), 方向: 左→右 */
-            associate_trigger(1, ARM_DIR_L_TO_R);
-        }
-    }
+    /* 遥控器交接触发已迁移至 input_arbiter.c */
 }
 
 /* ════════════════════════════════════════════════════════════════

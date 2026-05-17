@@ -13,7 +13,7 @@
  *
  * 集成方式:
  *   在 arm_control_task 循环中:
- *     input_arbiter_update_rc(&rc_ctrl);
+ *     input_arbiter_update_rc(get_remote_control_point());
  *     input_arbiter_resolve(g_action_state != ACTION_STATE_IDLE);
  *     ACTION_loop();
  *     planar_arm_control_loop();
@@ -26,6 +26,21 @@
 #include <stdint.h>
 #include "variables.h"
 #include "DT7.h"
+
+/* ════════════════════════════════════════════════════════════════
+ * 安全参数
+ * ════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief 输入数据新鲜度超时 (ms)
+ *
+ * 若 RC 或 PC 输入的最后更新时间距今超过此阈值,
+ * 该来源被视为"过期", 输入仲裁器拒绝消费过期数据,
+ * 机械臂保持最后有效指令位置不动.
+ *
+ * 500ms 对应 RC 约 50 帧丢失 (100Hz), 或 PC 约 25 个控制周期无数据.
+ */
+#define INPUT_FRESHNESS_TIMEOUT_MS  500U
 
 /* ════════════════════════════════════════════════════════════════
  * 公共 API
@@ -75,5 +90,19 @@ void input_arbiter_update_pc(const all_pc_command *cmd);
  * @param action_active  当前是否有动作正在执行 (true=跳过仲裁)
  */
 void input_arbiter_resolve(bool action_active);
+
+/**
+ * @brief 查询输入仲裁器是否已就绪
+ *
+ * 就绪条件: RC 或 PC 中至少一个来源收到过有效数据且处于新鲜期内.
+ * 冷启动时返回 false, 直到首次有效输入到达.
+ *
+ * 调用方 (arm_control_task) 应在调用 planar_arm_control_loop()
+ * 前检查此函数, 未就绪时跳过运动控制以保障安全.
+ *
+ * @retval true   至少一个输入源就绪, 可以执行运动控制
+ * @retval false  无有效输入源, 应跳过运动控制
+ */
+bool input_arbiter_is_ready(void);
 
 #endif /* INPUT_ARBITER_H */

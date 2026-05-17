@@ -29,6 +29,11 @@
  * 时被静默截断导致末端偏离目标。                                    */
 #define IK_CLAMP_THRESHOLD_STEP             50
 
+/* IK 软警告阈值：钳位差值超过此值仅作标记, 不阻断运动.
+ * 200 步 ≈ 17.6°，表示目标与物理可达范围有显著偏差,
+ * 但机械臂仍应尽可能逼近 (使用钳位后的安全值).               */
+#define IK_CLAMP_WARN_STEP                  200
+
 
 typedef enum
 {
@@ -171,6 +176,23 @@ void planar_robot_arm_config_init(int arm_type , Planar_Robot_Arm *arm ,
 /* 将四臂末端目标设为预定义归位点；控制任务下一周期起自动规划并执行归位轨迹。
  * 归位位置已验证可达且各臂互不干涉，可在任意时刻调用以触发归位动作。        */
 void planar_robot_arm_go_home(void);
+
+/**
+ * @brief 启动归位阶段 — 阻塞式驱动四臂到达 TARGET_P0
+ *
+ * 冷启动后调用, 内部循环执行舵机反馈读取 + IK + 轨迹 + 舵机输出,
+ * 直到四臂末端均到达 target_x_test/y_test 目标 (容差默认 25mm),
+ * 或超时 (默认 5000ms) 后强制返回.
+ *
+ * 必须在 RTOS 任务上下文中调用 (内部使用 osDelay).
+ * 调用前需确保 planar_robot_arm_all_init() 已完成.
+ *
+ * @param timeout_ms   归位超时 (ms), 超时后强制返回
+ * @param tolerance_mm 到位判定容差 (mm)
+ * @retval true   四臂在超时内到达目标
+ * @retval false  超时未到达 (可能舵机卡死或目标不可达)
+ */
+bool planar_robot_arm_startup_home(uint32_t timeout_ms, float tolerance_mm);
 
 /* ════════════════════════════════════════════════════════════════
  *  物块交接动作控制接口

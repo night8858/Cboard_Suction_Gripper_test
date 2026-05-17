@@ -126,7 +126,7 @@ float target_x_test[4];
 float target_y_test[4];
 
     const float TARGET_P0_X[4] = {  200.0f, 200.0f,  -200.0f,  -200.0f };
-    const float TARGET_P0_Y[4] = {  240.0f, -240.0f,  240.0f, -240.0f };
+    const float TARGET_P0_Y[4] = {  300.0f, -300.0f,  300.0f, -300.0f };
     //机械臂伸直吸取物块的位置
     const float TARGET_P1_X[4] = { 425.0f,  425.0f, -425.0f, -425.0f };
     const float TARGET_P1_Y[4] = { 425.0f, -425.0f,  425.0f, -425.0f };
@@ -353,17 +353,27 @@ void planar_robot_arm_config_init(int arm_type , Planar_Robot_Arm *arm ,
 
     } 
     //田飞宇设计的机械臂参数，单位mm
-    else if (arm_type == ARM_TYPE_2)
-     {
-    // 配置机械臂类型2的参数
-        arm->link1_length = 120.0f;
-        arm->link2_length = 80.0f;
-    }
+    // else if (arm_type == ARM_TYPE_2)
+    //  {
+    // // 配置机械臂类型2的参数
+    //     arm->link1_length = 120.0f;
+    //     arm->link2_length = 80.0f;
+    // }
 
     arm->current_joint_angles[0] = 0.0f;
     arm->current_joint_angles[1] = 0.0f;
     arm->current_servo_positions[0] = 0;
     arm->current_servo_positions[1] = 0;
+
+    /* 舵机指令安全初始化:
+     * target_servo_positions 若保持 0, 对应舵机角度 -180° (极限).
+     * 冷启动首周期若 ReadPos 失败, 轨迹上下文返回 false,
+     * 但 controlA_loop 中 planar_arm_all_servo_run 不受返回值约束,
+     * 会将 position=0 发送给所有舵机导致剧烈异常运动.
+     * 初始化为 2048(≈0°) 作为安全默认值, 确保即使轨迹未就绪
+     * 也不会向舵机发送危险指令.                                    */
+    arm->target_servo_positions[0] = 2048;
+    arm->target_servo_positions[1] = 2048;
 
     /* 默认软件限位覆盖全量程，由 planar_robot_arm_all_init 按各臂实际结构覆盖 */
     arm->servo_pos_min[0] = 0;    arm->servo_pos_max[0] = 4095;
@@ -611,51 +621,6 @@ bool planar_arm_inverse_kinematics(Planar_Robot_Arm *arm,
     return true;
 }
 
-// // 单臂控制步骤：逆运动学 -> 发送位置指令（反馈由调用方在外部统一完成，避免重复读取）
-// static __attribute__((unused)) bool arm_control_step(Planar_Robot_Arm *arm, bool elbow_up ,float x, float y)
-// {
-//     if (arm == NULL) {
-//         return false;
-//     }
-//     //planar_arm_forward_kinematics(arm); // 获取当前末端位姿，更新arm结构体中的位置信息
-//     // 逆运动学求解目标关节角
-//     arm->end_aim_x = x;
-//     arm->end_aim_y = y;
-//     bool solved = planar_arm_inverse_kinematics(arm, elbow_up);
-//     if (!solved) 
-//     {
-//         arm->state = ARM_STATE_ERROR;
-//         EnableTorque(arm->SERVO_ID1, 0);
-//         EnableTorque(arm->SERVO_ID2, 0);
-//         return false;
-//     }
-
-//     arm->state = ARM_STATE_MOVING;
-
-//     // 3. 将目标关节角转换为舵机位置并同步写入
-//     arm->target_servo_positions[0] =  ((arm->target_joint_angles[0]  + 180.0f) / 360.0f * 4095.0f);
-//     arm->target_servo_positions[1] =  ((arm->target_joint_angles[1]  + 180.0f) / 360.0f * 4095.0f);
-
-//     arm->target_servo_positions[0] = (int16_t)clampf(arm->target_servo_positions[0], 1024.0f, 3072.0f);
-//     arm->target_servo_positions[1] = (int16_t)clampf(arm->target_servo_positions[1], 1024.0f, 3072.0f);
-//     // 保留转换逻辑，发送接口在此路径暂未启用。
-//     // (void)arm->target_servo_positions[0];
-//     // (void)arm->target_servo_positions[1];
-//     uint8_t  ID[2]       = {arm->SERVO_ID1, arm->SERVO_ID2}; // 舵机ID数组
-//     int16_t  Position[2] = {arm->target_servo_positions[0], arm->target_servo_positions[1]}; // 目标位置数组
-//     uint16_t Speed[2]   = {0, 0}; // 速度数组
-//     uint8_t  ACC[2]      = {0, 0}; // 加速度数组
-
-//     // WritePosEx(arm->SERVO_ID1, arm->target_servo_positions[0], Speed[0], ACC[0]);
-//     // osDelay(1);
-//     // WritePosEx(arm->SERVO_ID2, arm->target_servo_positions[1], Speed[1], ACC[1]);
-
-//     /* 同步写入两个舵机目标位置：SCSerail（USART1 RXNE 中断）统一管理总线，
-//      * 此处直接发送，无需额外 osDelay。                                     */
-//     //SyncWritePosEx(ID, 2, Position, Speed, ACC);
-
-//     return true;
-// }
 
 
 // 四臂同时控制函数，批量发送位置指令,各个臂测试完后使用。
@@ -775,17 +740,17 @@ bool planar_robot_arm_all_init(void)
      * 因此各臂统一使用较大的对称边界，不在此处做象限硬分割。
      * 原版本将各臂限制在各自象限内（如 LF y_min=0），导致 Y=0 成为
      * 不可跨越的禁线，是 |Y|<100 无法达到的原因之一。              */
-    Arm_LF.workspace_x_min = -800.0f; Arm_LF.workspace_x_max = 800.0f;
-    Arm_LF.workspace_y_min = -900.0f; Arm_LF.workspace_y_max = 900.0f;
+    Arm_LF.workspace_x_min = 0.0f; Arm_LF.workspace_x_max = 800.0f;
+    Arm_LF.workspace_y_min = 0.0f; Arm_LF.workspace_y_max = 900.0f;
 
-    Arm_RF.workspace_x_min = -800.0f; Arm_RF.workspace_x_max = 800.0f;
-    Arm_RF.workspace_y_min = -900.0f; Arm_RF.workspace_y_max = 900.0f;
+    Arm_RF.workspace_x_min = 0.0f; Arm_RF.workspace_x_max = 800.0f;
+    Arm_RF.workspace_y_min = -900.0f; Arm_RF.workspace_y_max = 0.0f;
 
-    Arm_LB.workspace_x_min = -800.0f; Arm_LB.workspace_x_max = 800.0f;
-    Arm_LB.workspace_y_min = -900.0f; Arm_LB.workspace_y_max = 900.0f;
+    Arm_LB.workspace_x_min = -800.0f; Arm_LB.workspace_x_max = 0.0f;
+    Arm_LB.workspace_y_min = 0.0f;  Arm_LB.workspace_y_max = 900.0f;
 
-    Arm_RB.workspace_x_min = -800.0f; Arm_RB.workspace_x_max = 800.0f;
-    Arm_RB.workspace_y_min = -900.0f; Arm_RB.workspace_y_max = 900.0f;
+    Arm_RB.workspace_x_min = -800.0f; Arm_RB.workspace_x_max = 0.0f;
+    Arm_RB.workspace_y_min = -900.0f; Arm_RB.workspace_y_max = 0.0f;
 
     /* 所有臂初始化完成，将末端目标设置为归位点。
      * 控制任务启动后第一个轨迹段将自动规划并执行归位运动。*/
@@ -876,6 +841,62 @@ bool planar_robot_arm_set_target_with_elbow(arm_id_e arm_id,
 
     g_arm_elbow_up[index] = elbow_up;
     return true;
+}
+
+/**
+ * @brief 启动归位阶段 — 阻塞式驱动四臂到达 target_x_test 目标
+ *
+ * 内部循环: 读舵机 → 正运动学 → IK+轨迹+舵机输出,
+ * 直到四臂末端均在 tolerance_mm 内到达目标, 或超时.
+ *
+ * 调用前必须已通过 planar_robot_arm_all_init() 设置目标位置
+ * 并完成舵机总线初始化.
+ *
+ * @param timeout_ms   归位超时 (ms), 通常 3000~5000
+ * @param tolerance_mm 到位判定容差 (mm), 通常 15~30
+ * @retval true   四臂均到位
+ * @retval false  超时 (舵机可能卡死或目标不可达)
+ */
+bool planar_robot_arm_startup_home(uint32_t timeout_ms, float tolerance_mm)
+{
+    uint32_t start = HAL_GetTick();
+
+    while (1) {
+        /* 读取全部 8 舵机反馈 + 正运动学四臂 */
+        // (void)batch_read_all_servo_pos();
+        // planar_arm_forward_kinematics_from_cache(&Arm_LF);
+        // planar_arm_forward_kinematics_from_cache(&Arm_RF);
+        // planar_arm_forward_kinematics_from_cache(&Arm_LB);
+        // planar_arm_forward_kinematics_from_cache(&Arm_RB);
+
+        /* IK + 轨迹规划 + 舵机输出 */
+        planar_arm_control_loop();
+
+        /* 检查四臂是否均已到达 target_x_test/y_test */
+        bool all_homed = true;
+        const Planar_Robot_Arm *arms[4] = {
+            &Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB
+        };
+        for (int i = 0; i < 4; i++) {
+            float dx = fabsf(arms[i]->end_effector_x - target_x_test[i]);
+            float dy = fabsf(arms[i]->end_effector_y - target_y_test[i]);
+            if (dx > tolerance_mm || dy > tolerance_mm) {
+                all_homed = false;
+                break;
+            }
+        }
+
+        if (all_homed) {
+            return true;
+        }
+
+        /* 超时保护: 避免舵机卡死或目标不可达导致死循环 */
+        if ((uint32_t)(HAL_GetTick() - start) > timeout_ms) {
+            return false;
+        }
+
+        osDelay(4);
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1095,32 +1116,26 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
             return false;
         }
 
-        /* ---- IK 可达性检测 ----
-         * 对比 IK 解算出的原始舵机步进值 (raw_j1/2) 与被 servo_pos_min/max
-         * 钳位后的值 (tgt_j1/2)。若差值超过 IK_CLAMP_THRESHOLD_STEP，
-         * 说明 IK 要求的关节角度超出了舵机物理限位，目标点在当前机械
-         * 结构下不可达。
+        /* ---- IK 可达性检测 (软警告, 不阻断) ----
          *
-         * 不可达时的处理策略：
-         *   - 已初始化：记录目标位置到 last_cmd（避免下周期重复进入重规划），
-         *     但跳过轨迹生成——仍继续采样上一段有效轨迹，舵机保持最后指令。
-         *   - 未初始化：直接返回 false，下周期重试。                     */
+         * 对比 IK 解算出的原始舵机步进值 (raw_j1/2) 与被 servo_pos_min/max
+         * 钳位后的值 (tgt_j1/2)。始终使用钳位后的安全值继续轨迹规划,
+         * 机械臂尽可能逼近目标 —— 舵机限位本身就是硬件最后一道防线.
+         *
+         * 【修复原因】原实现在此处用 goto skip_replan 阻断轨迹生成,
+         * 导致两个严重问题:
+         *   1. 冷启动 P0 被拒 + 上下文永不初始化 → 上电后不运动
+         *   2. 交接 MID 被拒 + last_cmd 锁定 → 永久卡死在原位
+         * 修改为: 仅做软警告, 不阻断, 不跳转.                   */
         {
-            bool j1_clamped = (fabsf(raw_j1 - tgt_j1) > (float)IK_CLAMP_THRESHOLD_STEP);
-            bool j2_clamped = (fabsf(raw_j2 - tgt_j2) > (float)IK_CLAMP_THRESHOLD_STEP);
+            float clamp1 = fabsf(raw_j1 - tgt_j1);
+            float clamp2 = fabsf(raw_j2 - tgt_j2);
 
-            if (j1_clamped || j2_clamped) {
-                /* 记录目标到 last_cmd，避免反复进入重规划耗费 CPU */
-                ctx->last_cmd_x = snap_aim_x;
-                ctx->last_cmd_y = snap_aim_y;
-
-                if (!ctx->initialized) {
-                    return false; /* 冷启动不可达：下周期重试 */
-                }
-
-                /* 已初始化：跳过后续重规划，现有轨迹继续采样 */
-                goto skip_replan;
+            if (clamp1 > (float)IK_CLAMP_WARN_STEP || clamp2 > (float)IK_CLAMP_WARN_STEP) {
+                /* 截断量显著: 目标在物理上不完全可达,
+                 * 但机械臂仍应以钳位后安全值运动以尽量逼近. */
             }
+            /* 始终使用钳位值 tgt_j1/j2, 不阻断, 不跳转 */
         }
 
         if (!ctx->initialized) {
@@ -1164,10 +1179,6 @@ static bool arm_control_step_with_trajectory(Planar_Robot_Arm *arm, bool elbow_u
         ctx->initialized = true;
     }
 
-skip_replan:
-    /* 轨迹采样：若本轮完成重规划，采样新轨迹；若因 IK 不可达跳过了
-     * 重规划 (goto skip_replan)，则继续采样上一段有效轨迹，保证舵机
-     * 位置连续不跳变。                                              */
     // 采样轨迹得到本控制周期目标点。若轨迹结束，输出会自动钳位到终点。
     float j1_cmd = ctx->planner_j1.current_segment.pf;
     float j2_cmd = ctx->planner_j2.current_segment.pf;
@@ -1190,45 +1201,6 @@ bool controlA_loop(void)
 {
     bool ok = true;
     uint32_t now_ms = HAL_GetTick();
-#ifdef movedebug
-    /* ---- 运动调试模式 (movedebug) ----
-     * 每 3 秒在两组目标点之间切换，用于验证运动学和轨迹规划的正确性。
-     * P0：收拢位（各臂靠近机体）  P1：展开位（各臂向外伸展，与归位点相同）
-     * 外部坐标系，单位 mm。若需修改测试点，直接修改下面的坐标数组即可。 */
-    static bool     s_dbg_init      = false;
-    static uint8_t  s_dbg_idx       = 0U;
-    static uint32_t s_dbg_switch_ms = 0U;
-    const  uint32_t DBG_INTERVAL_MS = 3000U;
-
-    /* P0：收拢位（各臂向内伸展，与上电归位点一致）*/
-    const float TARGET_P0_X[4] = {  160.0f, 160.0f,  -160.0f,  -160.0f };
-    const float TARGET_P0_Y[4] = {  120.0f, -120.0f,  120.0f, -120.0f };
-    /* P1：展开位*/
-    const float TARGET_P1_X[4] = { 250.0f,  250.0f, -250.0f, -250.0f };
-    const float TARGET_P1_Y[4] = { 440.0f, -440.0f,  440.0f, -440.0f };
-
-    if (!s_dbg_init) {
-        s_dbg_init      = true;
-        s_dbg_switch_ms = now_ms;
-        s_dbg_idx       = 0U;
-    } else if ((now_ms - s_dbg_switch_ms) >= DBG_INTERVAL_MS) {
-        s_dbg_switch_ms = now_ms;
-        s_dbg_idx ^= 1U;  /* 在 0 和 1 之间交替 */
-    }
-
-    if (s_dbg_idx == 0U) {
-        planar_robot_arm_set_target(ARM_ID_LF, TARGET_P0_X[0], TARGET_P0_Y[0]);
-        planar_robot_arm_set_target(ARM_ID_RF, TARGET_P0_X[1], TARGET_P0_Y[1]);
-        planar_robot_arm_set_target(ARM_ID_LB, TARGET_P0_X[2], TARGET_P0_Y[2]);
-        planar_robot_arm_set_target(ARM_ID_RB, TARGET_P0_X[3], TARGET_P0_Y[3]);
-    } else {
-        planar_robot_arm_set_target(ARM_ID_LF, TARGET_P1_X[0], TARGET_P1_Y[0]);
-        planar_robot_arm_set_target(ARM_ID_RF, TARGET_P1_X[1], TARGET_P1_Y[1]);
-        planar_robot_arm_set_target(ARM_ID_LB, TARGET_P1_X[2], TARGET_P1_Y[2]);
-        planar_robot_arm_set_target(ARM_ID_RB, TARGET_P1_X[3], TARGET_P1_Y[3]);
-    }
-#endif  /* movedebug */
-
     /* ════════════════════════════════════════════════════════════════
      * 注意: DT7 遥控器处理逻辑和 P2→P3 路径点状态机已迁移至:
      *   - input_arbiter.c   (RC 数据处理 + waypoint_smooth_filter)
@@ -1262,13 +1234,20 @@ bool controlA_loop(void)
     planar_arm_forward_kinematics_from_cache(&Arm_RB);
 
     //四臂轨迹计算（纯计算，无 I/O）
-    ok &= arm_control_step_with_trajectory(&Arm_LF, g_arm_elbow_up[0], now_ms);
-    ok &= arm_control_step_with_trajectory(&Arm_RF, g_arm_elbow_up[1], now_ms);
-    ok &= arm_control_step_with_trajectory(&Arm_LB, g_arm_elbow_up[2], now_ms);
-    ok &= arm_control_step_with_trajectory(&Arm_RB, g_arm_elbow_up[3], now_ms);
+    bool traj_ok = true;
+    traj_ok &= arm_control_step_with_trajectory(&Arm_LF, g_arm_elbow_up[0], now_ms);
+    traj_ok &= arm_control_step_with_trajectory(&Arm_RF, g_arm_elbow_up[1], now_ms);
+    traj_ok &= arm_control_step_with_trajectory(&Arm_LB, g_arm_elbow_up[2], now_ms);
+    traj_ok &= arm_control_step_with_trajectory(&Arm_RB, g_arm_elbow_up[3], now_ms);
 
-    //8 舵机单次同步写入
-    ok &= planar_arm_all_servo_run(&Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB);
+    /* 仅当四臂轨迹均成功时才发送舵机同步指令.
+     * 冷启动首周期若 ReadPos 失败, trajectory 返回 false,
+     * target_servo_positions 尚未更新, 跳过写入避免发送危险指令.  */
+    if (traj_ok) {
+        ok &= planar_arm_all_servo_run(&Arm_LF, &Arm_RF, &Arm_LB, &Arm_RB);
+    } else {
+        ok = false;
+    }
     
     return ok;
 

@@ -34,6 +34,20 @@ void arm_control_task(void *argument)
     planar_robot_arm_all_init();
     input_arbiter_init();  /* 初始化输入仲裁器 */
     osDelay(500);  // 等待机械臂上电完成自检，确保通信链路稳定后再进入控制循环
+
+    /* ════════════════════════════════════════════════════════════
+     * 启动归位阶段 (Startup Homing Phase)
+     *
+     * 冷启动后机械臂先到达 TARGET_P0 安全位置,
+     * 待四臂全部就位后再进入正常的 PC/RC 控制循环.
+     * 实现位于 Planar_Robot_Arm.c, 封装了舵机反馈+IK+轨迹+输出.
+     * ════════════════════════════════════════════════════════════ */
+    {
+        const uint32_t HOME_TIMEOUT_MS  = 3000U;
+        const float    HOME_TOLERANCE_MM = 25.0f;
+        planar_robot_arm_startup_home(HOME_TIMEOUT_MS, HOME_TOLERANCE_MM);
+    }
+
     for (;;)
     {
         /*
@@ -48,10 +62,26 @@ void arm_control_task(void *argument)
          *   - 动作执行时，路径点优先于手动控制
          *   - 各模块职责单一，互不耦合
          */
-        input_arbiter_update_rc(&rc_ctrl);
+        input_arbiter_update_rc(get_remote_control_point());
         input_arbiter_resolve(action_get_global_state() != ACTION_STATE_IDLE);
         ACTION_loop();  // 物块交接动作控制循环，需周期调用以驱动状态机推进
-        planar_arm_control_loop();
+
+        /* ════════════════════════════════════════════════════════
+         * 思路 B: 初始化就绪门 (Initialization Gate)
+         *
+         * 冷启动时 RC DMA 尚未收到第一帧、PC 也未连接,
+         * input_arbiter_is_ready() 返回 false.
+         * 此时跳过机械臂运动控制, 舵机保持在待机/当前位置,
+         * 直到至少一个有效输入源到达.
+         *
+         * 运行中若两个输入源均掉线超过
+         * INPUT_FRESHNESS_TIMEOUT_MS (500ms),
+         * is_ready() 也会返回 false, 触发安全停止.
+         * ════════════════════════════════════════════════════════ */
+        if (input_arbiter_is_ready()) 
+        {
+            planar_arm_control_loop();
+        }
         // gripper_loop();
         // heartbeat_kick(HB_TASK_ARM, HAL_GetTick());8
         // // Add arm control logic here
