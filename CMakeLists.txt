@@ -72,6 +72,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/block_inspect.c
     application/Gripper/input_arbiter.c
     application/Gripper/action_scheduler.c
+    application/Gripper/Dof4_Arm.c
+    application/Gripper/Dof4_Collision.c
+    application/Gripper/Trajectory_Planning.c
     application/variables/variables.c
     application/Algorithm/PID.c
     application/Algorithm/user_lib.c

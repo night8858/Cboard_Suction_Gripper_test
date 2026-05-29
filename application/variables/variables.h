@@ -13,6 +13,7 @@
 #include "DT7.h"
 #include "block_inspect.h"
 #include "action_scheduler.h"
+#include "Dof4_Arm.h"
 
 #define APP_SERVO_COUNT 8
 #define APP_LED_STRIP_PIXELS 30

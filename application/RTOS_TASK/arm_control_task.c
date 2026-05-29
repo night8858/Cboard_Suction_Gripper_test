@@ -12,9 +12,13 @@
 #include "planar_robot_arm.h"
 #include "action_scheduler.h"
 #include "input_arbiter.h"
+#include "Dof4_Arm.h"
+#include "Dof4_Collision.h"
+
+#define DOF4_ARM
 
 
-
+#ifdef PLANAR_ARM
 /// 机械臂控制任务
 /// 负责机械臂的整体控制流程，包括任务规划、运动学计算、轨迹规划、关节控制和位置反馈等。
 /// 目前是控制四个机械臂的代码
@@ -89,3 +93,48 @@ void arm_control_task(void *argument)
     }
     /* USER CODE END arm_control_task */
 }
+
+#endif /* PLANAR_ARM */
+
+#ifdef DOF4_ARM
+/// 机械臂控制任务
+/// 负责机械臂的整体控制流程，包括任务规划、运动学计算、轨迹规划、关节控制和位置反馈等。
+/// 目前是控制两个4dof机械臂的代码
+///
+
+void arm_control_task(void *argument)
+{
+    Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
+    osDelay(500);
+
+    for (;;)
+    {
+        uint32_t now_ms = HAL_GetTick();
+
+        /*
+         * 1. 设置目标位姿 —— 仅测试右臂
+         * Z 方向约束（theta=q, q2∈[-2.70,0]）：arm 水平时 Z≈0.022，
+         * q2 为负时 arm 向下。target_z 须≤0.022，否则 IK → JOINT_LIMIT。
+         * 钳位到 workspace 边界防止明显不可达目标传入。
+         */
+        {
+            Dof4_Pose target = {0.30f, -0.0f, -0.10f, 0.0f};
+            Dof4_clamp_to_workspace(&g_dof4_arm_right, &target);
+            Dof4_arm_set_target(&g_dof4_arm_right, target.x, target.y, target.z, target.pitch);
+            Dof4_arm_set_target(&g_dof4_arm_right, g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y, 
+                                                        g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch);
+
+        }
+
+        /* 2. 一步式控制循环 */
+        Dof4_Status st = Dof4_dual_arm_control_loop(&g_dof4_arm_left, &g_dof4_arm_right, now_ms);
+        if (st != DOF4_STATUS_OK) {
+            /* 调试：st=5→JOINT_LIMIT(降Z) 4→IK_UNREACHABLE 8→COMM_FAIL */
+        }
+
+        osDelay(5); // 200 Hz
+    }
+    /* USER CODE END arm_control_task */
+}
+
+#endif /* PLANAR_ARM */

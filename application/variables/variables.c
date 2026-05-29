@@ -15,6 +15,10 @@ Planar_Robot_Arm Arm_RF;       //右前
 Planar_Robot_Arm Arm_LB;       //左后
 Planar_Robot_Arm Arm_RB;       //右后
 
+Dof4_Arm g_dof4_arm_left;
+Dof4_Arm g_dof4_arm_right;
+
+
 //云台实例定义
 Gimbal_s Gimbal;
 

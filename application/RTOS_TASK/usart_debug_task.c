@@ -21,6 +21,10 @@ extern Planar_Robot_Arm Arm_RF;       //右前
 extern Planar_Robot_Arm Arm_LB;       //左后
 extern Planar_Robot_Arm Arm_RB;       //右后
 
+extern Dof4_Arm g_dof4_arm_left;
+extern Dof4_Arm g_dof4_arm_right;
+
+
 void usartr_debug_task(void const *argument) 
 {
   osDelay(1600);
@@ -154,16 +158,39 @@ void usartr_debug_task(void const *argument)
                 //         Arm_LB.target_servo_positions[1],
                 //         Arm_RB.target_servo_positions[0],
                 //         Arm_RB.target_servo_positions[1]);
-                uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%d,%d\n", 
-                        Arm_LF.end_effector_x, 
-                        Arm_LF.end_effector_y,
-                        Arm_LF.end_aim_x,
-                        Arm_LF.end_aim_y,
-                        Arm_LF.target_servo_positions[0],
-                        Arm_LF.target_servo_positions[1],
-                        Arm_LF.current_servo_positions[0],
-                        Arm_LF.current_servo_positions[1]);
-
+                // uart_dma_printf(&huart6, "%f,%f,%f,%f,%d,%d,%d,%d\n", 
+                //         Arm_LF.end_effector_x, 
+                //         Arm_LF.end_effector_y,
+                //         Arm_LF.end_aim_x,
+                //         Arm_LF.end_aim_y,
+                //         Arm_LF.target_servo_positions[0],
+                //         Arm_LF.target_servo_positions[1],
+                //         Arm_LF.current_servo_positions[0],
+                //         Arm_LF.current_servo_positions[1]);
+        //  uart_dma_printf(
+        // &huart6, "%4.3f, %4.3f, %4.3f, %4.3f\n",
+        // g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y,
+        // g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch);
+      //   uart_dma_printf(
+      //   &huart6, "%4.3f, %4.3f, %4.3f, %4.3f, %d, %d, %d, %d ,%4.3f, %4.3f, %4.3f, %4.3f\n",
+      //   g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y,
+      //   g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch,
+      //   g_dof4_arm_right.servo_pos[0], g_dof4_arm_right.servo_pos[1],
+      //   g_dof4_arm_right.servo_pos[2], g_dof4_arm_right.servo_pos[3],
+      // g_dof4_arm_right.joint_actual.q[0], g_dof4_arm_right.joint_actual.q[1],
+      // g_dof4_arm_right.joint_actual.q[2], g_dof4_arm_right.joint_actual.q[3]);
+        uart_dma_printf(
+        &huart6, "%4.3f, %4.3f, %4.3f, %4.3f,%4.3f, %4.3f, %4.3f, %4.3f ,%4.3f, %4.3f, %4.3f, %4.3f\n",
+        g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y,
+        g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch,
+        g_dof4_arm_right.joint_target.q[0], g_dof4_arm_right.joint_target.q[1],
+        g_dof4_arm_right.joint_target.q[2], g_dof4_arm_right.joint_target.q[3],
+        g_dof4_arm_right.joint_actual.q[0], g_dof4_arm_right.joint_actual.q[1],
+        g_dof4_arm_right.joint_actual.q[2], g_dof4_arm_right.joint_actual.q[3]);
+      //         uart_dma_printf(
+      //   &huart6, "%4.3f, %4.3f, %4.3f, %4.3f\n",
+      // g_dof4_arm_right.joint_actual.q[0], g_dof4_arm_right.joint_actual.q[1],
+      // g_dof4_arm_right.joint_actual.q[2], g_dof4_arm_right.joint_actual.q[3]);
       osDelay(4);
   }
   /* USER CODE END usart_debug_task */
