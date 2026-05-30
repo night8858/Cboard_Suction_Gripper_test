@@ -92,6 +92,13 @@ void input_arbiter_update_pc(const all_pc_command *cmd);
 void input_arbiter_resolve(bool action_active);
 
 /**
+ * @brief 执行 4DOF 输入仲裁, 将 RC 手动控制映射到右臂目标位姿。
+ *
+ * @param action_active 当前是否有动作正在执行(true=跳过仲裁)
+ */
+void input_arbiter_resolve_4dof(bool action_active);
+
+/**
  * @brief 查询输入仲裁器是否已就绪
  *
  * 就绪条件: RC 或 PC 中至少一个来源收到过有效数据且处于新鲜期内.

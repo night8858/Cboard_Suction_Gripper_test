@@ -129,10 +129,12 @@
 #include <string.h>
 
 #ifndef DOF4_HOST_TEST
+#include "cmsis_os.h"
 #include "SCS.h"
 #include "SCSCL.h"
 #include "SCSerail.h"
 #include "SMS_STS.h"
+#include "stm32f4xx_hal.h"
 #include "usart.h"
 #endif
 
@@ -198,8 +200,12 @@
 
 /** @brief 几何解算退化阈值。 */
 #define DOF4_GEOM_EPS 1.0e-6f
+/** @brief J1 轴线附近保持当前方位角的水平距离阈值，单位 m。 */
+#define DOF4_AXIS_SINGULAR_EPS_M 0.001f
 /** @brief 2R 余弦定理数值容差。 */
 #define DOF4_COS_EPS 1.0e-5f
+/** @brief Startup pose control-loop period, in ms. */
+#define DOF4_STARTUP_CONTROL_PERIOD_MS 5U
 
 /* URDF joint origins/rpy are kept in meters/radians and applied as:
  * T_parent_child = Origin(xyz, rpy) * Rot(axis, q).
@@ -262,6 +268,28 @@ extern Dof4_Arm g_dof4_arm_right;
 
 static Dof4_CartesianPlanner g_planner_left;
 static Dof4_CartesianPlanner g_planner_right;
+
+#ifdef DOF4_HOST_TEST
+static uint32_t g_dof4_host_tick_ms;
+#endif
+
+static uint32_t dof4_get_tick_ms(void)
+{
+#ifndef DOF4_HOST_TEST
+    return HAL_GetTick();
+#else
+    return g_dof4_host_tick_ms;
+#endif
+}
+
+static void dof4_delay_ms(uint32_t delay_ms)
+{
+#ifndef DOF4_HOST_TEST
+    osDelay(delay_ms);
+#else
+    g_dof4_host_tick_ms += delay_ms;
+#endif
+}
 
 /**
  * @brief 将浮点值限制到指定范围。
@@ -403,11 +431,9 @@ static Dof4_Status solve_ik_candidate(const Dof4_Arm *arm,
     const float dx = target->x - base[0] - arm->cfg.tcp_offset[0];
     const float dy = target->y - base[1] - arm->cfg.tcp_offset[1];
     const float planar_dist = sqrtf(dx * dx + dy * dy);
-    if (planar_dist < DOF4_GEOM_EPS) {
-        return DOF4_STATUS_IK_UNREACHABLE;    /* 目标在基座正上方，退化 */
-    }
-
-    const float q1 = atan2f(dy, dx);          /* J1 = 目标方位角 */
+    const float q1 = (planar_dist < DOF4_AXIS_SINGULAR_EPS_M)
+                         ? clamp_joint_angle_rad(arm, 0U, arm->joint_actual.q[0])
+                         : atan2f(dy, dx);    /* 轴线附近保持当前 J1，避免 atan2(0,0) 退化 */
     const float r  = planar_dist - arm->cfg.shoulder_r;   /* 径向（去 shoulder） */
     const float z  = target->z - base[2] - arm->cfg.shoulder_z - arm->cfg.tcp_offset[2]; /* 高度（去 shoulder + tcp） */
 
@@ -477,12 +503,26 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
     }
 
     if (Dof4_cartesian_target_changed(planner, &arm->target_pose)) {
-        const float duration = Dof4_cartesian_compute_duration(&arm->current_pose,
+        Dof4_Pose plan_start = arm->current_pose;
+
+        if (planner->running) {
+            Dof4_Pose old_sample;
+            Dof4_Status sample_st = Dof4_cartesian_planner_sample(planner, now_ms, &old_sample);
+            if (sample_st == DOF4_STATUS_OK) {
+                plan_start = old_sample;
+            } else if (planner->has_last_sample) {
+                plan_start = planner->last_sample_pose;
+            }
+        } else if (planner->has_last_sample) {
+            plan_start = planner->last_sample_pose;
+        }
+
+        const float duration = Dof4_cartesian_compute_duration(&plan_start,
                                                                &arm->target_pose,
                                                                arm->cfg.cart_vel_mps,
                                                                arm->cfg.pitch_vel_rps);
         Dof4_Status st = Dof4_cartesian_planner_plan(planner,
-                                                     &arm->current_pose,
+                                                     &plan_start,
                                                      &arm->target_pose,
                                                      now_ms,
                                                      duration);
@@ -508,17 +548,45 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
 
     Dof4_JointState limited_joints;
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
-        limited_joints.q[i] = clamp_joint_angle_rad(arm, i, joints->q[i]);
+        if (arm->cfg.servo_sign[i] == 0) {
+            return DOF4_STATUS_BAD_CONFIG;
+        }
+
+        if (arm->cfg.arm_id == DOF4_ARM_RIGHT && i == 0U) {
+            limited_joints.q[i] = clamp_float(joints->q[i],
+                                              arm->cfg.joint_min[i],
+                                              arm->cfg.joint_max[i]);
+        } else {
+            const float relative_q = joints->q[i] - arm->cfg.servo_offset[i];
+            const float limited_relative_q = clamp_float(relative_q,
+                                                         arm->cfg.joint_min[i],
+                                                         arm->cfg.joint_max[i]);
+            limited_joints.q[i] = limited_relative_q + arm->cfg.servo_offset[i];
+        }
     }
 
     arm->joint_target = limited_joints;
+    Dof4_Status status = DOF4_STATUS_OK;
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
-        Dof4_Status st = Dof4_angle_to_servo(arm, i, limited_joints.q[i], &arm->target_servo_pos[i]);
-        if (st != DOF4_STATUS_OK) {
-            return st;
+        float servo_angle = (limited_joints.q[i] - arm->cfg.servo_offset[i]) *
+                            (float)arm->cfg.servo_sign[i];
+        if (arm->cfg.servo_reverse[i] != 0U) {
+            servo_angle = -servo_angle;
+        }
+
+        const float steps_f = (float)arm->cfg.servo_zero[i] +
+                              servo_angle * DOF4_SERVO_POS_PER_RAD;
+        const int32_t rounded = (int32_t)((steps_f >= 0.0f) ? (steps_f + 0.5f) : (steps_f - 0.5f));
+        if (rounded < arm->cfg.servo_min[i] || rounded > arm->cfg.servo_max[i]) {
+            arm->target_servo_pos[i] = clamp_i16(rounded,
+                                                 arm->cfg.servo_min[i],
+                                                 arm->cfg.servo_max[i]);
+            status = DOF4_STATUS_SERVO_LIMIT;
+        } else {
+            arm->target_servo_pos[i] = (int16_t)rounded;
         }
     }
-    return DOF4_STATUS_OK;
+    return status;
 }
 
 /**
@@ -560,7 +628,7 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_id[3] = 8U;
         cfg.joint_min[0] = DOF4_R_J1_MIN;
         cfg.joint_max[0] = DOF4_R_J1_MAX;
-        cfg.ws_min[0] = 0.00f;
+        cfg.ws_min[0] = -0.10f;
         cfg.ws_max[0] = 0.85f;
         cfg.ws_min[1] = -0.85f;
         cfg.ws_max[1] = 0.05f;
@@ -576,9 +644,9 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_id[3] = 4U;
         cfg.joint_min[0] = DOF4_L_J1_MIN;
         cfg.joint_max[0] = DOF4_L_J1_MAX;
-        cfg.ws_min[0] = 0.00f;
+        cfg.ws_min[0] = -0.1f;
         cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.05f;
+        cfg.ws_min[1] = -0.1f;
         cfg.ws_max[1] = 0.85f;
     }
 
@@ -592,10 +660,10 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.joint_max[2] = DOF4_J3_MAX;
     cfg.joint_min[3] = DOF4_J4_MIN;
     cfg.joint_max[3] = DOF4_J4_MAX;
-    cfg.ws_min[2] = -0.25f;
-    cfg.ws_max[2] = 0.85f;
-    cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;
-    cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;
+    cfg.ws_min[2] = -0.25f;           // TCP Z 方向工作空间下限（相对于基座）
+    cfg.ws_max[2] = 0.85f;            // TCP Z 方向工作空间上限（相对于基座）
+    cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
+    cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
     cfg.servo_speed = 1200U;
     cfg.servo_acc = 20U;
 
@@ -945,110 +1013,6 @@ Dof4_Status Dof4_arm_forward_kinematics(Dof4_Arm *arm,
         arm->current_pose = *pose;
         return DOF4_STATUS_OK;
     }
-
-#if 0
-    /* ════════════════════════════════════════════════════════════
-     * 完整 URDF 4×4 矩阵链 FK（离线验证用，运行时禁用）
-     *
-     * 按照 URDF 约定逐关节构造变换链：
-     *   T_world_to_child = T_parent * T_origin(xyz,rpy) * Rot(axis, q)
-     *
-     * ⚠ 注意：右臂 J3 轴 = (0,0,+1)、J4 轴 = (0,0,+1)，
-     *   而左臂 J3/J4 轴 ≈ (0,0,-1)。因此 pitch 公式必须分支：
-     *
-     *     关节   左臂 axis      右臂 axis      对 pitch 贡献
-     *     ────   ────────────   ────────────   ──────────────────
-     *     J2      ≈ (0,0,-1)    ≈ (0,0,-1)    左:-q2   右:-q2
-     *     J3      ≈ (0,0,-1)    = (0,0,+1)    左:-q3   右:+q3
-     *     J4      = (0,0,-1)    = (0,0,+1)    左:-q4   右:+q4
-     *
-     *     左臂总 pitch = -(q2+q3+q4) + offset
-     *     右臂总 pitch = -q2+q3+q4   + offset
-     * ════════════════════════════════════════════════════════════ */
-    {
-        const bool is_right = (arm->cfg.arm_id == DOF4_ARM_RIGHT);
-        const float j3_roll = is_right ? DOF4_URDF_R_J3_ROLL : DOF4_URDF_L_J3_ROLL;
-        const float j3_pitch = is_right ? DOF4_URDF_R_J3_PITCH : DOF4_URDF_L_J3_PITCH;
-        const float j3_yaw = is_right ? DOF4_URDF_R_J3_YAW : DOF4_URDF_L_J3_YAW;
-        const float j3_axis_x = is_right ? DOF4_URDF_R_J3_AXIS_X : DOF4_URDF_L_J3_AXIS_X;
-        const float j3_axis_y = is_right ? DOF4_URDF_R_J3_AXIS_Y : DOF4_URDF_L_J3_AXIS_Y;
-        const float j3_axis_z = is_right ? DOF4_URDF_R_J3_AXIS_Z : DOF4_URDF_L_J3_AXIS_Z;
-        const float j4_x = is_right ? DOF4_URDF_R_J4_X : DOF4_URDF_L_J4_X;
-        const float j4_y = is_right ? DOF4_URDF_R_J4_Y : DOF4_URDF_L_J4_Y;
-        const float j4_z = is_right ? DOF4_URDF_R_J4_Z : DOF4_URDF_L_J4_Z;
-        const float j4_roll = is_right ? DOF4_URDF_R_J4_ROLL : DOF4_URDF_L_J4_ROLL;
-        const float j4_pitch = is_right ? DOF4_URDF_R_J4_PITCH : DOF4_URDF_L_J4_PITCH;
-        const float j4_yaw = is_right ? DOF4_URDF_R_J4_YAW : DOF4_URDF_L_J4_YAW;
-        const float j4_axis_x = is_right ? DOF4_URDF_R_J4_AXIS_X : DOF4_URDF_L_J4_AXIS_X;
-        const float j4_axis_y = is_right ? DOF4_URDF_R_J4_AXIS_Y : DOF4_URDF_L_J4_AXIS_Y;
-        const float j4_axis_z = is_right ? DOF4_URDF_R_J4_AXIS_Z : DOF4_URDF_L_J4_AXIS_Z;
-        const float origin_xyz[DOF4_JOINT_COUNT][3] = {
-            {arm->cfg.base[0], arm->cfg.base[1], arm->cfg.base[2]},
-            {DOF4_URDF_J2_X, DOF4_URDF_J2_Y, DOF4_URDF_J2_Z},
-            {DOF4_URDF_J3_X, DOF4_URDF_J3_Y, DOF4_URDF_J3_Z},
-            {j4_x, j4_y, j4_z}
-        };
-        const float origin_rpy[DOF4_JOINT_COUNT][3] = {
-            {0.0f, 0.0f, 0.0f},
-            {DOF4_URDF_J2_ROLL, DOF4_URDF_J2_PITCH, DOF4_URDF_J2_YAW},
-            {j3_roll, j3_pitch, j3_yaw},
-            {j4_roll, j4_pitch, j4_yaw}
-        };
-        const float axis[DOF4_JOINT_COUNT][3] = {
-            {0.0f, 0.0f, 1.0f},
-            {DOF4_URDF_J2_AXIS_X, DOF4_URDF_J2_AXIS_Y, DOF4_URDF_J2_AXIS_Z},
-            {j3_axis_x, j3_axis_y, j3_axis_z},
-            {j4_axis_x, j4_axis_y, j4_axis_z}
-        };
-
-        Dof4_Transform chain = transform_identity();
-        chain.p[0] = arm->cfg.base_offset[0];
-        chain.p[1] = arm->cfg.base_offset[1];
-        chain.p[2] = arm->cfg.base_offset[2];
-
-        /* URDF 约定：T_world_to_child = T_parent * T_origin * Rot(axis, q) */
-        for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
-            const Dof4_Transform origin = transform_origin(origin_xyz[i][0],
-                                                           origin_xyz[i][1],
-                                                           origin_xyz[i][2],
-                                                           origin_rpy[i][0],
-                                                           origin_rpy[i][1],
-                                                           origin_rpy[i][2]);
-            const Dof4_Transform joint_rot = transform_axis_rotation(axis[i][0],
-                                                                     axis[i][1],
-                                                                     axis[i][2],
-                                                                     joints->q[i]);
-            chain = transform_multiply(&chain, &origin);
-            arm->joint_world[i][0] = chain.p[0];
-            arm->joint_world[i][1] = chain.p[1];
-            arm->joint_world[i][2] = chain.p[2];
-            chain = transform_multiply(&chain, &joint_rot);
-        }
-
-        float tcp_delta[3];
-        transform_apply_vector(&chain, arm->cfg.tcp_offset, tcp_delta);
-        pose->x = chain.p[0] + tcp_delta[0];
-        pose->y = chain.p[1] + tcp_delta[1];
-        pose->z = chain.p[2] + tcp_delta[2];
-
-        /*
-         * 末端 pitch：根据 URDF 关节轴方向分别计算
-         *   左臂: J2(-Z)、J3(-Z)、J4(-Z) → pitch = -(q2+q3+q4) + offset
-         *   右臂: J2(-Z)、J3(+Z)、J4(+Z) → pitch = -q2+q3+q4   + offset
-         */
-        if (is_right) {
-            pose->pitch = -joints->q[1] + joints->q[2] + joints->q[3] + arm->cfg.pitch_offset;
-        } else {
-            pose->pitch = -(joints->q[1] + joints->q[2] + joints->q[3]) + arm->cfg.pitch_offset;
-        }
-
-        arm->joint_world[4][0] = pose->x;
-        arm->joint_world[4][1] = pose->y;
-        arm->joint_world[4][2] = pose->z;
-        arm->current_pose = *pose;
-        return DOF4_STATUS_OK;
-    }
-#endif
 }
 
 /**
@@ -1449,10 +1413,10 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
     // /* ─── ⑥ 舵机下发 ───────────────────────────────────────────────
     //  * 通过 SyncWritePosEx 一次总线帧将右臂 4 路舵机目标同步写入硬件。
     //  */
-    // //st = Dof4_batch_write_all_servo(arm_left, arm_right);
-    // if (st != DOF4_STATUS_OK) {
-    //     return st;
-    // }
+    st = Dof4_batch_write_all_servo(arm_left, arm_right);
+    if (st != DOF4_STATUS_OK) {
+        return st;
+    }
 
     // /* ─── ⑦ 状态更新 ───────────────────────────────────────────────
     //  * 根据轨迹规划器 running 标志更新臂状态，供上层任务监控。
@@ -1462,6 +1426,11 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
     // arm_left->last_status  = DOF4_STATUS_OK;
     // arm_right->last_status = DOF4_STATUS_OK;
     // return DOF4_STATUS_OK;
+    arm_left->state = g_planner_left.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
+    arm_right->state = g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
+    arm_left->last_status = DOF4_STATUS_OK;
+    arm_right->last_status = DOF4_STATUS_OK;
+    return DOF4_STATUS_OK;
 }
 
 /**
@@ -1470,6 +1439,68 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
  * @param pose 输入输出位姿。
  * @retval Dof4_Status 状态码。
  */
+/* Startup pose gate for the right 4DOF arm. */
+Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
+                                       Dof4_Arm *arm_right,
+                                       const Dof4_Pose *target,
+                                       uint32_t timeout_ms,
+                                       float pos_tol_m,
+                                       float pitch_tol_rad)
+{
+    if (arm_left == NULL || arm_right == NULL || target == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+    if (pos_tol_m <= 0.0f || pitch_tol_rad <= 0.0f) {
+        return DOF4_STATUS_BAD_CONFIG;
+    }
+
+    Dof4_Status st = Dof4_arm_set_target(arm_right,
+                                         target->x,
+                                         target->y,
+                                         target->z,
+                                         target->pitch);
+    if (st != DOF4_STATUS_OK) {
+        arm_right->last_status = st;
+        return st;
+    }
+
+    const uint32_t start_ms = dof4_get_tick_ms();
+    Dof4_Status last_error = DOF4_STATUS_OK;
+
+    while ((uint32_t)(dof4_get_tick_ms() - start_ms) < timeout_ms) {
+        const uint32_t now_ms = dof4_get_tick_ms();
+        st = Dof4_dual_arm_control_loop(arm_left, arm_right, now_ms);
+
+        if (st != DOF4_STATUS_OK) {
+            last_error = st;
+            arm_right->last_status = st;
+        } else {
+            if (arm_right->last_status != DOF4_STATUS_OK) {
+                last_error = arm_right->last_status;
+            }
+
+            const float dx = arm_right->current_pose.x - target->x;
+            const float dy = arm_right->current_pose.y - target->y;
+            const float dz = arm_right->current_pose.z - target->z;
+            const float pos_err = sqrtf(dx * dx + dy * dy + dz * dz);
+            const float pitch_err = fabsf(Dof4_normalize_angle(arm_right->current_pose.pitch -
+                                                               target->pitch));
+
+            if (pos_err <= pos_tol_m && pitch_err <= pitch_tol_rad) {
+                arm_right->last_status = DOF4_STATUS_OK;
+                return DOF4_STATUS_OK;
+            }
+        }
+
+        dof4_delay_ms(DOF4_STARTUP_CONTROL_PERIOD_MS);
+    }
+
+    st = (last_error != DOF4_STATUS_OK) ? last_error : DOF4_STATUS_NOT_READY;
+    arm_right->last_status = st;
+    return st;
+}
+
+/* Clamp a pose to the configured workspace. */
 Dof4_Status Dof4_clamp_to_workspace(const Dof4_Arm *arm, Dof4_Pose *pose)
 {
     if (arm == NULL || pose == NULL) {

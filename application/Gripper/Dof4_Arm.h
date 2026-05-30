@@ -401,6 +401,13 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
                                        Dof4_Arm *arm_right,
                                        uint32_t now_ms);
 
+Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
+                                       Dof4_Arm *arm_right,
+                                       const Dof4_Pose *target,
+                                       uint32_t timeout_ms,
+                                       float pos_tol_m,
+                                       float pitch_tol_rad);
+
 /**
  * @brief 将位姿限制在工作空间内。
  * @param arm 机械臂实例。

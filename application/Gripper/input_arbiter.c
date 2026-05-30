@@ -11,8 +11,10 @@
 
 #include <stdbool.h>
 #include <math.h>
+#include <stdlib.h>
 #include "input_arbiter.h"
 #include "Planar_Robot_Arm.h"
+#include "Dof4_Arm.h"
 #include "pneumatic_control.h"
 #include "action_scheduler.h"
 #include "DT7.h"
@@ -160,8 +162,13 @@ rc_map_to_targets() 指令一览:
     ch[3] 上升沿 → 切换气泵启停
   s[0]==1, s[1]==1:              ← 新迁移
     ch[0] > 400 → 触发后侧交接(LB↔RB, 左→右)
+ */
 /** @brief 遥控器摇杆/拨杆阈值: 绝对值超过此值视为有效操作 */
 #define RC_CH_THRESHOLD  400
+#define DOF4_RC_DEADZONE 200
+#define DOF4_RC_MANUAL_SPEED_MPS 0.25f
+#define DOF4_RC_MANUAL_FALLBACK_DT_MS 5U
+#define DOF4_RC_MANUAL_MAX_DT_MS 50U
 
 /**
  * @brief 将 DT7 遥控器数据转换为目标位置并写入 target_x_test/y_test
@@ -437,6 +444,81 @@ void input_arbiter_update_pc(const all_pc_command *cmd)
             s_pc_last_feed_ms = HAL_GetTick();
             break;
         }
+    }
+}
+
+static void rc_map_to_targets_4dof(uint32_t now_ms)
+{
+    if (!s_rc_initialized) {
+        return;
+    }
+
+    const RC_ctrl_t *rc = &s_rc_snapshot;
+    static uint32_t s_last_step_ms = 0U;
+
+    /* 拨杆 s[1]==3 时进入手动控制模式 */
+    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1) {
+        const bool x_active = (abs(rc->rc.ch[3]) > DOF4_RC_DEADZONE);
+        const bool y_active = (abs(rc->rc.ch[2]) > DOF4_RC_DEADZONE);
+        const bool z_active = (abs(rc->rc.ch[1]) > DOF4_RC_DEADZONE);
+        if (!x_active && !y_active && !z_active) {
+            s_last_step_ms = now_ms;
+            return;
+        }
+
+        uint32_t dt_ms = (s_last_step_ms == 0U)
+                             ? DOF4_RC_MANUAL_FALLBACK_DT_MS
+                             : (uint32_t)(now_ms - s_last_step_ms);
+        if (dt_ms > DOF4_RC_MANUAL_MAX_DT_MS) {
+            dt_ms = DOF4_RC_MANUAL_MAX_DT_MS;
+        }
+        s_last_step_ms = now_ms;
+
+        Dof4_Pose target = g_dof4_arm_right.target_valid
+                               ? g_dof4_arm_right.target_pose
+                               : g_dof4_arm_right.current_pose;
+        const float step = DOF4_RC_MANUAL_SPEED_MPS * ((float)dt_ms * 0.001f);
+
+        if (x_active && rc->rc.ch[3] > 0) {
+            target.x += step;
+        } else if (x_active) {
+            target.x -= step;
+        }
+
+        if (y_active && rc->rc.ch[2] > 0) {
+            target.y += step;
+        } else if (y_active) {
+            target.y -= step;
+        }
+
+        if (z_active && rc->rc.ch[1] > 0) {
+            target.z += step;
+        } else if (z_active) {
+            target.z -= step;
+        }
+
+        Dof4_clamp_to_workspace(&g_dof4_arm_right, &target);
+        (void)Dof4_arm_set_target(&g_dof4_arm_right,
+                                  target.x,
+                                  target.y,
+                                  target.z,
+                                  target.pitch);
+    } else {
+        s_last_step_ms = now_ms;
+    }
+}
+
+void input_arbiter_resolve_4dof(bool action_active)
+{
+    if (action_active) {
+        return;
+    }
+
+    const uint32_t now = HAL_GetTick();
+    const bool rc_fresh = s_rc_initialized &&
+                          ((now - s_rc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
+    if (rc_fresh) {
+        rc_map_to_targets_4dof(now);
     }
 }
 

@@ -39,9 +39,11 @@ typedef struct {
     Traj_QuinticSegment axis[4]; /**< x、y、z、pitch 四通道。 */
     Dof4_Pose start_pose;        /**< 起点位姿。 */
     Dof4_Pose target_pose;       /**< 终点位姿。 */
+    Dof4_Pose last_sample_pose;  /**< 最近一次成功采样的指令位姿。 */
     uint32_t start_time_ms;      /**< 起始时间戳，单位 ms。 */
     bool valid;                  /**< 是否已规划。 */
     bool running;                /**< 是否正在运行。 */
+    bool has_last_sample;        /**< last_sample_pose 是否可用。 */
 } Dof4_CartesianPlanner;
 
 /**

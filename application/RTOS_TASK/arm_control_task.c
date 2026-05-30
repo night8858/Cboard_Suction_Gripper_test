@@ -105,26 +105,27 @@ void arm_control_task(void *argument)
 void arm_control_task(void *argument)
 {
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
+    input_arbiter_init();
     osDelay(500);
+
+    const Dof4_Pose startup_target = {-0.04f, 0.0f, 0.20f, -0.02f};
+    Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,
+                                                        &g_dof4_arm_right,
+                                                        &startup_target,
+                                                        3000U,
+                                                        0.025f,
+                                                        0.05f);
+    if (startup_st != DOF4_STATUS_OK) {
+        g_dof4_arm_right.last_status = startup_st;
+    }
 
     for (;;)
     {
         uint32_t now_ms = HAL_GetTick();
 
-        /*
-         * 1. 设置目标位姿 —— 仅测试右臂
-         * Z 方向约束（theta=q, q2∈[-2.70,0]）：arm 水平时 Z≈0.022，
-         * q2 为负时 arm 向下。target_z 须≤0.022，否则 IK → JOINT_LIMIT。
-         * 钳位到 workspace 边界防止明显不可达目标传入。
-         */
-        {
-            Dof4_Pose target = {0.30f, -0.0f, -0.10f, 0.0f};
-            Dof4_clamp_to_workspace(&g_dof4_arm_right, &target);
-            Dof4_arm_set_target(&g_dof4_arm_right, target.x, target.y, target.z, target.pitch);
-            Dof4_arm_set_target(&g_dof4_arm_right, g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y, 
-                                                        g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch);
-
-        }
+        /* RC manual target update for the right 4DOF arm. */
+        input_arbiter_update_rc(get_remote_control_point());
+        input_arbiter_resolve_4dof(false);
 
         /* 2. 一步式控制循环 */
         Dof4_Status st = Dof4_dual_arm_control_loop(&g_dof4_arm_left, &g_dof4_arm_right, now_ms);

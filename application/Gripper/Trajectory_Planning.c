@@ -287,6 +287,8 @@ Dof4_Status Dof4_cartesian_planner_sample(Dof4_CartesianPlanner *planner,
         planner->running = false;
         *pose = planner->target_pose;
     }
+    planner->last_sample_pose = *pose;
+    planner->has_last_sample = true;
     return DOF4_STATUS_OK;
 }
 
