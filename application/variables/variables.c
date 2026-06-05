@@ -37,6 +37,9 @@ SwitchInput g_switch_input;
     //收起位置
 
 
+action_state_4dof_e LEFT_state;
+action_state_4dof_e RIGHT_state;
+
 //float g_motor_target_speed = 1000.0f;
 
 /* 全局变量定义区 */

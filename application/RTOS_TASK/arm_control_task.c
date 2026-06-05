@@ -11,6 +11,7 @@
 
 #include "planar_robot_arm.h"
 #include "action_scheduler.h"
+#include "action_scheduler_4dof.h"
 #include "input_arbiter.h"
 #include "Dof4_Arm.h"
 #include "Dof4_Collision.h"
@@ -106,16 +107,27 @@ void arm_control_task(void *argument)
 {
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
     input_arbiter_init();
+    action_4dof_init();
     osDelay(500);
 
-    const Dof4_Pose startup_target = {-0.04f, 0.0f, 0.20f, -0.02f};
+    /* ── 双臂基座位置偏置标定 ──
+     * 取消注释并按实际安装偏移填入 dx/dy/dz（单位 m）。
+     * base_offset 叠加到 URDF base 位置后，FK/IK 自动补偿，
+     * startup_target 仍对应真实空间同一物理点。
+     * 例如：左右臂均前移 0.133 m（X 负方向），则均设 dx = -0.133f。 */
+    // Dof4_arm_set_base_offset(&g_dof4_arm_left,  0.0f, 0.0f, 0.0f);
+    // Dof4_arm_set_base_offset(&g_dof4_arm_right, 0.0f, 0.0f, 0.0f);
+
+    /* startup 使用自适应 IDLE 位姿（初始物块全空 = 基准值 {0.02,0,0.20,-0.02}） */
+    const Dof4_Pose startup_target = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
     Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,
                                                         &g_dof4_arm_right,
                                                         &startup_target,
                                                         3000U,
                                                         0.025f,
                                                         0.05f);
-    if (startup_st != DOF4_STATUS_OK) {
+    if (startup_st != DOF4_STATUS_OK)
+    {
         g_dof4_arm_right.last_status = startup_st;
     }
 
@@ -127,7 +139,30 @@ void arm_control_task(void *argument)
         input_arbiter_update_rc(get_remote_control_point());
         input_arbiter_resolve_4dof(false);
 
-        /* 2. 一步式控制循环 */
+        // Dof4_arm_set_target(&g_dof4_arm_right, g_dof4_arm_right.target_pose.x,
+        //                                     g_dof4_arm_right.target_pose.y,
+        //                                     g_dof4_arm_right.target_pose.z,
+        //                                     g_dof4_arm_right.target_pose.pitch);
+
+        // Dof4_arm_set_target(&g_dof4_arm_left, g_dof4_arm_left.target_pose.x,
+        //                                    g_dof4_arm_left.target_pose.y,
+        //                                    g_dof4_arm_left.target_pose.z,
+        //                                    g_dof4_arm_left.target_pose.pitch);
+
+         /* 2. 4DOF 动作调度: 若动作激活覆盖 target 数组 */
+
+        /* 3. 4DOF 动作调度（动作激活时覆盖 RC/PC 目标） */
+        action_4dof_loop();
+
+        /* 4. IDLE 期间：根据物块位置持续设定自适应归位位姿 */
+        if (!action_4dof_is_active()) {
+            Dof4_Pose idle_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
+            Dof4_Pose idle_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
+            Dof4_arm_set_target(&g_dof4_arm_left,  idle_left.x,  idle_left.y,  idle_left.z,  idle_left.pitch);
+            Dof4_arm_set_target(&g_dof4_arm_right, idle_right.x, idle_right.y, idle_right.z, idle_right.pitch);
+        }
+
+        /* 5. 一步式控制循环 */
         Dof4_Status st = Dof4_dual_arm_control_loop(&g_dof4_arm_left, &g_dof4_arm_right, now_ms);
         if (st != DOF4_STATUS_OK) {
             /* 调试：st=5→JOINT_LIMIT(降Z) 4→IK_UNREACHABLE 8→COMM_FAIL */

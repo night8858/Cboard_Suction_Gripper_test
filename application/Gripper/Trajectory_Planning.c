@@ -202,6 +202,7 @@ Dof4_Status Dof4_cartesian_planner_init(Dof4_CartesianPlanner *planner)
  */
 Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
                                         const Dof4_Pose *start,
+                                        const float v0[4],
                                         const Dof4_Pose *target,
                                         uint32_t start_time_ms,
                                         float duration_s)
@@ -217,23 +218,29 @@ Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
     planner->target_pose = *target;
     planner->start_time_ms = start_time_ms;
 
+    /* v0=NULL 时退化为零初速 */
+    const float vx = (v0 != NULL) ? v0[0] : 0.0f;
+    const float vy = (v0 != NULL) ? v0[1] : 0.0f;
+    const float vz = (v0 != NULL) ? v0[2] : 0.0f;
+    const float vp = (v0 != NULL) ? v0[3] : 0.0f;
+
     Dof4_Status st;
-    st = Traj_quintic_init(&planner->axis[0], start->x, 0.0f, 0.0f,
+    st = Traj_quintic_init(&planner->axis[0], start->x, vx, 0.0f,
                            target->x, 0.0f, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_init(&planner->axis[1], start->y, 0.0f, 0.0f,
+    st = Traj_quintic_init(&planner->axis[1], start->y, vy, 0.0f,
                            target->y, 0.0f, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_init(&planner->axis[2], start->z, 0.0f, 0.0f,
+    st = Traj_quintic_init(&planner->axis[2], start->z, vz, 0.0f,
                            target->z, 0.0f, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_init(&planner->axis[3], start->pitch, 0.0f, 0.0f,
+    st = Traj_quintic_init(&planner->axis[3], start->pitch, vp, 0.0f,
                            target->pitch, 0.0f, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
@@ -266,19 +273,19 @@ Dof4_Status Dof4_cartesian_planner_sample(Dof4_CartesianPlanner *planner,
     const float elapsed_s = (float)delta_ms * 0.001f;
     Dof4_Status st;
 
-    st = Traj_quintic_sample(&planner->axis[0], elapsed_s, &pose->x, NULL, NULL);
+    st = Traj_quintic_sample(&planner->axis[0], elapsed_s, &pose->x, &planner->last_sample_vel[0], NULL);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_sample(&planner->axis[1], elapsed_s, &pose->y, NULL, NULL);
+    st = Traj_quintic_sample(&planner->axis[1], elapsed_s, &pose->y, &planner->last_sample_vel[1], NULL);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_sample(&planner->axis[2], elapsed_s, &pose->z, NULL, NULL);
+    st = Traj_quintic_sample(&planner->axis[2], elapsed_s, &pose->z, &planner->last_sample_vel[2], NULL);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-    st = Traj_quintic_sample(&planner->axis[3], elapsed_s, &pose->pitch, NULL, NULL);
+    st = Traj_quintic_sample(&planner->axis[3], elapsed_s, &pose->pitch, &planner->last_sample_vel[3], NULL);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
@@ -289,6 +296,7 @@ Dof4_Status Dof4_cartesian_planner_sample(Dof4_CartesianPlanner *planner,
     }
     planner->last_sample_pose = *pose;
     planner->has_last_sample = true;
+    planner->has_last_vel = true;
     return DOF4_STATUS_OK;
 }
 

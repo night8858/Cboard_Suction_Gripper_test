@@ -19,6 +19,7 @@
 #include "action_scheduler.h"
 #include "DT7.h"
 #include "stm32f4xx_hal.h"
+#include "variables.h"
 
 /* ── 外部引用: 目标数组由 Planar_Robot_Arm.c 定义 ── */
 extern float target_x_test[4];
@@ -503,7 +504,64 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
                                   target.y,
                                   target.z,
                                   target.pitch);
-    } else {
+    } 
+    else if (rc->rc.s[1] == 3 && rc->rc.s[0] == 3)
+    {
+        //固定位置测试的程序
+            if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK);
+
+            }
+
+            // if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1);
+            // }
+
+            // if (rc->rc.ch[1] < - RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK);
+
+            // }
+
+            // if (rc->rc.ch[1] > RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK);
+            // }
+
+            // if (rc->rc.ch[3] < - RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM);
+
+            // }
+            // if (rc->rc.ch[3] > RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM);
+            // }
+
+    }
+             /* 气泵手动控制: s[0]==1 且 s[1]==1 时,
+         * ch[3] 上升沿 (>RC_CH_THRESHOLD) 切换气泵启停.
+         *
+         * 使用 static 变量记录 ch[3] 上一次电平状态,
+         * 实现边沿检测: 仅当 ch[3] 从低→高跳变时触发一次,
+         * 避免摇杆持续推高时反复切换导致气泵抖动.            */
+    else if (rc->rc.s[0] == 2 )
+    {
+        if(rc->rc.s[1] == 2)
+        {
+            static bool s_ch3_was_high = false;
+            bool ch3_high = (rc->rc.ch[3] > RC_CH_THRESHOLD);
+            /* 上升沿: 上一次 ≤ 阈值, 本次 > 阈值 → 切换 */
+            if (ch3_high && !s_ch3_was_high) {
+                extern PumpCtrl g_pump;  /* pneumatic_control.c 定义 */
+                pump_ctrl_toggle(&g_pump);
+            }
+            s_ch3_was_high = ch3_high;
+            }
+    }
+    else {
         s_last_step_ms = now_ms;
     }
 }

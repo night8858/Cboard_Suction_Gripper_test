@@ -40,10 +40,12 @@ typedef struct {
     Dof4_Pose start_pose;        /**< 起点位姿。 */
     Dof4_Pose target_pose;       /**< 终点位姿。 */
     Dof4_Pose last_sample_pose;  /**< 最近一次成功采样的指令位姿。 */
+    float last_sample_vel[4];    /**< 最近一次采样的速度 (x,y,z,pitch)，用于段间速度连续。 */
     uint32_t start_time_ms;      /**< 起始时间戳，单位 ms。 */
     bool valid;                  /**< 是否已规划。 */
     bool running;                /**< 是否正在运行。 */
     bool has_last_sample;        /**< last_sample_pose 是否可用。 */
+    bool has_last_vel;           /**< last_sample_vel 是否可用。 */
 } Dof4_CartesianPlanner;
 
 /**
@@ -100,6 +102,7 @@ Dof4_Status Dof4_cartesian_planner_init(Dof4_CartesianPlanner *planner);
  */
 Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
                                         const Dof4_Pose *start,
+                                        const float v0[4],
                                         const Dof4_Pose *target,
                                         uint32_t start_time_ms,
                                         float duration_s);

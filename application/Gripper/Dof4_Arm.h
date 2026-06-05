@@ -39,9 +39,9 @@ extern "C" {
 
 /* R_J1: URDF +Z；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J1_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J1_ZERO_BIAS_DEG 1.57f
+#define R_J1_ZERO_BIAS_DEG -1.57f
 #define R_J1_SERVO_SIGN (-1)
-#define R_J1_URDF_MIN_DEG (-0.96f * DOF4_RAD_TO_DEG)
+#define R_J1_URDF_MIN_DEG (-1.135f * DOF4_RAD_TO_DEG)  /* +10° 扩展 */
 #define R_J1_URDF_MAX_DEG (3.49f * DOF4_RAD_TO_DEG)
 
 /* R_J2: 实物轴按安装对应 URDF -Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
@@ -67,26 +67,26 @@ extern "C" {
 
 /* L 臂暂未实测偏置和方向：先保留 2048 零位，后续只需修改 ZERO_BIAS_DEG / SERVO_SIGN。 */
 #define L_J1_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J1_ZERO_BIAS_DEG 0.0f
-#define L_J1_SERVO_SIGN (1) /* TODO: 实测 L_J1 舵机 position 增加方向后修改。 */
+#define L_J1_ZERO_BIAS_DEG 1.57f
+#define L_J1_SERVO_SIGN (-1) /* TODO: 实测 L_J1 舵机 position 增加方向后修改。 */
 #define L_J1_URDF_MIN_DEG (-3.49f * DOF4_RAD_TO_DEG)
-#define L_J1_URDF_MAX_DEG (0.96f * DOF4_RAD_TO_DEG)
+#define L_J1_URDF_MAX_DEG (1.135f * DOF4_RAD_TO_DEG)  /* +10° 扩展 */
 
 #define L_J2_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J2_ZERO_BIAS_DEG 0.0f
+#define L_J2_ZERO_BIAS_DEG 2.67f
 #define L_J2_SERVO_SIGN (1) /* TODO: 实测 L_J2 舵机 position 增加方向后修改。 */
 #define L_J2_URDF_MIN_DEG (-2.70f * DOF4_RAD_TO_DEG)
 #define L_J2_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J3_ZERO_BIAS_DEG 0.0f
-#define L_J3_SERVO_SIGN (1) /* TODO: 实测 L_J3 舵机 position 增加方向后修改。 */
+#define L_J3_ZERO_BIAS_DEG -1.47f
+#define L_J3_SERVO_SIGN (-1) /* TODO: 实测 L_J3 舵机 position 增加方向后修改。 */
 #define L_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define L_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J4_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J4_ZERO_BIAS_DEG 0.0f
-#define L_J4_SERVO_SIGN (1) /* TODO: 实测 L_J4 舵机 position 增加方向后修改。 */
+#define L_J4_SERVO_SIGN (-1) /* TODO: 实测 L_J4 舵机 position 增加方向后修改。 */
 #define L_J4_URDF_MIN_DEG (-1.57f * DOF4_RAD_TO_DEG)
 #define L_J4_URDF_MAX_DEG (1.57f * DOF4_RAD_TO_DEG)
 
@@ -102,13 +102,13 @@ extern "C" {
 #define DOF4_TRAJ_MIN_DURATION_S 0.15f
 
 /** @brief 默认轨迹最长时间，单位 s。 */
-#define DOF4_TRAJ_MAX_DURATION_S 2.00f
+#define DOF4_TRAJ_MAX_DURATION_S 0.50f
 
 /** @brief 默认笛卡尔最大速度，单位 m/s。 */
-#define DOF4_DEFAULT_CART_VEL_MPS 0.25f
+#define DOF4_DEFAULT_CART_VEL_MPS 2.0f
 
 /** @brief 默认 pitch 最大速度，单位 rad/s。 */
-#define DOF4_DEFAULT_PITCH_VEL_RPS 1.20f
+#define DOF4_DEFAULT_PITCH_VEL_RPS 2.00f
 
 /** @brief 默认目标变化重规划阈值，单位 m。 */
 #define DOF4_REPLAN_POS_EPS_M 0.001f

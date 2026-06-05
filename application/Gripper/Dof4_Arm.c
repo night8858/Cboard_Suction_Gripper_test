@@ -138,31 +138,38 @@
 #include "usart.h"
 #endif
 
-// /** @brief URDF 左臂 J1 位置 X，单位 m。 */
-// #define DOF4_URDF_L_BASE_X 0.10760f
-// /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
-// #define DOF4_URDF_L_BASE_Y 0.13342f
-// /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
-// #define DOF4_URDF_L_BASE_Z 0.011815f
-// /** @brief URDF 右臂 J1 位置 X，单位 m。 */
-// #define DOF4_URDF_R_BASE_X 0.10758f
-// /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
-// #define DOF4_URDF_R_BASE_Y (-0.13265f)
-// /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
-// #define DOF4_URDF_R_BASE_Z 0.011815f
+
+/// ════════════════════════════════════════════════════════════════
+
+//两个后侧吸盘的间距是265mm，两个基座的距离是266
+
+/// ════════════════════════════════════════════════════════════════
 
 /** @brief URDF 左臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_L_BASE_X 0
+#define DOF4_URDF_L_BASE_X 0.10760f
 /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
-#define DOF4_URDF_L_BASE_Y 0
+#define DOF4_URDF_L_BASE_Y 0.13342f
 /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
-#define DOF4_URDF_L_BASE_Z 0
+#define DOF4_URDF_L_BASE_Z 0.0f
 /** @brief URDF 右臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_R_BASE_X 0
+#define DOF4_URDF_R_BASE_X 0.10758f
 /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
-#define DOF4_URDF_R_BASE_Y 0
+#define DOF4_URDF_R_BASE_Y (-0.13265f)
 /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
-#define DOF4_URDF_R_BASE_Z 0
+#define DOF4_URDF_R_BASE_Z 0.0f
+
+// /** @brief URDF 左臂 J1 位置 X，单位 m。 */
+// #define DOF4_URDF_L_BASE_X 0
+// /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
+// #define DOF4_URDF_L_BASE_Y 0
+// /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
+// #define DOF4_URDF_L_BASE_Z 0
+// /** @brief URDF 右臂 J1 位置 X，单位 m。 */
+// #define DOF4_URDF_R_BASE_X 0
+// /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
+// #define DOF4_URDF_R_BASE_Y 
+// /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
+// #define DOF4_URDF_R_BASE_Z 0
 
 /** @brief URDF J1 到 J2 水平等效偏移，单位 m。 */
 #define DOF4_URDF_SHOULDER_R 0.02716f
@@ -179,16 +186,16 @@
 
 /** @brief 左臂 J1 下限，单位 rad。 */
 #define DOF4_L_J1_MIN (-3.49f)
-/** @brief 左臂 J1 上限，单位 rad。 */
-#define DOF4_L_J1_MAX 0.96f
-/** @brief 右臂 J1 下限，单位 rad。 */
-#define DOF4_R_J1_MIN (-0.96f)
+/** @brief 左臂 J1 上限，单位 rad。+10° 扩展 (原 55° → 65°) */
+#define DOF4_L_J1_MAX 1.135f
+/** @brief 右臂 J1 下限，单位 rad。+10° 扩展 (原 -55° → -65°) */
+#define DOF4_R_J1_MIN (-1.135f)
 /** @brief 右臂 J1 上限，单位 rad。 */
 #define DOF4_R_J1_MAX 3.49f
 /** @brief J2 下限，单位 rad。 */
 #define DOF4_J2_MIN (-2.70f)
-/** @brief J2 上限，单位 rad。 */
-#define DOF4_J2_MAX 0.0f
+/** @brief J2 上限，单位 rad。原 URDF 限位 0（水平），扩展至 1.75（~100°）以允许上抬。 */
+#define DOF4_J2_MAX 1.75f
 /** @brief J3 下限，单位 rad。 */
 #define DOF4_J3_MIN (-4.44f)
 /** @brief J3 上限，单位 rad。 */
@@ -207,9 +214,19 @@
 /** @brief Startup pose control-loop period, in ms. */
 #define DOF4_STARTUP_CONTROL_PERIOD_MS 5U
 
+/** @brief 碰撞规避：沿最近距离方向推开右臂的距离，单位 m。 */
+#define DOF4_AVOID_PUSH_M      0.25f
+/** @brief 碰撞规避：附加 Z 抬高量，单位 m。 */
+#define DOF4_AVOID_Z_LIFT_M    0.05f
+/** @brief 碰撞规避：位姿到位判定容差，单位 m。 */
+#define DOF4_AVOID_REACH_TOL_M 0.03f
+/** @brief 碰撞规避：各阶段超时，单位 ms。 */
+#define DOF4_AVOID_TIMEOUT_MS  3000U
+
 /* URDF joint origins/rpy are kept in meters/radians and applied as:
  * T_parent_child = Origin(xyz, rpy) * Rot(axis, q).
  */
+
 #define DOF4_URDF_J2_X 0.015518f
 #define DOF4_URDF_J2_Y 0.022295f
 #define DOF4_URDF_J2_Z 0.022319f
@@ -268,6 +285,24 @@ extern Dof4_Arm g_dof4_arm_right;
 
 static Dof4_CartesianPlanner g_planner_left;
 static Dof4_CartesianPlanner g_planner_right;
+
+/* ════════════════════════════════════════════════════════════════
+ * 碰撞规避状态机
+ * ════════════════════════════════════════════════════════════════ */
+
+/** @brief 碰撞规避子状态 */
+typedef enum {
+    DOF4_AVOID_NORMAL          = 0,  /**< 正常模式，双臂自由移动 */
+    DOF4_AVOID_RIGHT_RETREAT   = 1,  /**< 右臂撤退到安全位 */
+    DOF4_AVOID_LEFT_ADVANCE    = 2,  /**< 左臂向目标前进 */
+    DOF4_AVOID_RIGHT_ADVANCE   = 3,  /**< 右臂向目标前进 */
+} Dof4_AvoidState;
+
+static Dof4_AvoidState   s_avoid_state;
+static Dof4_Pose         s_saved_left_target;   /**< 碰撞触发时保存的左臂目标 */
+static Dof4_Pose         s_saved_right_target;  /**< 碰撞触发时保存的右臂目标 */
+static Dof4_Pose         s_retreat_pose_right;  /**< 动态计算的右臂安全位 */
+static uint32_t          s_avoid_enter_tick;    /**< 进入当前规避子状态的 tick */
 
 #ifdef DOF4_HOST_TEST
 static uint32_t g_dof4_host_tick_ms;
@@ -365,9 +400,17 @@ static Dof4_Status check_workspace(const Dof4_Arm *arm, const Dof4_Pose *pose)
     if (arm == NULL || pose == NULL) {
         return DOF4_STATUS_NULL_PARAM;
     }
-    if (pose->x < arm->cfg.ws_min[0] || pose->x > arm->cfg.ws_max[0] ||
-        pose->y < arm->cfg.ws_min[1] || pose->y > arm->cfg.ws_max[1] ||
-        pose->z < arm->cfg.ws_min[2] || pose->z > arm->cfg.ws_max[2]) {
+    /* workspace 边界随 base_offset 同步偏移，保证物理 TCP 位置一致 */
+    const float eff_ws_min_x = arm->cfg.ws_min[0] + arm->cfg.base_offset[0];
+    const float eff_ws_max_x = arm->cfg.ws_max[0] + arm->cfg.base_offset[0];
+    const float eff_ws_min_y = arm->cfg.ws_min[1] + arm->cfg.base_offset[1];
+    const float eff_ws_max_y = arm->cfg.ws_max[1] + arm->cfg.base_offset[1];
+    const float eff_ws_min_z = arm->cfg.ws_min[2] + arm->cfg.base_offset[2];
+    const float eff_ws_max_z = arm->cfg.ws_max[2] + arm->cfg.base_offset[2];
+
+    if (pose->x < eff_ws_min_x || pose->x > eff_ws_max_x ||
+        pose->y < eff_ws_min_y || pose->y > eff_ws_max_y ||
+        pose->z < eff_ws_min_z || pose->z > eff_ws_max_z) {
         return DOF4_STATUS_OUT_OF_WORKSPACE;
     }
     return DOF4_STATUS_OK;
@@ -431,9 +474,17 @@ static Dof4_Status solve_ik_candidate(const Dof4_Arm *arm,
     const float dx = target->x - base[0] - arm->cfg.tcp_offset[0];
     const float dy = target->y - base[1] - arm->cfg.tcp_offset[1];
     const float planar_dist = sqrtf(dx * dx + dy * dy);
-    const float q1 = (planar_dist < DOF4_AXIS_SINGULAR_EPS_M)
+    const float q1_raw = (planar_dist < DOF4_AXIS_SINGULAR_EPS_M)
                          ? clamp_joint_angle_rad(arm, 0U, arm->joint_actual.q[0])
-                         : atan2f(dy, dx);    /* 轴线附近保持当前 J1，避免 atan2(0,0) 退化 */
+                         : atan2f(dy, dx);
+    /* 将 q1 归化到关节限位内：atan2 返回 [-π,π]，
+     * 目标在基座后方时可能需要 ±2π 偏移才能落入 [joint_min, joint_max]。 */
+    float q1 = q1_raw;
+    if (q1 > arm->cfg.joint_max[0]) {
+        q1 -= 2.0f * M_PI_F;
+    } else if (q1 < arm->cfg.joint_min[0]) {
+        q1 += 2.0f * M_PI_F;
+    }
     const float r  = planar_dist - arm->cfg.shoulder_r;   /* 径向（去 shoulder） */
     const float z  = target->z - base[2] - arm->cfg.shoulder_z - arm->cfg.tcp_offset[2]; /* 高度（去 shoulder + tcp） */
 
@@ -521,8 +572,11 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
                                                                &arm->target_pose,
                                                                arm->cfg.cart_vel_mps,
                                                                arm->cfg.pitch_vel_rps);
+        const float *v0 = (planner->running && planner->has_last_vel)
+                          ? planner->last_sample_vel : NULL;
         Dof4_Status st = Dof4_cartesian_planner_plan(planner,
                                                      &plan_start,
+                                                     v0,
                                                      &arm->target_pose,
                                                      now_ms,
                                                      duration);
@@ -552,7 +606,7 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
             return DOF4_STATUS_BAD_CONFIG;
         }
 
-        if (arm->cfg.arm_id == DOF4_ARM_RIGHT && i == 0U) {
+        if (i == 0U) {  /* J1 直接钳制（左右臂均适用，绕过 servo_offset 逻辑） */
             limited_joints.q[i] = clamp_float(joints->q[i],
                                               arm->cfg.joint_min[i],
                                               arm->cfg.joint_max[i]);
@@ -628,10 +682,10 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_id[3] = 8U;
         cfg.joint_min[0] = DOF4_R_J1_MIN;
         cfg.joint_max[0] = DOF4_R_J1_MAX;
-        cfg.ws_min[0] = -0.10f;
+        cfg.ws_min[0] = -0.30f;     //x
         cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.85f;
-        cfg.ws_max[1] = 0.05f;
+        cfg.ws_min[1] = -0.85f;       //y
+        cfg.ws_max[1] = 0.3f;
     } else {
         cfg.arm_id = DOF4_ARM_LEFT;
         cfg.base[0] = DOF4_URDF_L_BASE_X;
@@ -644,9 +698,9 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_id[3] = 4U;
         cfg.joint_min[0] = DOF4_L_J1_MIN;
         cfg.joint_max[0] = DOF4_L_J1_MAX;
-        cfg.ws_min[0] = -0.1f;
+        cfg.ws_min[0] = -0.30f;
         cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.1f;
+        cfg.ws_min[1] = -0.3f;
         cfg.ws_max[1] = 0.85f;
     }
 
@@ -660,12 +714,12 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.joint_max[2] = DOF4_J3_MAX;
     cfg.joint_min[3] = DOF4_J4_MIN;
     cfg.joint_max[3] = DOF4_J4_MAX;
-    cfg.ws_min[2] = -0.25f;           // TCP Z 方向工作空间下限（相对于基座）
-    cfg.ws_max[2] = 0.85f;            // TCP Z 方向工作空间上限（相对于基座）
+    cfg.ws_min[2] = -0.6f;           // TCP Z 方向工作空间下限（相对于基座）
+    cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
     cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
     cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
-    cfg.servo_speed = 1200U;
-    cfg.servo_acc = 20U;
+    cfg.servo_speed = 0U;
+    cfg.servo_acc = 80U;
 
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
@@ -797,6 +851,7 @@ Dof4_Status Dof4_dual_arm_init(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
     return DOF4_STATUS_OK;
 }
 
+
 /**
  * @brief 设置基座附加偏移。
  * @param arm 机械臂实例。
@@ -815,6 +870,7 @@ Dof4_Status Dof4_arm_set_base_offset(Dof4_Arm *arm, float dx, float dy, float dz
     arm->cfg.base_offset[2] = dz;
     return Dof4_arm_forward_kinematics(arm, &arm->joint_actual, &arm->current_pose);
 }
+
 
 /**
  * @brief 设置 TCP 附加偏移。
@@ -1208,25 +1264,20 @@ Dof4_Status Dof4_arm_read_servo_pos(Dof4_Arm *arm)
  */
 Dof4_Status Dof4_batch_read_all_servo(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
 {
-    /* 左臂舵机未接入，跳过读取 —— 保持初始化零位 */
-    // Dof4_Status st = Dof4_arm_read_servo_pos(arm_left);
-    // if (st != DOF4_STATUS_OK) {
-    //     return st;
-    // }
-    (void)arm_left;  /* 抑制未使用参数警告 */
+    /* 读取左臂舵机反馈 */
+    Dof4_Status st = Dof4_arm_read_servo_pos(arm_left);
+    if (st != DOF4_STATUS_OK) {
+        return st;
+    }
 
-    /* 仅读取右臂舵机反馈 */
+    /* 读取右臂舵机反馈 */
     return Dof4_arm_read_servo_pos(arm_right);
 }
 
 /**
  * @brief 写入左右双臂舵机目标。
  *
- * @note 当前左臂舵机未接入硬件，仅下发右臂 4 路舵机目标。
- *       恢复左臂硬件后，将 DOF4_BATCH_SERVO_COUNT 改回 (DOF4_JOINT_COUNT * 2U)
- *       并恢复左臂的 id/pos/spd/acc 填充。
- *
- * @param arm_left  左臂实例（当前跳过写入）。
+ * @param arm_left  左臂实例。
  * @param arm_right 右臂实例。
  * @retval Dof4_Status 状态码。
  */
@@ -1236,27 +1287,46 @@ Dof4_Status Dof4_batch_write_all_servo(const Dof4_Arm *arm_left,
     if (arm_left == NULL || arm_right == NULL) {
         return DOF4_STATUS_NULL_PARAM;
     }
-    (void)arm_left;  /* 左臂舵机未接入，跳过写入 */
 
 #ifndef DOF4_HOST_TEST
-    /* 仅右臂 4 路舵机：ID = 5,6,7,8 */
-    #define DOF4_BATCH_SERVO_COUNT DOF4_JOINT_COUNT
+    /* 双臂 8 路舵机：左臂 ID = 1,2,3,4；右臂 ID = 5,6,7,8 */
+    #define DOF4_BATCH_SERVO_COUNT (DOF4_JOINT_COUNT * 2U)
     uint8_t  id[DOF4_BATCH_SERVO_COUNT];
     int16_t  pos[DOF4_BATCH_SERVO_COUNT];
     uint16_t spd[DOF4_BATCH_SERVO_COUNT];
     uint8_t  acc[DOF4_BATCH_SERVO_COUNT];
 
+    /* 左臂 4 路 */
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
-        id[i]  = arm_right->cfg.servo_id[i];
-        pos[i] = arm_right->target_servo_pos[i];
-        spd[i] = arm_right->cfg.servo_speed;
-        acc[i] = arm_right->cfg.servo_acc;
+        id[i]  = arm_left->cfg.servo_id[i];
+        pos[i] = arm_left->target_servo_pos[i];
+        spd[i] = arm_left->cfg.servo_speed;
+        acc[i] = arm_left->cfg.servo_acc;
+    }
+
+    /* 右臂 4 路 */
+    for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
+        id[DOF4_JOINT_COUNT + i]  = arm_right->cfg.servo_id[i];
+        pos[DOF4_JOINT_COUNT + i] = arm_right->target_servo_pos[i];
+        spd[DOF4_JOINT_COUNT + i] = arm_right->cfg.servo_speed;
+        acc[DOF4_JOINT_COUNT + i] = arm_right->cfg.servo_acc;
     }
 
     SyncWritePosEx(id, DOF4_BATCH_SERVO_COUNT, pos, spd, acc);
 #endif 
     return DOF4_STATUS_OK;
 }
+
+/* ════════════════════════════════════════════════════════════════
+ * 碰撞规避辅助函数 — 前向声明（定义见文件末尾）
+ * ════════════════════════════════════════════════════════════════ */
+
+static void dof4_compute_retreat_pose(const Dof4_CollisionDetail *detail,
+                                      const Dof4_Pose *right_current,
+                                      Dof4_Pose *retreat);
+static bool dof4_is_pose_reached(const Dof4_Arm *arm,
+                                 const Dof4_Pose *target,
+                                 float tol_m);
 
 /**
  * @brief 双臂一步式控制循环——每帧执行一次完整的感知→决策→执行流水线。
@@ -1335,12 +1405,11 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
      */
     Dof4_Pose sample_left;
     Dof4_Pose sample_right;
-    (void)sample_left;  /* 左臂未接入，抑制未使用警告 */
-    // st = sample_arm_target(arm_left, &g_planner_left, now_ms, &sample_left);
-    // if (st != DOF4_STATUS_OK) {
-    //     arm_left->last_status = st;
-    //     return st;
-    // }
+    st = sample_arm_target(arm_left, &g_planner_left, now_ms, &sample_left);
+    if (st != DOF4_STATUS_OK) {
+        arm_left->last_status = st;
+        return st;
+    }
     st = sample_arm_target(arm_right, &g_planner_right, now_ms, &sample_right);
     if (st != DOF4_STATUS_OK) {
         arm_right->last_status = st;
@@ -1349,19 +1418,22 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
 
     /* ─── ③ 逆运动学 ───────────────────────────────────────────────
      * 笛卡尔采样点 (x,y,z,pitch) → 平面 3R 几何解析 → 关节角 (q1,q2,q3,q4)。
-     * 肘型由调用方显式指定：+1.0f=肘上，-1.0f=肘下。
+     * 左臂肘型 +1.0f（肘上解），右臂肘型 -1.0f（肘下解），避免镜像双臂肘部碰撞。
      *
      * ⚠ IK 失败时不退出循环：invalidate target → 下帧从 current_pose 重规划，
      *   臂保持原位不动，避免因单帧不可达而永久卡死。
      */
     Dof4_JointState joints_left;
     Dof4_JointState joints_right;
-    (void)joints_left;  /* 左臂未接入，抑制未使用警告 */
-    // st = Dof4_arm_inverse_kinematics(arm_left, &sample_left, +1.0f, &joints_left);
-    // if (st != DOF4_STATUS_OK) {
-    //     arm_left->last_status = st;
-    //     return st;
-    // }
+    st = Dof4_arm_inverse_kinematics(arm_left, &sample_left, -1.0f, &joints_left);
+    if (st != DOF4_STATUS_OK) {
+        /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
+        arm_left->last_status = st;
+        arm_left->target_valid = false;
+        arm_left->state = DOF4_ARM_STATE_IDLE;
+        arm_right->last_status = DOF4_STATUS_OK;
+        return DOF4_STATUS_OK;
+    }
     st = Dof4_arm_inverse_kinematics(arm_right, &sample_right, -1.0f, &joints_right);
     if (st != DOF4_STATUS_OK) {
         /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
@@ -1372,66 +1444,179 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
         return DOF4_STATUS_OK;
     }
 
-    latch_joint_target(arm_right, &joints_right);
+    /* ─── ④ 碰撞预检测 + 规避状态机 ───────────────────────────────
+     * 用 IK 输出关节角做预测 FK → 胶囊体碰撞检查。
+     * 若碰撞且状态为 NORMAL → 保存目标，计算右臂撤退位姿，进入 RIGHT_RETREAT。
+     * 若已处于规避状态 → 按阶段推进。
+     * 安全时 → 正常 latch → write → 状态更新。
+     */
+    // {
+    //     Dof4_Arm predicted_left  = *arm_left;   /* 浅拷贝 */
+    //     Dof4_Arm predicted_right = *arm_right;
+    //     Dof4_Pose tmp_pose;
+    //     (void)Dof4_arm_forward_kinematics(&predicted_left,  &joints_left,  &tmp_pose);
+    //     (void)Dof4_arm_forward_kinematics(&predicted_right, &joints_right, &tmp_pose);
 
+    //     Dof4_CollisionDetail detail;
+    //     memset(&detail, 0, sizeof(detail));
+    //     st = Dof4_collision_check_capsule(&predicted_left, &predicted_right, &detail);
 
-    // /* ─── ④ 碰撞预检测 ─────────────────────────────────────────────
-    //  * 在真正移动之前，用 IK 结果作假想 FK（拷贝 arm 实例、跑 FK 更新
-    //  * joint_world[]），然后用胶囊体最短线段法检测双臂是否干涉。
-    //  * 若存在碰撞风险 → 本帧不执行后续步骤，臂保持原位不动。
-    //  */
-    // Dof4_Arm predicted_left  = *arm_left;   /* 浅拷贝整条臂的状态 */
-    // Dof4_Arm predicted_right = *arm_right;
-    // (void)predicted_left;  /* 左臂未接入，抑制未使用警告 */
-    // Dof4_Pose tmp_pose;
-    // //(void)Dof4_arm_forward_kinematics(&predicted_left,  &joints_left,  &tmp_pose);
-    // (void)Dof4_arm_forward_kinematics(&predicted_right, &joints_right, &tmp_pose);
-    // // st = Dof4_collision_check(&predicted_left, &predicted_right, NULL);
-    // // if (st != DOF4_STATUS_OK) {
-    // //     arm_left->last_status  = st;
-    // //     arm_right->last_status = st;
-    // //     return st;
-    // // }
+    //     if (st == DOF4_STATUS_COLLISION_RISK && !detail.is_safe) {
+    //         /* ── 检测到碰撞风险 ── */
+    //         if (s_avoid_state == DOF4_AVOID_NORMAL) {
+    //             /* 首次碰撞：保存双方原始目标，计算右臂安全位 */
+    //             s_saved_left_target  = arm_left->target_pose;
+    //             s_saved_right_target = arm_right->target_pose;
+    //             dof4_compute_retreat_pose(&detail,
+    //                                       &arm_right->current_pose,
+    //                                       &s_retreat_pose_right);
+    //             (void)Dof4_clamp_to_workspace(arm_right, &s_retreat_pose_right);
+    //             s_avoid_state = DOF4_AVOID_RIGHT_RETREAT;
+    //             s_avoid_enter_tick = now_ms;
+    //         }
+    //     }
 
-    // /* ─── ⑤ 锁存关节目标 ───────────────────────────────────────────
-    //  * 将通过安全检查的关节角写入 arm 实例：
-    //  *   clamp_joint_angle_rad  → 强制限位
-    //  *   angle_to_servo         → 关节角 → 舵机步进值 → target_servo_pos[]
-    //  * 此时目标已在内存就绪，但尚未下发到硬件总线。
-    // */
-    // // st = latch_joint_target(arm_left, &joints_left);
-    // // if (st != DOF4_STATUS_OK) {
-    // //     arm_left->last_status = st;
-    // //     return st;
-    // // }
-    // st = latch_joint_target(arm_right, &joints_right);
-    // if (st != DOF4_STATUS_OK) {
-    //     arm_right->last_status = st;
-    //     return st;
+    //     /* ── 根据规避状态覆写双臂目标 ── */
+    //     bool avoid_stall_frame = false;  /* 本帧是否需要跳过 latch/write */
+    //     switch (s_avoid_state) {
+    //     case DOF4_AVOID_NORMAL:
+    //         break;  /* 正常流程，不做覆写 */
+
+    //     case DOF4_AVOID_RIGHT_RETREAT:
+    //         /* 左臂停住，右臂撤到安全位 */
+    //         arm_left->target_valid  = false;
+    //         arm_right->target_pose  = s_retreat_pose_right;
+    //         arm_right->target_valid = true;
+    //         if (dof4_is_pose_reached(arm_right, &s_retreat_pose_right, DOF4_AVOID_REACH_TOL_M) ||
+    //             ((now_ms - s_avoid_enter_tick) > DOF4_AVOID_TIMEOUT_MS)) {
+    //             s_avoid_state = DOF4_AVOID_LEFT_ADVANCE;
+    //             s_avoid_enter_tick = now_ms;
+    //         }
+    //         avoid_stall_frame = true;
+    //         break;
+
+    //     case DOF4_AVOID_LEFT_ADVANCE:
+    //         /* 左臂前进，右臂停住 */
+    //         arm_left->target_pose  = s_saved_left_target;
+    //         arm_left->target_valid = true;
+    //         arm_right->target_valid = false;
+    //         if (dof4_is_pose_reached(arm_left, &s_saved_left_target, DOF4_AVOID_REACH_TOL_M) ||
+    //             ((now_ms - s_avoid_enter_tick) > DOF4_AVOID_TIMEOUT_MS)) {
+    //             s_avoid_state = DOF4_AVOID_RIGHT_ADVANCE;
+    //             s_avoid_enter_tick = now_ms;
+    //         }
+    //         avoid_stall_frame = true;
+    //         break;
+
+    //     case DOF4_AVOID_RIGHT_ADVANCE:
+    //         /* 右臂前进到原始目标，左臂停住 */
+    //         arm_left->target_valid  = false;
+    //         arm_right->target_pose  = s_saved_right_target;
+    //         arm_right->target_valid = true;
+    //         if (dof4_is_pose_reached(arm_right, &s_saved_right_target, DOF4_AVOID_REACH_TOL_M) ||
+    //             ((now_ms - s_avoid_enter_tick) > DOF4_AVOID_TIMEOUT_MS)) {
+    //             s_avoid_state = DOF4_AVOID_NORMAL;
+    //         }
+    //         avoid_stall_frame = true;
+    //         break;
+    //     }
+
+    //     if (avoid_stall_frame) {
+    //         /* 规避激活中：本帧重新采样轨迹但不 latch/write，等下一帧 */
+    //         arm_left->state  = DOF4_ARM_STATE_MOVING;
+    //         arm_right->state = DOF4_ARM_STATE_MOVING;
+    //         arm_left->last_status  = DOF4_STATUS_OK;
+    //         arm_right->last_status = DOF4_STATUS_OK;
+    //         return DOF4_STATUS_OK;
+    //     }
     // }
 
-    // /* ─── ⑥ 舵机下发 ───────────────────────────────────────────────
-    //  * 通过 SyncWritePosEx 一次总线帧将右臂 4 路舵机目标同步写入硬件。
-    //  */
+    /* ─── ⑤ 锁存关节目标 ─────────────────────────────────────────── */
+    st = latch_joint_target(arm_left, &joints_left);
+    if (st != DOF4_STATUS_OK) {
+        arm_left->last_status = st;
+        return st;
+    }
+    st = latch_joint_target(arm_right, &joints_right);
+    if (st != DOF4_STATUS_OK) {
+        arm_right->last_status = st;
+        return st;
+    }
+
+    /* ─── ⑥ 舵机下发 ─────────────────────────────────────────────── */
     st = Dof4_batch_write_all_servo(arm_left, arm_right);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
 
-    // /* ─── ⑦ 状态更新 ───────────────────────────────────────────────
-    //  * 根据轨迹规划器 running 标志更新臂状态，供上层任务监控。
-    //  */
-    // arm_left->state   = g_planner_left.running  ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
-    // arm_right->state  = g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
-    // arm_left->last_status  = DOF4_STATUS_OK;
-    // arm_right->last_status = DOF4_STATUS_OK;
-    // return DOF4_STATUS_OK;
-    arm_left->state = g_planner_left.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
-    arm_right->state = g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
-    arm_left->last_status = DOF4_STATUS_OK;
+    /* ─── ⑦ 状态更新 ─────────────────────────────────────────────── */
+    arm_left->state   = g_planner_left.running  ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
+    arm_right->state  = g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
+    arm_left->last_status  = DOF4_STATUS_OK;
     arm_right->last_status = DOF4_STATUS_OK;
     return DOF4_STATUS_OK;
+
 }
+
+/* ════════════════════════════════════════════════════════════════
+ * 碰撞规避辅助函数
+ * ════════════════════════════════════════════════════════════════ */
+/**
+ * @brief 基于碰撞详情计算右臂安全撤退位姿。
+ *
+ * 利用碰撞检测返回的 closest_a / closest_b 得到最近距离向量方向，
+ * 将右臂当前位姿沿该方向推开 DOF4_AVOID_PUSH_M，并附加 Z 抬高。
+ *
+ * @param detail          碰撞详情（含 closest_a / closest_b）。
+ * @param right_current   右臂当前 FK 位姿。
+ * @param retreat         输出安全撤退位姿。
+ */
+static void dof4_compute_retreat_pose(const Dof4_CollisionDetail *detail,
+                                      const Dof4_Pose *right_current,
+                                      Dof4_Pose *retreat)
+{
+    float dir_x = detail->closest_b[0] - detail->closest_a[0];
+    float dir_y = detail->closest_b[1] - detail->closest_a[1];
+    float dir_z = detail->closest_b[2] - detail->closest_a[2];
+    const float len = sqrtf(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z);
+
+    if (len > DOF4_GEOM_EPS) {
+        dir_x /= len;
+        dir_y /= len;
+        dir_z /= len;
+    } else {
+        /* 退化：沿默认方向（右臂向右后方推开） */
+        dir_x = 0.0f;
+        dir_y = -1.0f;
+        dir_z = 0.3f;
+    }
+
+    retreat->x     = right_current->x + dir_x * DOF4_AVOID_PUSH_M;
+    retreat->y     = right_current->y + dir_y * DOF4_AVOID_PUSH_M;
+    retreat->z     = right_current->z + dir_z * DOF4_AVOID_PUSH_M + DOF4_AVOID_Z_LIFT_M;
+    retreat->pitch = right_current->pitch;
+}
+
+/**
+ * @brief 检查单臂 FK 位姿是否已到达目标（位置 + pitch 均在容差内）。
+ * @param arm    机械臂实例。
+ * @param target 目标位姿。
+ * @param tol_m  位置容差，单位 m。
+ * @retval true  已到位。
+ * @retval false 未到位。
+ */
+static bool dof4_is_pose_reached(const Dof4_Arm *arm,
+                                 const Dof4_Pose *target,
+                                 float tol_m)
+{
+    const float dx = arm->current_pose.x - target->x;
+    const float dy = arm->current_pose.y - target->y;
+    const float dz = arm->current_pose.z - target->z;
+    const float pos_err = sqrtf(dx * dx + dy * dy + dz * dz);
+    const float pitch_err = fabsf(Dof4_normalize_angle(arm->current_pose.pitch - target->pitch));
+    return (pos_err <= tol_m) && (pitch_err <= tol_m);
+}
+
 
 /**
  * @brief 将位姿钳位到机械臂工作空间内。
@@ -1439,7 +1624,7 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
  * @param pose 输入输出位姿。
  * @retval Dof4_Status 状态码。
  */
-/* Startup pose gate for the right 4DOF arm. */
+/* Startup pose gate for the dual 4DOF arm. */
 Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
                                        Dof4_Arm *arm_right,
                                        const Dof4_Pose *target,
@@ -1454,11 +1639,20 @@ Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
         return DOF4_STATUS_BAD_CONFIG;
     }
 
-    Dof4_Status st = Dof4_arm_set_target(arm_right,
+    Dof4_Status st = Dof4_arm_set_target(arm_left,
                                          target->x,
                                          target->y,
                                          target->z,
                                          target->pitch);
+    if (st != DOF4_STATUS_OK) {
+        arm_left->last_status = st;
+        return st;
+    }
+    st = Dof4_arm_set_target(arm_right,
+                             target->x,
+                             target->y,
+                             target->z,
+                             target->pitch);
     if (st != DOF4_STATUS_OK) {
         arm_right->last_status = st;
         return st;
@@ -1473,20 +1667,36 @@ Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
 
         if (st != DOF4_STATUS_OK) {
             last_error = st;
+            arm_left->last_status  = st;
             arm_right->last_status = st;
         } else {
+            if (arm_left->last_status != DOF4_STATUS_OK) {
+                last_error = arm_left->last_status;
+            }
             if (arm_right->last_status != DOF4_STATUS_OK) {
                 last_error = arm_right->last_status;
             }
 
-            const float dx = arm_right->current_pose.x - target->x;
-            const float dy = arm_right->current_pose.y - target->y;
-            const float dz = arm_right->current_pose.z - target->z;
-            const float pos_err = sqrtf(dx * dx + dy * dy + dz * dz);
-            const float pitch_err = fabsf(Dof4_normalize_angle(arm_right->current_pose.pitch -
-                                                               target->pitch));
+            /* 左臂到位检查 */
+            const float dx_l = arm_left->current_pose.x - target->x;
+            const float dy_l = arm_left->current_pose.y - target->y;
+            const float dz_l = arm_left->current_pose.z - target->z;
+            const float pos_err_l = sqrtf(dx_l * dx_l + dy_l * dy_l + dz_l * dz_l);
+            const float pitch_err_l = fabsf(Dof4_normalize_angle(arm_left->current_pose.pitch -
+                                                                 target->pitch));
+            bool left_ok = (pos_err_l <= pos_tol_m) && (pitch_err_l <= pitch_tol_rad);
 
-            if (pos_err <= pos_tol_m && pitch_err <= pitch_tol_rad) {
+            /* 右臂到位检查 */
+            const float dx_r = arm_right->current_pose.x - target->x;
+            const float dy_r = arm_right->current_pose.y - target->y;
+            const float dz_r = arm_right->current_pose.z - target->z;
+            const float pos_err_r = sqrtf(dx_r * dx_r + dy_r * dy_r + dz_r * dz_r);
+            const float pitch_err_r = fabsf(Dof4_normalize_angle(arm_right->current_pose.pitch -
+                                                                 target->pitch));
+            bool right_ok = (pos_err_r <= pos_tol_m) && (pitch_err_r <= pitch_tol_rad);
+
+            if (left_ok && right_ok) {
+                arm_left->last_status  = DOF4_STATUS_OK;
                 arm_right->last_status = DOF4_STATUS_OK;
                 return DOF4_STATUS_OK;
             }
@@ -1496,19 +1706,26 @@ Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
     }
 
     st = (last_error != DOF4_STATUS_OK) ? last_error : DOF4_STATUS_NOT_READY;
+    arm_left->last_status  = st;
     arm_right->last_status = st;
     return st;
 }
 
-/* Clamp a pose to the configured workspace. */
+/* Clamp a pose to the configured workspace (bounds shift with base_offset). */
 Dof4_Status Dof4_clamp_to_workspace(const Dof4_Arm *arm, Dof4_Pose *pose)
 {
     if (arm == NULL || pose == NULL) {
         return DOF4_STATUS_NULL_PARAM;
     }
-    pose->x = clamp_float(pose->x, arm->cfg.ws_min[0], arm->cfg.ws_max[0]);
-    pose->y = clamp_float(pose->y, arm->cfg.ws_min[1], arm->cfg.ws_max[1]);
-    pose->z = clamp_float(pose->z, arm->cfg.ws_min[2], arm->cfg.ws_max[2]);
+    pose->x = clamp_float(pose->x,
+                          arm->cfg.ws_min[0] + arm->cfg.base_offset[0],
+                          arm->cfg.ws_max[0] + arm->cfg.base_offset[0]);
+    pose->y = clamp_float(pose->y,
+                          arm->cfg.ws_min[1] + arm->cfg.base_offset[1],
+                          arm->cfg.ws_max[1] + arm->cfg.base_offset[1]);
+    pose->z = clamp_float(pose->z,
+                          arm->cfg.ws_min[2] + arm->cfg.base_offset[2],
+                          arm->cfg.ws_max[2] + arm->cfg.base_offset[2]);
     return DOF4_STATUS_OK;
 }
 

@@ -14,6 +14,9 @@
 #include "block_inspect.h"
 #include "action_scheduler.h"
 #include "Dof4_Arm.h"
+#include "Dof4_Collision.h"
+#include "input_arbiter.h"
+#include "action_scheduler_4dof.h"
 
 #define APP_SERVO_COUNT 8
 #define APP_LED_STRIP_PIXELS 30

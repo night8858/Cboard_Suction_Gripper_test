@@ -72,7 +72,7 @@ void input_arbiter_update_rc(const RC_ctrl_t *rc);
  *
  * @param cmd  指向 all_pc_command 的指针 (由 cmd_execute_all 传入)
  */
-void input_arbiter_update_pc(const all_pc_command *cmd);
+//void input_arbiter_update_pc(const all_pc_command *cmd);
 
 /**
  * @brief 执行输入仲裁, 将结果写入 target_x_test/y_test
