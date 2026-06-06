@@ -362,6 +362,87 @@ static int16_t clamp_i16(int32_t value, int16_t min_value, int16_t max_value)
     return (int16_t)value;
 }
 
+static int32_t round_servo_steps(float steps_f)
+{
+    return (int32_t)((steps_f >= 0.0f) ? (steps_f + 0.5f) : (steps_f - 0.5f));
+}
+
+static int32_t joint_angle_to_servo_steps_raw(const Dof4_Arm *arm,
+                                              uint8_t joint_index,
+                                              float angle_rad)
+{
+    float servo_angle = (angle_rad - arm->cfg.servo_offset[joint_index]) *
+                        (float)arm->cfg.servo_sign[joint_index];
+    if (arm->cfg.servo_reverse[joint_index] != 0U) {
+        servo_angle = -servo_angle;
+    }
+
+    const float steps_f = (float)arm->cfg.servo_zero[joint_index] +
+                          servo_angle * DOF4_SERVO_POS_PER_RAD;
+    return round_servo_steps(steps_f);
+}
+
+static Dof4_Status j1_angle_to_servo_equivalent(const Dof4_Arm *arm,
+                                                float angle_rad,
+                                                float *selected_angle_rad,
+                                                int16_t *servo_pos)
+{
+    if (arm == NULL || selected_angle_rad == NULL || servo_pos == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+    if (arm->cfg.servo_sign[0] == 0) {
+        return DOF4_STATUS_BAD_CONFIG;
+    }
+
+    bool have_valid = false;
+    float best_valid_delta = 0.0f;
+    float best_valid_angle = angle_rad;
+    int32_t best_valid_steps = 0;
+
+    bool have_fallback = false;
+    int32_t best_fallback_overflow = 0;
+    float best_fallback_angle = angle_rad;
+    int32_t best_fallback_steps = 0;
+
+    for (int32_t k = -2; k <= 2; ++k) {
+        const float candidate = angle_rad + (float)k * 2.0f * M_PI_F;
+        const int32_t steps = joint_angle_to_servo_steps_raw(arm, 0U, candidate);
+
+        if (steps >= arm->cfg.servo_min[0] && steps <= arm->cfg.servo_max[0]) {
+            const float delta = fabsf(candidate - angle_rad);
+            if (!have_valid || delta < best_valid_delta) {
+                have_valid = true;
+                best_valid_delta = delta;
+                best_valid_angle = candidate;
+                best_valid_steps = steps;
+            }
+            continue;
+        }
+
+        const int32_t overflow = (steps < arm->cfg.servo_min[0])
+                                 ? ((int32_t)arm->cfg.servo_min[0] - steps)
+                                 : (steps - (int32_t)arm->cfg.servo_max[0]);
+        if (!have_fallback || overflow < best_fallback_overflow) {
+            have_fallback = true;
+            best_fallback_overflow = overflow;
+            best_fallback_angle = candidate;
+            best_fallback_steps = steps;
+        }
+    }
+
+    if (have_valid) {
+        *selected_angle_rad = best_valid_angle;
+        *servo_pos = (int16_t)best_valid_steps;
+        return DOF4_STATUS_OK;
+    }
+
+    *selected_angle_rad = best_fallback_angle;
+    *servo_pos = clamp_i16(best_fallback_steps,
+                           arm->cfg.servo_min[0],
+                           arm->cfg.servo_max[0]);
+    return DOF4_STATUS_SERVO_LIMIT;
+}
+
 /**
  * @brief 将实际/URDF 关节角夹紧到 URDF 限位内。
  * @param arm 机械臂实例。
@@ -606,10 +687,8 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
             return DOF4_STATUS_BAD_CONFIG;
         }
 
-        if (i == 0U) {  /* J1 直接钳制（左右臂均适用，绕过 servo_offset 逻辑） */
-            limited_joints.q[i] = clamp_float(joints->q[i],
-                                              arm->cfg.joint_min[i],
-                                              arm->cfg.joint_max[i]);
+        if (i == 0U) {  /* J1 is wraparound; select the servo-valid equivalent below. */
+            limited_joints.q[i] = joints->q[i];
         } else {
             const float relative_q = joints->q[i] - arm->cfg.servo_offset[i];
             const float limited_relative_q = clamp_float(relative_q,
@@ -619,9 +698,23 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
         }
     }
 
-    arm->joint_target = limited_joints;
     Dof4_Status status = DOF4_STATUS_OK;
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
+        if (i == 0U) {
+            float selected_angle = limited_joints.q[i];
+            int16_t servo_pos = arm->target_servo_pos[i];
+            Dof4_Status st = j1_angle_to_servo_equivalent(arm,
+                                                          limited_joints.q[i],
+                                                          &selected_angle,
+                                                          &servo_pos);
+            limited_joints.q[i] = selected_angle;
+            arm->target_servo_pos[i] = servo_pos;
+            if (st != DOF4_STATUS_OK) {
+                status = st;
+            }
+            continue;
+        }
+
         float servo_angle = (limited_joints.q[i] - arm->cfg.servo_offset[i]) *
                             (float)arm->cfg.servo_sign[i];
         if (arm->cfg.servo_reverse[i] != 0U) {
@@ -640,6 +733,7 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
             arm->target_servo_pos[i] = (int16_t)rounded;
         }
     }
+    arm->joint_target = limited_joints;
     return status;
 }
 
@@ -1161,6 +1255,14 @@ Dof4_Status Dof4_angle_to_servo(const Dof4_Arm *arm,
 
     if (arm->cfg.servo_sign[joint_index] == 0) {
         return DOF4_STATUS_BAD_CONFIG;
+    }
+
+    if (joint_index == 0U) {
+        float selected_angle = angle_rad;
+        return j1_angle_to_servo_equivalent(arm,
+                                            angle_rad,
+                                            &selected_angle,
+                                            servo_pos);
     }
 
     const float limited_angle = clamp_joint_angle_rad(arm, joint_index, angle_rad);
