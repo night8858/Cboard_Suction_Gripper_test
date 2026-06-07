@@ -65,28 +65,42 @@ extern "C" {
 #define R_J4_URDF_MIN_DEG (-1.57f * DOF4_RAD_TO_DEG)
 #define R_J4_URDF_MAX_DEG (1.57f * DOF4_RAD_TO_DEG)
 
-/* L 臂暂未实测偏置和方向：先保留 2048 零位，后续只需修改 ZERO_BIAS_DEG / SERVO_SIGN。 */
+/**
+ * L 臂舵机方向标定说明 ════════════════════════════════════════
+ *
+ * 以下 L_Jx_SERVO_SIGN 当前为占位值，必须实测验证后方可启用左臂。
+ * 验证步骤（对每个关节逐一执行）：
+ *   1. 将机械臂摆到全伸直参考位（所有关节角 ≈ 0）
+ *   2. 单关节发送 position = 2048+200，观察物理转动方向
+ *   3. 若转动方向与 URDF 正角方向一致 → SIGN = +1
+ *      若转动方向与 URDF 正角方向相反 → SIGN = -1
+ *   4. 更新对应 L_Jx_SERVO_SIGN 并删除本 TODO
+ *
+ * 同时需实测 ZERO_BIAS_DEG：在全伸直状态下读取 position 值，
+ * 反算零位偏置角。当前偏置值直接从右臂镜像，仅作参考。
+ * ═══════════════════════════════════════════════════════════════ */
+
 #define L_J1_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J1_ZERO_BIAS_DEG 1.57f
-#define L_J1_SERVO_SIGN (-1) /* TODO: 实测 L_J1 舵机 position 增加方向后修改。 */
-#define L_J1_URDF_MIN_DEG (-3.49f * DOF4_RAD_TO_DEG)
-#define L_J1_URDF_MAX_DEG (1.135f * DOF4_RAD_TO_DEG)  /* +10° 扩展 */
+#define L_J1_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
+#define L_J1_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)  /* -215°, 下限扩展 15° */
+#define L_J1_URDF_MAX_DEG (1.135f * DOF4_RAD_TO_DEG)  /* +65°, 上限扩展 10° */
 
 #define L_J2_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J2_ZERO_BIAS_DEG 2.67f
-#define L_J2_SERVO_SIGN (1) /* TODO: 实测 L_J2 舵机 position 增加方向后修改。 */
+#define L_J2_SERVO_SIGN (1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J2_URDF_MIN_DEG (-2.70f * DOF4_RAD_TO_DEG)
 #define L_J2_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J3_ZERO_BIAS_DEG -1.47f
-#define L_J3_SERVO_SIGN (-1) /* TODO: 实测 L_J3 舵机 position 增加方向后修改。 */
+#define L_J3_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define L_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J4_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J4_ZERO_BIAS_DEG 0.0f
-#define L_J4_SERVO_SIGN (-1) /* TODO: 实测 L_J4 舵机 position 增加方向后修改。 */
+#define L_J4_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J4_URDF_MIN_DEG (-1.57f * DOF4_RAD_TO_DEG)
 #define L_J4_URDF_MAX_DEG (1.57f * DOF4_RAD_TO_DEG)
 
@@ -403,7 +417,8 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
 
 Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
                                        Dof4_Arm *arm_right,
-                                       const Dof4_Pose *target,
+                                       const Dof4_Pose *target_left,
+                                       const Dof4_Pose *target_right,
                                        uint32_t timeout_ms,
                                        float pos_tol_m,
                                        float pitch_tol_rad);

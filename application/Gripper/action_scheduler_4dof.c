@@ -46,6 +46,8 @@
 
 #define BLOCK_GET_DOWN_Z -0.22f    //TODO: 实测调整z的下降目标高度，确保能贴近物块但不碰撞
 
+#define BLOCK_HEIGHT -0.08f
+
 /* ════════════════════════════════════════════════════════════════
  * 外部引用
  * ════════════════════════════════════════════════════════════════ */
@@ -60,14 +62,17 @@ BlockPlacementState g_block_state;
 /* ════════════════════════════════════════════════════════════════
  * 吸盘/电磁阀映射
  *
- * relay_control(id, state):  id=0→左臂吸盘, id=1→右臂吸盘
- *                           state=1→开启(吸取), state=0→关闭(释放)
+ * relay_control(id, state):
+ *   id=0→左臂吸盘, id=1→右臂吸盘, id=2→左背吸盘, id=3→右背吸盘
+ *   state=1→开启(吸取/吸附), state=0→关闭(释放)
  *
  * 微动开关: g_switch_input.state[0]=左臂吸附状态, [1]=右臂吸附状态
  *           0=未吸附, 1=已吸附
  * ════════════════════════════════════════════════════════════════ */
-#define RELAY_LEFT_ARM    0U
-#define RELAY_RIGHT_ARM   1U
+#define RELAY_LEFT_ARM    0U  /**< 左臂吸盘电磁阀（一号） */
+#define RELAY_RIGHT_ARM   1U  /**< 右臂吸盘电磁阀（二号） */
+#define RELAY_LEFT_BACK   2U  /**< 左背吸盘电磁阀（三号） */
+#define RELAY_RIGHT_BACK  3U  /**< 右背吸盘电磁阀（四号） */
 #define SUCTION_ON        1
 #define SUCTION_OFF       0
 
@@ -76,10 +81,11 @@ BlockPlacementState g_block_state;
  * ════════════════════════════════════════════════════════════════ */
 
 #define ACT4_MOVE_TIMEOUT_MS       3000U   /**< 单段移动最大超时（容错兜底） */
-#define ACT4_SUCTION_TIMEOUT_MS    600U   /**< 吸附等待最大超时 */
-#define ACT4_RELEASE_TIMEOUT_MS    600U   /**< 释放等待最大超时 */
+#define ACT4_SUCTION_TIMEOUT_MS    1000U   /**< 吸附等待最大超时 */
+#define ACT4_PLACE_HOLD_MS          800U   /**< 放置到位后等待背部吸盘吸附时间 */
+#define ACT4_RELEASE_TIMEOUT_MS    1000U   /**< 释放等待最大超时 */
 #define ACT4_HOLD_MS                100U   /**< 完成后保持时间（回 IDLE 前） */
-#define ACT4_WAYPOINT_HOLD_MS       400U   /**< 途经点停留时间（DANCE 用） */
+#define ACT4_WAYPOINT_HOLD_MS       100U   /**< 途经点停留时间（DANCE 用） */
 
 /** @brief 到位判定：位置容差，单位 m */
 #define ACT4_REACH_POS_TOL_M     0.03f
@@ -91,9 +97,9 @@ static const Dof4_Pose s_default_left_back_avoid_pose  = {0.24f,  0.13f, 0.16f, 
 /** @brief 右背占用时的默认右臂高位避让位姿，动作表可覆盖。 */
 static const Dof4_Pose s_default_right_back_avoid_pose = {0.24f, -0.13f, 0.16f, -0.30f};
 /** @brief 当前生效的左背占用避让位，放置到左背动作完成后更新。 */
-static Dof4_Pose s_current_left_back_avoid_pose  = {0.24f,  0.13f, 0.16f, -0.30f};
+static Dof4_Pose s_current_left_back_avoid_pose  = {0.24f,  0.13f, 0.13f, -0.30f};
 /** @brief 当前生效的右背占用避让位，放置到右背动作完成后更新。 */
-static Dof4_Pose s_current_right_back_avoid_pose = {0.24f, -0.13f, 0.16f, -0.30f};
+static Dof4_Pose s_current_right_back_avoid_pose = {0.24f, -0.13f, 0.13f, -0.30f};
 
 /* ════════════════════════════════════════════════════════════════
  * 目标位姿数据结构
@@ -172,8 +178,8 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         /* 左臂 */
         .left = {
-            .approach = {0.355f, 0.361f, 0.125f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, 0.425f, -0.25f, STAY_DOWN}, /* 前侧抓取点 */
+            .approach = {0.355f, 0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
+            .target   = {0.425f, 0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, 0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
             /* 中间途经点（如需经过某特定位置，取消注释）:
@@ -182,7 +188,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         /* 右臂 */
         .right = {
             .approach = {0.355f, -0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, -0.425f, -0.25f, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, -0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, -0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -197,8 +203,8 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * ──────────────────────────────────────────────────────────── */
     {
         .left = {
-            .approach = {0.355f, 0.361f, 0.125f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, 0.425f, -0.25f, STAY_DOWN}, /* 前侧抓取点 */
+            .approach = {0.355f, 0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
+            .target   = {0.425f, 0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, 0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -216,7 +222,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left      = {{{0}}},   /* 左臂不使用 */
         .right = {
             .approach = {0.355f, -0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, -0.425f, -0.25f, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, -0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, -0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -225,61 +231,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [4] ACTION_BLOCK_GET_BACKWARD — 后侧物块同时抓取（双臂）
-     *
-     * 注意: 后侧取物需 J1 旋转 ~151°。左臂 J1 上限仅 65°（+10° 扩展后），
-     *       右臂 J1 下限仅 -65°。IK 极可能返回 UNREACHABLE。
-     *       若发生，需减小 |Y| 值（约从 0.425→0.28 以下）使目标落入 J1 范围。
-     * ──────────────────────────────────────────────────────────── */
-    {
-        .left = {
-            .approach = {-0.308f, 0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
-            .target   = {-0.425f, 0.425f, 0.025f, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
-            .retreat  = {-0.212f, 0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .right = {
-            .approach = {-0.308f, -0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
-            .target   = {-0.425f, -0.425f, 0.025f, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
-            .retreat  = {-0.212f, -0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .use_left  = true,
-        .use_right = true,
-    },
-
-    /* ────────────────────────────────────────────────────────────
-     * [5] ACTION_BLOCK_GET_BACKWARD_LEFT_ARM — 后侧物块左臂单独抓取
-     * ──────────────────────────────────────────────────────────── */
-    {
-        .left = {
-            .approach = {-0.308f, 0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
-            .target   = {-0.425f, 0.425f, 0.025f, STAY_DOWN}, /* 后侧抓取点 ⚠️ */
-            .retreat  = {-0.212f, 0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .right     = {{{0}}},
-        .use_left  = true,
-        .use_right = false,
-    },
-
-    /* ────────────────────────────────────────────────────────────
-     * [6] ACTION_BLOCK_GET_BACKWARD_RIGHT_ARM — 后侧物块右臂单独抓取
-     * ──────────────────────────────────────────────────────────── */
-    {
-        .left      = {{{0}}},
-        .right = {
-            .approach = {-0.308f, -0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
-            .target   = {-0.425f, -0.425f, 0.025f, STAY_DOWN}, /* 后侧抓取点 ⚠️ */
-            .retreat  = {-0.212f, -0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .use_left  = false,
-        .use_right = true,
-    },
-
-    /* ────────────────────────────────────────────────────────────
-     * [7] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
+     * [4] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
      *     左臂放置物块到左背（机身左侧后方的储物区）
      *
      * 流程: 左臂携物块 → 放置预就位(PLACE_APPROACH) → 放置点(PLACE)
@@ -292,9 +244,10 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
         .left = {
-            .approach   = {0.24f, 0.13f, 0.13f, 0.0f},   /* 左背放置预就位 */
-            .waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
-            .target     = {-0.22f, 0.185f, 0.30f, -1.4f},  /* 左背放置点 */
+            .approach   = {0.12f, 0.26f, 0.13f, 0.0f},   /* 左背放置预就位 */
+            // .waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
+            .waypoint_0 = {-0.22f, 0.18f, 0.40f, -1.00f}, /* 放置前最后预就位，避让左背 */
+            .target     = {-0.22f, 0.18f, 0.32f, -1.4f},  /* 左背放置点 */
             .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 放置后撤退 */
             .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -303,11 +256,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .use_right = false,
         .use_waypoint = true,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .left_back_avoid  = {0.08f, 0.0f, 0.36f, -0.10f},
+        .left_back_avoid  = {0.24f, 0.13f, 0.13f, 0.0f},
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [8] ACTION_BLOCK_PLACE_LEFT_ARM_TO_RIGHT_BACK
+     * [5] ACTION_BLOCK_PLACE_LEFT_ARM_TO_RIGHT_BACK
      *     左臂放置物块到右背（机身右侧后方的储物区）
      *
      * 注意: 左臂跨中线到右侧放置，需确认 J1 限位和碰撞安全。
@@ -328,7 +281,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [9] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK
+     * [6] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK
      *     右臂放置物块到左背（机身左侧后方的储物区）
      *
      * 注意: 右臂跨中线到左侧放置，需确认 J1 限位和碰撞安全。
@@ -348,25 +301,27 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [10] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK
+     * [7] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK
      *      右臂放置物块到右背（机身右侧后方的储物区）
      * ──────────────────────────────────────────────────────────── */
     {
         .left      = {{{0}}},
         .right = {
-            .approach = {-0.062f, -0.133f, 0.18f, -0.30f},   /* 右背放置预就位 */
-            .target   = {-0.11f, -0.1325f, 0.03f, STAY_DOWN}, /* 右背放置点 */
-            .retreat  = {-0.023f, -0.133f, 0.23f, -0.10f},   /* 放置后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
+            .approach   = {0.12f, -0.30f, 0.24f, 0.0f},   /* 右背放置预就位 */
+            .waypoint_0 = {-0.18f, -0.185f, 0.45f, -1.0f},   /* J1=+90° 半伸展绕行点 */
+            .target     = {-0.22f, -0.185f, 0.32f, -1.37f}, /* 右背放置点 */
+            .retreat    = {0.11f, -0.29f, 0.155f, -0.10f}, /* 放置后撤退 */
+            .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,
         .use_right = true,
+        .use_waypoint = true,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .right_back_avoid  = {0.24f, -0.45f, 0.36f, -0.10f},
+        .right_back_avoid  = {0.24f, -0.13f, 0.13f, 0.0f},  /* 与 [4] 左背规避位 Y 轴对称 */
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [11] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
+     * [8] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
      *      左臂放置物块到左1放置点第一层
      *
      * "左1放置点" 是机身上一个固定的堆叠放置位。
@@ -376,10 +331,10 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * ──────────────────────────────────────────────────────────── */
     {
         .left = {
-            .approach = {0.05f,  0.35f, 0.30f, -1.00f},   /* TODO: 左1放置点F1预就位 */
-            .target   = {0.05f,  0.45f, 0.08f, -1.50f},   /* TODO: 左1放置点F1 */
-            .retreat  = {0.05f,  0.30f, 0.25f, -0.50f},   /* TODO: 放置后撤退 */
-            .complete = {0.02f,  0.00f, 0.20f, -0.02f},
+            .approach = {-0.308f, 0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
+            .target   = {-0.425f, 0.0f, -0.20f, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
+            .retreat  = {-0.212f, 0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
+            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
         .use_left  = true,
@@ -388,7 +343,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [12] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2
+     * [9] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2
      *      左臂放置物块到左1放置点第二层（堆叠）
      *
      * F2 的 Z 坐标应比 F1 高约一个物块厚度（~0.04m）。
@@ -407,24 +362,24 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [13] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1
+     * [10] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1
      *      右臂放置物块到右1放置点第一层
      * ──────────────────────────────────────────────────────────── */
     {
         .left      = {{{0}}},
         .right = {
-            .approach = {0.05f, -0.3f, 0.30f, -1.00f},   /* TODO */
-            .target   = {0.05f, -0.4f, -0.22f, STAY_DOWN},   /* TODO */
-            .retreat  = {0.05f, -0.30f, 0.25f, -0.50f},   /* TODO */
+            .approach = {0.35f, -0.2f, 0.30f, -1.00f},   /* TODO */
+            .target   = {0.55f, -0.4f, -0.18f, STAY_DOWN},   /* TODO */
+            .retreat  = {0.25f, -0.16f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,
-        .use_right = true,
+        .use_right = true ,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [14] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2
+     * [11] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2
      *      右臂放置物块到右1放置点第二层（堆叠）
      * ──────────────────────────────────────────────────────────── */
     {
@@ -441,7 +396,91 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [15] ACTION_DANCE — 神秘舞蹈动作
+     * [12] ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM
+     *      左臂从左背抓取物块到手
+     *
+     * 流程: 左臂 → 左背预就位 → 途经点绕行 → 抓取点 → 吸取 → 撤退 → 归位
+     * 抓取后左背储物区清空。
+     * ──────────────────────────────────────────────────────────── */
+    {
+        .left = {
+            .approach   = {0.12f, 0.26f, 0.13f, 0.0f},     /* 左背抓取预就位 */
+            .waypoint_0 = {-0.22f, 0.18f, 0.40f, -1.00f},   /* J1 绕行中间点 */
+            .target     = {-0.22f, 0.18f, 0.32f, -1.4f},    /* 左背物块抓取点 */
+            .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 抓取后撤退 */
+            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
+        },
+        .right     = {{{0}}},
+        .use_left  = true,
+        .use_right = false,
+        .use_waypoint = true,
+        .left_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
+    },
+
+    /* ────────────────────────────────────────────────────────────
+     * [13] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM
+     *      左臂从右背抓取物块到手（跨中线）
+     *
+     * 注意: 左臂跨中线到右侧，需确认 J1 限位和碰撞安全。
+     * 抓取后右背储物区清空。
+     * ──────────────────────────────────────────────────────────── */
+    {
+        .left = {
+            .approach   = {-0.062f, -0.074f, 0.18f, -0.30f}, /* 跨中线预就位 */
+            .target     = {-0.11f, -0.1325f, 0.03f, STAY_DOWN}, /* 右背物块抓取点 */
+            .retreat    = {-0.023f, -0.026f, 0.23f, -0.10f}, /* 抓取后撤退 */
+            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
+        },
+        .right     = {{{0}}},
+        .use_left  = true,
+        .use_right = false,
+        .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
+    },
+
+    /* ────────────────────────────────────────────────────────────
+     * [14] ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM
+     *      右臂从左背抓取物块到手（跨中线）
+     *
+     * 注意: 右臂跨中线到左侧，需确认 J1 限位和碰撞安全。
+     * 抓取后左背储物区清空。
+     * ──────────────────────────────────────────────────────────── */
+    {
+        .left      = {{{0}}},
+        .right = {
+            .approach   = {-0.062f, 0.074f, 0.18f, -0.30f},  /* 跨中线预就位 */
+            .target     = {-0.11f, 0.1325f, 0.03f, STAY_DOWN}, /* 左背物块抓取点 */
+            .retreat    = {-0.023f, 0.026f, 0.23f, -0.10f},  /* 抓取后撤退 */
+            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
+        },
+        .use_left  = false,
+        .use_right = true,
+        .left_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
+    },
+
+    /* ────────────────────────────────────────────────────────────
+     * [15] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM
+     *      右臂从右背抓取物块到手
+     *
+     * 流程: 右臂 → 右背预就位 → 途经点绕行 → 抓取点 → 吸取 → 撤退 → 归位
+     * 抓取后右背储物区清空。
+     * ──────────────────────────────────────────────────────────── */
+    {
+        .left      = {{{0}}},
+        .right = {
+            .approach   = {0.12f, -0.30f, 0.24f, 0.0f},     /* 右背抓取预就位 */
+            .waypoint_0 = {-0.18f, -0.185f, 0.45f, -1.0f},   /* J1 绕行中间点 */
+            .target     = {-0.22f, -0.185f, 0.32f, -1.37f},  /* 右背物块抓取点 */
+            .retreat    = {0.11f, -0.29f, 0.155f, -0.10f},   /* 抓取后撤退 */
+            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
+        },
+        .use_left  = false,
+        .use_right = true,
+        .use_waypoint = true,
+        .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
+    },
+
+    /* ────────────────────────────────────────────────────────────
+     * [16] ACTION_DANCE — 神秘舞蹈动作
      *
      * 多途经点序列动作。DANCE 不使用固定的 approach/target/retreat 字段，
      * 而是通过 WAYPOINT 子状态 + s_dance_waypoints[] 数组依次访问各途经点。
@@ -781,13 +820,13 @@ static void action_4dof_handle(void)
         break;
 
     /* ═══════════════════════════════════════════════════════════
-     * 子状态: SUCTION_ON — 开启吸盘，等待吸附确认
+     * 子状态: SUCTION_CONTROL_GRAB — 控制吸盘吸附
      *
-     * 开启对应臂的电磁阀，等待微动开关触发。
+     * 开启对应臂的电磁阀，等待微动开关触发(暂无)。
      * 左臂→relay 0, 右臂→relay 1。
      * 超时后容错推进（即使未检测到吸附）。
      * ═══════════════════════════════════════════════════════════ */
-    case ACTION_4DOF_SUBSTATE_SUCTION_ON:
+    case ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB:
         action_4dof_set_stage_targets(td, s_ctx.action,
                                       &td->left.target, &td->right.target,
                                       "L_suck", "R_suck");
@@ -799,7 +838,8 @@ static void action_4dof_handle(void)
             bool right_ok = !td->use_right || action_4dof_is_block_grabbed(1);
 
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
-                /* 吸附成功（或超时容错） */
+                /* 吸附成功（或超时容错）— 应用背部状态变更（背→手抓取清除） */
+                action_4dof_apply_back_avoid_effects(td);
                 action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT, ACT4_MOVE_TIMEOUT_MS);
             }
         }
@@ -844,7 +884,13 @@ static void action_4dof_handle(void)
         break;
 
     /* ═══════════════════════════════════════════════════════════
-     * 子状态: PLACE — 移动到放置点
+     * 子状态: PLACE — 移动到放置点，到位后等待背部吸盘吸附
+     *
+     * 分两阶段：
+     *   阶段① 移动到位（timeout = ACT4_MOVE_TIMEOUT_MS）
+     *   阶段② 到达后保持不动，等待背部吸盘吸住物块
+     *          （timeout 切换为 ACT4_PLACE_HOLD_MS），
+     *          保持期满后机械臂释放物块进入 SUCTION_OFF。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_PLACE:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -854,7 +900,24 @@ static void action_4dof_handle(void)
         {
             bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.target);
             bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.target);
-            if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
+
+            if (left_ok && right_ok) {
+                /* 已到达放置点 → 若尚未进入保持期则启动放置保持计时 */
+                if (s_ctx.timeout_ms != ACT4_PLACE_HOLD_MS) {
+                    /* 首次进入保持期 → 开启背部吸盘吸住物块 */
+                    if (td->left_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
+                        relay_control(RELAY_LEFT_BACK, SUCTION_ON);
+                    }
+                    if (td->right_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
+                        relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
+                    }
+                    action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE, ACT4_PLACE_HOLD_MS);
+                } else if (action_4dof_is_timed_out()) {
+                    /* 保持时间到 → 机械臂释放物块 */
+                    action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_OFF, ACT4_RELEASE_TIMEOUT_MS);
+                }
+            } else if (action_4dof_is_timed_out()) {
+                /* 移动超时容错 */
                 action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_OFF, ACT4_RELEASE_TIMEOUT_MS);
             }
         }
@@ -899,6 +962,9 @@ static void action_4dof_handle(void)
             s_ctx.action = ACTION_4DOF_IDLE;
             s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
             s_ctx.timeout_ms = 0U;
+            /* 机械臂电磁阀回复打开状态，准备下次抓取 */
+            if (td->use_left)  relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
+            if (td->use_right) relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
         }
         break;
 

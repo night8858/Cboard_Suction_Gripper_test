@@ -55,7 +55,7 @@ typedef enum {
     /* ── 抓取流程子状态 ── */
     ACTION_4DOF_SUBSTATE_APPROACH        = 1,  /**< ① 移动到预就位点（抓取点上方/前方安全位） */
     ACTION_4DOF_SUBSTATE_GRAB            = 2,  /**< ② 移动到抓取点（贴近物块） */
-    ACTION_4DOF_SUBSTATE_SUCTION_ON      = 3,  /**< ③ 开启吸盘，等待吸附确认（微动开关） */
+    ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB      = 3,  /**< ③ 开启吸盘，等待吸附确认（微动开关） */
 
     /* ── 撤退/转移子状态 ── */
     ACTION_4DOF_SUBSTATE_RETREAT         = 4,  /**< ④ 携带物块撤退到安全高度 */
@@ -63,7 +63,7 @@ typedef enum {
     /* ── 放置流程子状态 ── */
     ACTION_4DOF_SUBSTATE_PLACE_APPROACH  = 5,  /**< ⑤ 移动到放置预就位点 */
     ACTION_4DOF_SUBSTATE_PLACE           = 6,  /**< ⑥ 移动到放置点（物块就位） */
-    ACTION_4DOF_SUBSTATE_SUCTION_OFF     = 7,  /**< ⑦ 关闭吸盘，释放物块，等待脱离确认 */
+    ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE     = 7,  /**< ⑦ 关闭吸盘，释放物块，等待脱离确认 */
 
     /* ── 完成子状态 ── */
     ACTION_4DOF_SUBSTATE_COMPLETE        = 8,  /**< ⑧ 移动到安全归位点，动作结束 */
@@ -93,22 +93,19 @@ typedef enum {
     ACTION_BLOCK_GET_FORWARD = 1,                                 /**< 前侧物块同时抓取   */
     ACTION_BLOCK_GET_FORWARD_LEFT_ARM = 2,                        /**< 前侧物块左臂抓取   */
     ACTION_BLOCK_GET_FORWARD_RIGHT_ARM = 3,                       /**< 前侧物块右臂抓取   */
-    ACTION_BLOCK_GET_BACKWARD = 4,                                /**< 后侧物块同时抓取   */
-    ACTION_BLOCK_GET_BACKWARD_LEFT_ARM = 5,                       /**< 后侧物块左臂抓取   */
-    ACTION_BLOCK_GET_BACKWARD_RIGHT_ARM = 6,                      /**< 后侧物块右臂抓取   */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK = 7,                 /**< 左臂放置物块到左背 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_RIGHT_BACK = 8,                /**< 左臂放置物块到右背 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK =  9,               /**< 右臂放置物块到左背 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK = 10,              /**< 右臂放置物块到右背 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1 = 11,           /**< 右臂放置物块到左1放置点第一层 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2 = 12,           /**< 右臂放置物块到左1放置点第二层 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1 = 13,         /**< 右臂放置物块到右1放置点第一层 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2 = 14,         /**< 右臂放置物块到右1放置点第二层 */
-    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM = 15,                  /**< 从左背抓取到左手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM = 16,                 /**< 从右背抓取到左手上 */
-    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM = 17,                  /**< 从左背抓取到右手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 18,                 /**< 从右背抓取到右手上 */
-    ACTION_DANCE = 19,                                            /**< 神秘舞蹈动作 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK = 4,                 /**< 左臂放置物块到左背 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_RIGHT_BACK = 5,                /**< 左臂放置物块到右背 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK =  6,               /**< 右臂放置物块到左背 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK = 7,              /**< 右臂放置物块到右背 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1 = 8,           /**< 右臂放置物块到左1放置点第一层 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2 = 9,           /**< 右臂放置物块到左1放置点第二层 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1 = 10,         /**< 右臂放置物块到右1放置点第一层 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2 = 11,         /**< 右臂放置物块到右1放置点第二层 */
+    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM = 12,                  /**< 从左背抓取到左手上 */
+    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM = 13,                 /**< 从右背抓取到左手上 */
+    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM = 14,                  /**< 从左背抓取到右手上 */
+    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 15,                 /**< 从右背抓取到右手上 */
+    ACTION_DANCE = 16,                                            /**< 神秘舞蹈动作 */
     /* ── 预留扩展位 (按需取消注释) ── */
 
 } action_state_4dof_e;

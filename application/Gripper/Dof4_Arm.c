@@ -185,7 +185,7 @@
 #define DOF4_URDF_R_TOOL_LEN 0.03620f
 
 /** @brief 左臂 J1 下限，单位 rad。 */
-#define DOF4_L_J1_MIN (-3.49f)
+#define DOF4_L_J1_MIN (-3.75f)  /* -215°, 下限较 URDF 原值扩展 15° */
 /** @brief 左臂 J1 上限，单位 rad。+10° 扩展 (原 55° → 65°) */
 #define DOF4_L_J1_MAX 1.135f
 /** @brief 右臂 J1 下限，单位 rad。+10° 扩展 (原 -55° → -65°) */
@@ -779,7 +779,7 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.ws_min[0] = -0.30f;     //x
         cfg.ws_max[0] = 0.85f;
         cfg.ws_min[1] = -0.85f;       //y
-        cfg.ws_max[1] = 0.3f;
+        cfg.ws_max[1] = 0.6f;
     } else {
         cfg.arm_id = DOF4_ARM_LEFT;
         cfg.base[0] = DOF4_URDF_L_BASE_X;
@@ -794,7 +794,7 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.joint_max[0] = DOF4_L_J1_MAX;
         cfg.ws_min[0] = -0.30f;
         cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.3f;
+        cfg.ws_min[1] = -0.6f;
         cfg.ws_max[1] = 0.85f;
     }
 
@@ -1726,15 +1726,17 @@ static bool dof4_is_pose_reached(const Dof4_Arm *arm,
  * @param pose 输入输出位姿。
  * @retval Dof4_Status 状态码。
  */
-/* Startup pose gate for the dual 4DOF arm. */
+/* Startup pose gate for the dual 4DOF arm with per-arm targets. */
 Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
                                        Dof4_Arm *arm_right,
-                                       const Dof4_Pose *target,
+                                       const Dof4_Pose *target_left,
+                                       const Dof4_Pose *target_right,
                                        uint32_t timeout_ms,
                                        float pos_tol_m,
                                        float pitch_tol_rad)
 {
-    if (arm_left == NULL || arm_right == NULL || target == NULL) {
+    if (arm_left == NULL || arm_right == NULL ||
+        target_left == NULL || target_right == NULL) {
         return DOF4_STATUS_NULL_PARAM;
     }
     if (pos_tol_m <= 0.0f || pitch_tol_rad <= 0.0f) {
@@ -1742,19 +1744,19 @@ Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
     }
 
     Dof4_Status st = Dof4_arm_set_target(arm_left,
-                                         target->x,
-                                         target->y,
-                                         target->z,
-                                         target->pitch);
+                                         target_left->x,
+                                         target_left->y,
+                                         target_left->z,
+                                         target_left->pitch);
     if (st != DOF4_STATUS_OK) {
         arm_left->last_status = st;
         return st;
     }
     st = Dof4_arm_set_target(arm_right,
-                             target->x,
-                             target->y,
-                             target->z,
-                             target->pitch);
+                             target_right->x,
+                             target_right->y,
+                             target_right->z,
+                             target_right->pitch);
     if (st != DOF4_STATUS_OK) {
         arm_right->last_status = st;
         return st;
@@ -1780,21 +1782,21 @@ Dof4_Status Dof4_dual_arm_startup_pose(Dof4_Arm *arm_left,
             }
 
             /* 左臂到位检查 */
-            const float dx_l = arm_left->current_pose.x - target->x;
-            const float dy_l = arm_left->current_pose.y - target->y;
-            const float dz_l = arm_left->current_pose.z - target->z;
+            const float dx_l = arm_left->current_pose.x - target_left->x;
+            const float dy_l = arm_left->current_pose.y - target_left->y;
+            const float dz_l = arm_left->current_pose.z - target_left->z;
             const float pos_err_l = sqrtf(dx_l * dx_l + dy_l * dy_l + dz_l * dz_l);
             const float pitch_err_l = fabsf(Dof4_normalize_angle(arm_left->current_pose.pitch -
-                                                                 target->pitch));
+                                                                 target_left->pitch));
             bool left_ok = (pos_err_l <= pos_tol_m) && (pitch_err_l <= pitch_tol_rad);
 
             /* 右臂到位检查 */
-            const float dx_r = arm_right->current_pose.x - target->x;
-            const float dy_r = arm_right->current_pose.y - target->y;
-            const float dz_r = arm_right->current_pose.z - target->z;
+            const float dx_r = arm_right->current_pose.x - target_right->x;
+            const float dy_r = arm_right->current_pose.y - target_right->y;
+            const float dz_r = arm_right->current_pose.z - target_right->z;
             const float pos_err_r = sqrtf(dx_r * dx_r + dy_r * dy_r + dz_r * dz_r);
             const float pitch_err_r = fabsf(Dof4_normalize_angle(arm_right->current_pose.pitch -
-                                                                 target->pitch));
+                                                                 target_right->pitch));
             bool right_ok = (pos_err_r <= pos_tol_m) && (pitch_err_r <= pitch_tol_rad);
 
             if (left_ok && right_ok) {

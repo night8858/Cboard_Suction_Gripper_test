@@ -105,29 +105,40 @@ void arm_control_task(void *argument)
 
 void arm_control_task(void *argument)
 {
+    /* ════════════════════════════════════════════════════════════
+     * 启动时序说明:
+     *   1. 先等待 500ms 确保舵机上电自检完成、通信链路稳定
+     *   2. 再初始化机械臂配置和舵机通信总线
+     *   3. 最后初始化输入仲裁器和动作调度器
+     * ════════════════════════════════════════════════════════════ */
+    osDelay(500);
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
     input_arbiter_init();
     action_4dof_init();
-    osDelay(500);
+    osDelay(100);
 
     /* ── 双臂基座位置偏置标定 ──
      * 取消注释并按实际安装偏移填入 dx/dy/dz（单位 m）。
-     * base_offset 叠加到 URDF base 位置后，FK/IK 自动补偿，
-     * startup_target 仍对应真实空间同一物理点。
+     * base_offset 叠加到 URDF base 位置后，FK/IK 自动补偿。
      * 例如：左右臂均前移 0.133 m（X 负方向），则均设 dx = -0.133f。 */
     // Dof4_arm_set_base_offset(&g_dof4_arm_left,  0.0f, 0.0f, 0.0f);
     // Dof4_arm_set_base_offset(&g_dof4_arm_right, 0.0f, 0.0f, 0.0f);
 
-    /* startup 使用自适应 IDLE 位姿（初始物块全空 = 基准值 {0.02,0,0.20,-0.02}） */
-    const Dof4_Pose startup_target = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
+    /* startup 使用自适应 IDLE 位姿 —— 左右臂各自独立计算归位点。
+     * 左臂基座 Y ≈ +0.133，右臂基座 Y ≈ -0.133，
+     * 必须分臂取值，否则左臂会被迫指向右侧造成异常运动。 */
+    const Dof4_Pose startup_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
+    const Dof4_Pose startup_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
     Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,
                                                         &g_dof4_arm_right,
-                                                        &startup_target,
+                                                        &startup_left,
+                                                        &startup_right,
                                                         3000U,
                                                         0.025f,
                                                         0.05f);
     if (startup_st != DOF4_STATUS_OK)
     {
+        g_dof4_arm_left.last_status  = startup_st;
         g_dof4_arm_right.last_status = startup_st;
     }
 
