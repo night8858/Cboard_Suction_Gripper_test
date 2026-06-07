@@ -47,6 +47,7 @@
 
 //特殊高度设定
 #define BLOCK_HEIGHT               -0.08f
+//小狗为-0.03f   测试架为
 #define BLOCK_FIRST_LAYER_HEIGHT   -0.03f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
 #define CARRY_POINT_HEIGHT         0.15f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
 #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
@@ -251,7 +252,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
         .left = {
             .approach   = {0.12f, 0.26f, 0.13f, 0.0f},   /* 左背放置预就位 */
-         //.waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
+          //.waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
             .waypoint_0 = {-0.22f, 0.18f, 0.40f, -1.00f}, /* 放置前最后预就位，避让左背 */
             .target     = {-0.22f, 0.18f, 0.32f, -1.4f},  /* 左背放置点 */
             .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 放置后撤退 */
@@ -293,6 +294,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 注意: 右臂跨中线到左侧放置，需确认 J1 限位和碰撞安全。
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK
         .left  = {{{0}}},
         .right = {
             .approach = {-0.062f, 0.074f, 0.18f, -0.30f},   /* 跨中线预就位（右臂→左背） */
@@ -311,6 +313,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      *      右臂放置物块到右背（机身右侧后方的储物区）
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK
         .left      = {{{0}}},
         .right = {
             .approach   = {0.12f,  -0.30f,  0.24f,  0.0f},   /* 右背放置预就位 */
@@ -336,11 +339,12 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 注意: pitch 可能需要更接近垂直向下（-1.57 rad）以便精确放置。
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
         .left = {
-            .approach = {-0.308f, 0.361f, 0.175f, -0.30f},   /* 后侧预就位 */
-            .target   = {-0.425f, 0.0f, -0.20f, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
-            .retreat  = {-0.212f, 0.308f, 0.225f, -0.10f},   /* 抓取后撤退 */
-            .complete = { 0.02f,  0.00f, 0.20f, -0.02f},
+            .approach = {0.35f, 0.2f, 0.30f, -0.30f},   /* 后侧预就位 */
+            .target   = {0.425f, 0.40f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
+            .retreat  = {0.25f, 0.16f, 0.25f, -0.50f},   /* 抓取后撤退 */
+            .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
         .use_left  = true,
@@ -355,10 +359,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * F2 的 Z 坐标应比 F1 高约一个物块厚度（~0.04m）。
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2
         .left = {
-            .approach = {0.05f,  0.35f, 0.34f, -1.00f},   /* TODO: 左1放置点F2预就位 */
-            .target   = {0.05f,  0.45f, 0.12f, -1.50f},   /* TODO: 左1放置点F2（比F1高~0.04m） */
-            .retreat  = {0.05f,  0.30f, 0.25f, -0.50f},   /* TODO */
+            .approach = {0.212f,  0.35f, 0.30f, -0.30f},   /* TODO: 左1放置点F2预就位 */
+            .target   = {0.425f,  0.40f, BLOCK_SECOND_LAYER_HEIGHT, STAY_DOWN},   /* TODO: 左1放置点F2（比F1高~0.04m） */
+            .retreat  = {0.212f,  0.308f, 0.15f, -0.30f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
@@ -372,10 +377,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
      *      右臂放置物块到右1放置点第一层
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1
         .left      = {{{0}}},
         .right = {
-            .approach = {0.35f, -0.2f, 0.30f, -1.00f},   /* TODO */
-            .target   = {0.55f, -0.4f, -0.18f, STAY_DOWN},   /* TODO */
+            .approach = {0.35f, -0.2f, 0.30f, -0.30f},   /* TODO */
+            .target   = {0.425f, -0.40f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN},
             .retreat  = {0.25f, -0.16f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -389,11 +395,12 @@ static const Action4DOF_TargetData s_action_targets[] = {
      *      右臂放置物块到右1放置点第二层（堆叠）
      * ──────────────────────────────────────────────────────────── */
     {
+        //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2
         .left      = {{{0}}},
         .right = {
-            .approach = {0.05f, -0.35f, 0.34f, -1.00f},   /* TODO */
-            .target   = {0.05f, -0.45f, 0.03f, STAY_DOWN},   /* TODO: 比F1高~0.04m */
-            .retreat  = {0.05f, -0.30f, 0.25f, -0.50f},   /* TODO */
+            .approach = {0.35f, -0.35f, 0.34f, -1.00f},   /* TODO */
+            .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT, STAY_DOWN},   /* TODO: 比F1高~0.04m */
+            .retreat  = {0.25f, -0.30f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,

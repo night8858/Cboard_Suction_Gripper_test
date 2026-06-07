@@ -223,6 +223,26 @@ typedef struct {
 } Dof4_ArmConfig;
 
 /**
+ * @brief 全局世界坐标系原点偏移。
+ *
+ * @details
+ * 用于将机械臂内部几何坐标系（arm frame）与外部雷达/世界坐标系（world frame）
+ * 对齐。所有 FK 输出和 IK 输入均会叠加此偏移：
+ *
+ * ```text
+ * 世界坐标 = 机械臂几何坐标 + world_offset
+ * ```
+ *
+ * 偏移仅作用于位置 (x, y, z)，不影响 pitch 俯仰角。
+ * 当前默认值为 0，后续通过 `Dof4_set_world_offset()` 标定雷达对齐。
+ */
+typedef struct {
+    float x;  /**< 世界原点 X 偏移，单位 m。 */
+    float y;  /**< 世界原点 Y 偏移，单位 m。 */
+    float z;  /**< 世界原点 Z 偏移，单位 m。 */
+} Dof4_WorldOffset;
+
+/**
  * @brief 单臂运行实例。
  */
 typedef struct {
@@ -245,6 +265,12 @@ typedef struct {
 
 extern Dof4_Arm g_dof4_arm_left;
 extern Dof4_Arm g_dof4_arm_right;
+
+/** @brief 全局世界坐标系偏移实例，双臂共享，默认 {0,0,0}。 */
+extern Dof4_WorldOffset g_dof4_world_offset;
+
+/** @brief 双臂启动标志位：false=等待启动指令，true=控制循环放行。 */
+extern bool g_dof4_arm_started;
 
 /**
  * @brief 根据 URDF 默认参数生成单臂配置。
@@ -455,6 +481,42 @@ Dof4_Arm *Dof4_arm_get_by_id(Dof4_ArmId arm_id, Dof4_Arm *left, Dof4_Arm *right)
  * @retval float 归一化后的角度。
  */
 float Dof4_normalize_angle(float angle_rad);
+
+/**
+ * @brief 设置全局世界坐标系原点偏移。
+ *
+ * 偏移用于对齐雷达/外部坐标系。世界坐标 = 机械臂几何坐标 + world_offset。
+ * FK 输出会自动叠加此偏移，IK 输入会自动扣除。
+ *
+ * @param dx X 偏移，单位 m。
+ * @param dy Y 偏移，单位 m。
+ * @param dz Z 偏移，单位 m。
+ * @retval Dof4_Status 总是返回 DOF4_STATUS_OK。
+ */
+Dof4_Status Dof4_set_world_offset(float dx, float dy, float dz);
+
+/**
+ * @brief 读取全局世界坐标系原点偏移。
+ * @param dx 输出 X 偏移，单位 m（可为 NULL）。
+ * @param dy 输出 Y 偏移，单位 m（可为 NULL）。
+ * @param dz 输出 Z 偏移，单位 m（可为 NULL）。
+ * @retval Dof4_Status 总是返回 DOF4_STATUS_OK。
+ */
+Dof4_Status Dof4_get_world_offset(float *dx, float *dy, float *dz);
+
+/**
+ * @brief 设置双臂启动标志位，放行主控制循环。
+ *
+ * 调用后 g_dof4_arm_started 置 true，arm_control_task 的主循环
+ * 在下一帧检测到后开始执行正常的控制流水线。置位不可逆。
+ */
+void Dof4_double_arm_start(void);
+
+void Dof4_double_arm_Desable(void);
+void Dof4_double_arm_Enable(void);
+
+
+
 
 #ifdef __cplusplus
 }

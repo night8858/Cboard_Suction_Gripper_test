@@ -283,6 +283,12 @@ typedef struct {
 extern Dof4_Arm g_dof4_arm_left;
 extern Dof4_Arm g_dof4_arm_right;
 
+/** @brief 全局世界坐标系原点偏移实例。 */
+Dof4_WorldOffset g_dof4_world_offset = {0.0f, 0.0f, 0.0f};
+
+/** @brief 双臂启动标志位：false=等待启动指令，true=控制循环放行。 */
+bool g_dof4_arm_started = false;
+
 static Dof4_CartesianPlanner g_planner_left;
 static Dof4_CartesianPlanner g_planner_right;
 
@@ -551,9 +557,16 @@ static Dof4_Status solve_ik_candidate(const Dof4_Arm *arm,
      *
      * FK 中 TCP = 连杆末端 + tcp_offset，因此 IK 需先从 target 中扣除
      * tcp_offset 再分解，保证 IK → FK 闭环：FK(IK(target)) ≈ target。
+     *
+     * 同时，target 为世界/雷达坐标系坐标，需先减去 world_offset
+     * 转换到机械臂内部几何坐标系后再求解：
+     *   臂坐标 = 世界坐标 - world_offset
      */
-    const float dx = target->x - base[0] - arm->cfg.tcp_offset[0];
-    const float dy = target->y - base[1] - arm->cfg.tcp_offset[1];
+    const float arm_x = target->x - g_dof4_world_offset.x;
+    const float arm_y = target->y - g_dof4_world_offset.y;
+    const float arm_z = target->z - g_dof4_world_offset.z;
+    const float dx = arm_x - base[0] - arm->cfg.tcp_offset[0];
+    const float dy = arm_y - base[1] - arm->cfg.tcp_offset[1];
     const float planar_dist = sqrtf(dx * dx + dy * dy);
     const float q1_raw = (planar_dist < DOF4_AXIS_SINGULAR_EPS_M)
                          ? clamp_joint_angle_rad(arm, 0U, arm->joint_actual.q[0])
@@ -567,7 +580,7 @@ static Dof4_Status solve_ik_candidate(const Dof4_Arm *arm,
         q1 += 2.0f * M_PI_F;
     }
     const float r  = planar_dist - arm->cfg.shoulder_r;   /* 径向（去 shoulder） */
-    const float z  = target->z - base[2] - arm->cfg.shoulder_z - arm->cfg.tcp_offset[2]; /* 高度（去 shoulder + tcp） */
+    const float z  = arm_z - base[2] - arm->cfg.shoulder_z - arm->cfg.tcp_offset[2]; /* 高度（去 shoulder + tcp） */
 
     /* Step 2: 解耦末端工具长度 LT，得到腕部位置 */
     const float phi  = target->pitch - arm->cfg.pitch_offset;  /* 目标俯仰解析角 */
@@ -1147,6 +1160,13 @@ Dof4_Status Dof4_arm_forward_kinematics(Dof4_Arm *arm,
         pose->y = base[1] + s1 * r + arm->cfg.tcp_offset[1];
         pose->z = base[2] +      z + arm->cfg.tcp_offset[2];
         /*
+         * 叠加全局世界坐标系偏移，将臂内几何坐标映射到雷达/世界坐标系：
+         *   世界坐标 = 机械臂几何坐标 + world_offset
+         */
+        pose->x += g_dof4_world_offset.x;
+        pose->y += g_dof4_world_offset.y;
+        pose->z += g_dof4_world_offset.z;
+        /*
          * pitch = 三个俯仰解析角之和 + 标定偏置
          *       = theta2 + theta3 + theta4 + pitch_offset
          *       = (q2 + q3 + q4) + pitch_offset
@@ -1187,7 +1207,12 @@ Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
         return DOF4_STATUS_NULL_PARAM;
     }
 
-    Dof4_Status st = check_workspace(arm, target);
+    /* workspace 边界定义在臂坐标系中，需将世界坐标转为臂坐标后检查 */
+    Dof4_Pose arm_target = {target->x - g_dof4_world_offset.x,
+                            target->y - g_dof4_world_offset.y,
+                            target->z - g_dof4_world_offset.z,
+                            target->pitch};
+    Dof4_Status st = check_workspace(arm, &arm_target);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
@@ -1306,8 +1331,13 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
         return DOF4_STATUS_NULL_PARAM;
     }
 
+    /* workspace 边界定义在臂坐标系中，需将世界坐标转为臂坐标后检查 */
     Dof4_Pose pose = {target_x, target_y, target_z, target_pitch};
-    Dof4_Status st = check_workspace(arm, &pose);
+    Dof4_Pose arm_pose = {target_x - g_dof4_world_offset.x,
+                          target_y - g_dof4_world_offset.y,
+                          target_z - g_dof4_world_offset.z,
+                          target_pitch};
+    Dof4_Status st = check_workspace(arm, &arm_pose);
     if (st != DOF4_STATUS_OK) {
         arm->last_status = st;
         return st;
@@ -1872,4 +1902,68 @@ Dof4_Arm *Dof4_arm_get_by_id(Dof4_ArmId arm_id, Dof4_Arm *left, Dof4_Arm *right)
         return right;
     }
     return NULL;
+}
+
+/**
+ * @brief 设置全局世界坐标系原点偏移。
+ * @param dx X 偏移，单位 m。
+ * @param dy Y 偏移，单位 m。
+ * @param dz Z 偏移，单位 m。
+ * @retval Dof4_Status 总是返回 DOF4_STATUS_OK。
+ */
+Dof4_Status Dof4_set_world_offset(float dx, float dy, float dz)
+{
+    g_dof4_world_offset.x = dx;
+    g_dof4_world_offset.y = dy;
+    g_dof4_world_offset.z = dz;
+    return DOF4_STATUS_OK;
+}
+
+/**
+ * @brief 读取全局世界坐标系原点偏移。
+ * @param dx 输出 X 偏移，单位 m（可为 NULL）。
+ * @param dy 输出 Y 偏移，单位 m（可为 NULL）。
+ * @param dz 输出 Z 偏移，单位 m（可为 NULL）。
+ * @retval Dof4_Status 总是返回 DOF4_STATUS_OK。
+ */
+Dof4_Status Dof4_get_world_offset(float *dx, float *dy, float *dz)
+{
+    if (dx != NULL) {
+        *dx = g_dof4_world_offset.x;
+    }
+    if (dy != NULL) {
+        *dy = g_dof4_world_offset.y;
+    }
+    if (dz != NULL) {
+        *dz = g_dof4_world_offset.z;
+    }
+    return DOF4_STATUS_OK;
+}
+
+/**
+ * @brief 设置双臂启动标志位，放行主控制循环。
+ *
+ * 调用后 g_dof4_arm_started 置为 true，arm_control_task 的主循环
+ * 在下一帧检测到后开始执行正常的控制流水线。置位不可逆。
+ */
+void Dof4_double_arm_start(void)
+{
+    g_dof4_arm_started = true;
+}
+
+
+void Dof4_double_arm_Desable(void)
+{
+    /* 右臂 4 路 */
+    for (uint8_t i = 0; i < 8; ++i) {
+        EnableTorque((int)(i + 1), false);  /* ID 从 1 开始 */
+    }
+}
+
+void Dof4_double_arm_Enable(void)
+{
+    /* 右臂 4 路 */
+    for (uint8_t i = 0; i < 8; ++i) {
+        EnableTorque((int)(i + 1), true);  /* ID 从 1 开始 */
+    }
 }

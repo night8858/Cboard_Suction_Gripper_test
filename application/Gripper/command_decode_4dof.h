@@ -14,6 +14,7 @@
 #define CMD4_VALVE_CONTROL      0x04u
 #define CMD4_ANSWER_CONTROL     0x05u
 #define CMD4_PUMP_CONTROL       0x06u
+#define CMD4_ARM_START          0x99u
 
 /*
  * BB 01 feedback:
@@ -33,6 +34,7 @@
 #define CMD4_FRAME_VALVE_LEN      7u
 #define CMD4_FRAME_ANSWER_LEN     8u
 #define CMD4_FRAME_PUMP_LEN      10u
+#define CMD4_FRAME_ARM_START_LEN  5u  /* BB 99 FF EE CRC8，无 DATA 段 */
 
 #define CMD4_FRAME_MAX_LEN       CMD4_FRAME_FEEDBACK_LEN
 

@@ -95,8 +95,9 @@ void input_arbiter_resolve(bool action_active);
  * @brief 执行 4DOF 输入仲裁, 将 RC 手动控制映射到右臂目标位姿。
  *
  * @param action_active 当前是否有动作正在执行(true=跳过仲裁)
+ * @param arm_started   双臂是否已启动(false=仅处理启动指令，拒绝运动指令)
  */
-void input_arbiter_resolve_4dof(bool action_active);
+void input_arbiter_resolve_4dof(bool action_active, bool arm_started);
 
 /**
  * @brief 查询输入仲裁器是否已就绪

@@ -112,7 +112,9 @@ void arm_control_task(void *argument)
      *   3. 最后初始化输入仲裁器和动作调度器
      * ════════════════════════════════════════════════════════════ */
     osDelay(500);
+    Dof4_double_arm_Desable();                        // 先禁用双臂输出，确保安全
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
+    Dof4_set_world_offset(0.0f, 0.0f, 0.0f);  /* 初始清零，后续标定雷达坐标系对齐 */
     input_arbiter_init();
     action_4dof_init();
     osDelay(100);
@@ -124,31 +126,43 @@ void arm_control_task(void *argument)
     // Dof4_arm_set_base_offset(&g_dof4_arm_left,  0.0f, 0.0f, 0.0f);
     // Dof4_arm_set_base_offset(&g_dof4_arm_right, 0.0f, 0.0f, 0.0f);
 
-    /* startup 使用自适应 IDLE 位姿 —— 左右臂各自独立计算归位点。
-     * 左臂基座 Y ≈ +0.133，右臂基座 Y ≈ -0.133，
-     * 必须分臂取值，否则左臂会被迫指向右侧造成异常运动。 */
-    const Dof4_Pose startup_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
-    const Dof4_Pose startup_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
-    Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,
-                                                        &g_dof4_arm_right,
-                                                        &startup_left,
-                                                        &startup_right,
-                                                        3000U,
-                                                        0.025f,
-                                                        0.05f);
-    if (startup_st != DOF4_STATUS_OK)
-    {
-        g_dof4_arm_left.last_status  = startup_st;
-        g_dof4_arm_right.last_status = startup_st;
-    }
+    bool startup_executed = false;  /* 归位序列是否已执行（门控放行后执行一次） */
 
     for (;;)
     {
-        uint32_t now_ms = HAL_GetTick();
-
-        /* RC manual target update for the right 4DOF arm. */
+        /* ── 始终接收 RC 数据，确保启动指令可被检测 ──
+         * Dof4_double_arm_start() 由 rc_map_to_targets_4dof() 触发
+         * (遥控器 s[0]==2, s[1]==2)，必须在门控前处理 RC 输入。 */
         input_arbiter_update_rc(get_remote_control_point());
-        input_arbiter_resolve_4dof(false);
+        input_arbiter_resolve_4dof(false, g_dof4_arm_started);
+
+        /* ── 启动门控：放行前仅处理 RC 输入，不执行任何运动指令 ── */
+        if (!g_dof4_arm_started) {
+            osDelay(5);
+            continue;
+        }
+
+        /* ── 首次放行后执行一次 IDLE 归位序列 ──
+         * 左右臂各自独立计算归位点，避免左臂被追指向右侧造成异常运动。 */
+        if (!startup_executed) {
+            Dof4_double_arm_Enable();  // 执行归位前确保输出已启用
+            const Dof4_Pose startup_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
+            const Dof4_Pose startup_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
+            Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,
+                                                                &g_dof4_arm_right,
+                                                                &startup_left,
+                                                                &startup_right,
+                                                                3000U,
+                                                                0.025f,
+                                                                0.05f);
+            if (startup_st != DOF4_STATUS_OK) {
+                g_dof4_arm_left.last_status  = startup_st;
+                g_dof4_arm_right.last_status = startup_st;
+            }
+            startup_executed = true;
+        }
+
+        uint32_t now_ms = HAL_GetTick();
 
         // Dof4_arm_set_target(&g_dof4_arm_right, g_dof4_arm_right.target_pose.x,
         //                                     g_dof4_arm_right.target_pose.y,

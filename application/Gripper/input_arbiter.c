@@ -448,7 +448,7 @@ void input_arbiter_update_pc(const all_pc_command *cmd)
     }
 }
 
-static void rc_map_to_targets_4dof(uint32_t now_ms)
+static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
 {
     if (!s_rc_initialized) {
         return;
@@ -456,6 +456,22 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
 
     const RC_ctrl_t *rc = &s_rc_snapshot;
     static uint32_t s_last_step_ms = 0U;
+
+    /* ── 启动门控：未启动时仅处理启动触发 + 气泵控制，
+     *             拒绝所有手动控制、动作触发等运动指令 ── */
+    if (!arm_started) {
+        if (rc->rc.s[0] == 2 && rc->rc.s[1] == 2) {
+            static bool s_ch3_was_high = false;
+            bool ch3_high = (rc->rc.ch[3] > RC_CH_THRESHOLD);
+            if (ch3_high && !s_ch3_was_high) {
+                extern PumpCtrl g_pump;
+                pump_ctrl_toggle(&g_pump);
+            }
+            s_ch3_was_high = ch3_high;
+            Dof4_double_arm_start();
+        }
+        return;
+    }
 
     /* 拨杆 s[1]==3 时进入手动控制模式 */
     if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1) {
@@ -510,13 +526,13 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
         //固定位置测试的程序
             if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
             {
-                action_4dof_trigger(ACTION_BLOCK_GET_FORWARD_LEFT_ARM);
+                action_4dof_trigger(ACTION_BLOCK_GET_FORWARD_LEFT_ARM);     //done
 
             }
 
             if (rc->rc.ch[0] > RC_CH_THRESHOLD)
             {
-                action_4dof_trigger(ACTION_BLOCK_GET_FORWARD_RIGHT_ARM);
+                action_4dof_trigger(ACTION_BLOCK_GET_FORWARD_RIGHT_ARM);       //done
             }
 
             if (rc->rc.ch[1] < - RC_CH_THRESHOLD)
@@ -550,6 +566,32 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
             }
 
     }
+    else if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1)
+    {
+
+        if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1);
+
+            }
+
+            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2);
+            }
+
+
+            if (rc->rc.ch[1] < - RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1);
+            }
+
+            if (rc->rc.ch[1] > RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2);
+            }
+    }
+
              /* 气泵手动控制: s[0]==1 且 s[1]==1 时,
          * ch[3] 上升沿 (>RC_CH_THRESHOLD) 切换气泵启停.
          *
@@ -568,14 +610,18 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
                 pump_ctrl_toggle(&g_pump);
             }
             s_ch3_was_high = ch3_high;
-            }
+        }
+
+            Dof4_double_arm_start();
     }
+
+
     else {
         s_last_step_ms = now_ms;
     }
 }
 
-void input_arbiter_resolve_4dof(bool action_active)
+void input_arbiter_resolve_4dof(bool action_active, bool arm_started)
 {
     if (action_active) {
         return;
@@ -585,7 +631,7 @@ void input_arbiter_resolve_4dof(bool action_active)
     const bool rc_fresh = s_rc_initialized &&
                           ((now - s_rc_last_feed_ms) < INPUT_FRESHNESS_TIMEOUT_MS);
     if (rc_fresh) {
-        rc_map_to_targets_4dof(now);
+        rc_map_to_targets_4dof(now, arm_started);
     }
 }
 

@@ -31,6 +31,12 @@
  *   | 0x05   | CMD4_ANSWER_CONTROL| PC→STM32  | 语音应答控制 (预留)            |
  *   | 0x06   | CMD4_PUMP_CONTROL | PC→STM32   | 气泵启停 + 转速设置            |
  *
+ * ### 特殊命令
+ *
+ *
+ *   |   BB 99 FF EE CRC8 |    机械臂的启动指令
+ *
+ *
  * ### RX 状态机
  *
  *   接收端使用逐字节状态机解析帧，流程如下：
@@ -316,6 +322,8 @@ static uint8_t cmd4_data_len_by_cmd(uint8_t cmd)
             return (uint8_t)(CMD4_FRAME_ANSWER_LEN - 5u);
         case CMD4_PUMP_CONTROL:
             return (uint8_t)(CMD4_FRAME_PUMP_LEN - 5u);
+        case CMD4_ARM_START:
+            return (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);  /* DATA 段长度 = 0 */
         default:
             return 0u;
     }
@@ -366,14 +374,14 @@ static void cmd4_rx_state_machine(uint8_t byte)
         case CMD4_RX_WAIT_CMD: {
             /* 接收命令字，查表获取 DATA 段长度 */
             uint8_t data_len = cmd4_data_len_by_cmd(byte);
-            if (data_len == 0u) {
-                /* 非法命令字 → 丢弃整帧 */
-                cmd4_rx_reset();
-                break;
-            }
             s_frame_buf[s_frame_idx++] = byte;
-            s_data_remain = data_len;
-            s_rx_state = CMD4_RX_RECV_DATA;
+            if (data_len == 0u) {
+                /* 无 DATA 段的命令（如 0x99 启动指令）→ 直接等帧尾 */
+                s_rx_state = CMD4_RX_WAIT_T1;
+            } else {
+                s_data_remain = data_len;
+                s_rx_state = CMD4_RX_RECV_DATA;
+            }
             break;
         }
 
@@ -439,6 +447,9 @@ static void cmd4_rx_state_machine(uint8_t byte)
  * 以下函数由 cmd4_dispatch_frame() 根据命令字分发调用。
  * 各 handler 接收的 data 指针已跳过 HDR+CMD，直接指向 DATA 段首字节。
  * ════════════════════════════════════════════════════════════════ */
+
+
+
 
 /**
  * @brief 处理 CMD4_POSE_CONTROL (0x02) —— 手动设定单臂目标位姿
@@ -612,6 +623,12 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
         case CMD4_PUMP_CONTROL:       /* 0x06: 气泵控制, 帧长 10B */
             if (len == CMD4_FRAME_PUMP_LEN) {
                 cmd4_handle_pump_control(data);
+            }
+            break;
+
+        case CMD4_ARM_START:          /* 0x99: 启动指令, 帧长 5B */
+            if (len == CMD4_FRAME_ARM_START_LEN) {
+                Dof4_double_arm_start();
             }
             break;
 
