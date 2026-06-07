@@ -643,7 +643,7 @@ void cmd4_rx_process(void)
         cmd4_rx_state_machine(byte);
     }
 }
-
+//
 /**
  * @brief 批量喂入字节 (外部接口)
  *
