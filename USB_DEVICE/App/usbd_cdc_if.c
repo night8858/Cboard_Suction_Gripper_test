@@ -24,7 +24,7 @@
 /* USER CODE BEGIN INCLUDE */
 #include "virtual_serial_port.h"
 
-#include "command_decode.h"
+#include "command_decode_4dof.h"
 
 /* USER CODE END INCLUDE */
 
@@ -264,7 +264,7 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  cmd_rx_feed(Buf, *Len);             /* 直接送入状态机解析，绕过环形缓冲区 */
+  cmd4_rx_feed(Buf, *Len);            /* 4DOF BB protocol, direct parse */
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);

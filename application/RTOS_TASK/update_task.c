@@ -5,7 +5,7 @@
 #include "bsp_usart.h"
 #include "usart.h"
 #include "variables.h"
-#include "command_decode.h"
+#include "command_decode_4dof.h"
 #include "block_inspect.h"
 #include "DT7.h"
 
@@ -21,10 +21,9 @@ void update_task(void const *argument)
 
   for (;;) {
 
-      cmd_rx_process();
-      //cmd_execute_all(NULL);    /* 统一执行上位机命令 */
+      cmd4_rx_process();
       block_inspect_process();
-      cmd_send_feedback();
+      cmd4_send_feedback();
       osDelay(20);
 
   }

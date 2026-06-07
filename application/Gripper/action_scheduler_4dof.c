@@ -32,7 +32,6 @@
 #include "action_scheduler_4dof.h"
 #include "Dof4_Arm.h"
 #include "pneumatic_control.h"
-#include "block_inspect.h"
 #include "stm32f4xx_hal.h"
 
 #include <string.h>
@@ -54,7 +53,6 @@
 
 extern Dof4_Arm g_dof4_arm_left;
 extern Dof4_Arm g_dof4_arm_right;
-extern SwitchInput g_switch_input;  /* 微动开关状态: state[0]=左臂, state[1]=右臂 */
 
 /** @brief 全局物块位置追踪状态 */
 BlockPlacementState g_block_state;
@@ -66,8 +64,7 @@ BlockPlacementState g_block_state;
  *   id=0→左臂吸盘, id=1→右臂吸盘, id=2→左背吸盘, id=3→右背吸盘
  *   state=1→开启(吸取/吸附), state=0→关闭(释放)
  *
- * 微动开关: g_switch_input.state[0]=左臂吸附状态, [1]=右臂吸附状态
- *           0=未吸附, 1=已吸附
+ * 当前动作调度不依赖吸附传感器确认，吸附/释放确认按状态机定时推进。
  * ════════════════════════════════════════════════════════════════ */
 #define RELAY_LEFT_ARM    0U  /**< 左臂吸盘电磁阀（一号） */
 #define RELAY_RIGHT_ARM   1U  /**< 右臂吸盘电磁阀（二号） */
@@ -83,6 +80,7 @@ BlockPlacementState g_block_state;
 #define ACT4_MOVE_TIMEOUT_MS       3000U   /**< 单段移动最大超时（容错兜底） */
 #define ACT4_SUCTION_TIMEOUT_MS    1000U   /**< 吸附等待最大超时 */
 #define ACT4_PLACE_HOLD_MS          800U   /**< 放置到位后等待背部吸盘吸附时间 */
+#define ACT4_BACK_RELEASE_HOLD_MS   300U   /**< 背部吸盘关闭后等待物块交接稳定时间 */
 #define ACT4_RELEASE_TIMEOUT_MS    1000U   /**< 释放等待最大超时 */
 #define ACT4_HOLD_MS                100U   /**< 完成后保持时间（回 IDLE 前） */
 #define ACT4_WAYPOINT_HOLD_MS       100U   /**< 途经点停留时间（DANCE 用） */
@@ -621,6 +619,62 @@ static bool action_4dof_is_place_action(action_state_4dof_e action)
             action <= ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2);
 }
 
+static bool action_4dof_is_get_action(action_state_4dof_e action)
+{
+    return ((action >= ACTION_BLOCK_GET_FORWARD &&
+             action <= ACTION_BLOCK_GET_FORWARD_RIGHT_ARM) ||
+            (action >= ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM &&
+             action <= ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM));
+}
+
+static bool action_4dof_is_back_get_action(action_state_4dof_e action)
+{
+    return (action >= ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM &&
+            action <= ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM);
+}
+
+static void action_4dof_control_arm_suction(const Action4DOF_TargetData *td, uint8_t state)
+{
+    if (td == NULL) {
+        return;
+    }
+
+    if (td->use_left) {
+        relay_control(RELAY_LEFT_ARM, state);
+    }
+    if (td->use_right) {
+        relay_control(RELAY_RIGHT_ARM, state);
+    }
+}
+
+static void action_4dof_open_target_back_suction(const Action4DOF_TargetData *td)
+{
+    if (td == NULL) {
+        return;
+    }
+
+    if (td->left_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
+        relay_control(RELAY_LEFT_BACK, SUCTION_ON);
+    }
+    if (td->right_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
+        relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
+    }
+}
+
+static void action_4dof_close_source_back_suction(const Action4DOF_TargetData *td)
+{
+    if (td == NULL) {
+        return;
+    }
+
+    if (td->left_back_effect == ACTION_4DOF_BACK_AVOID_CLEAR) {
+        relay_control(RELAY_LEFT_BACK, SUCTION_OFF);
+    }
+    if (td->right_back_effect == ACTION_4DOF_BACK_AVOID_CLEAR) {
+        relay_control(RELAY_RIGHT_BACK, SUCTION_OFF);
+    }
+}
+
 /**
  * @brief 给当前阶段同时下发工作臂目标和非工作臂避让目标。
  *
@@ -709,12 +763,6 @@ static void action_4dof_apply_back_avoid_effects(const Action4DOF_TargetData *td
     }
 }
 
-static bool action_4dof_is_block_grabbed(uint8_t arm_side)
-{
-    if (arm_side > 1U) return false;
-    return (g_switch_input.state[arm_side] != 0U);
-}
-
 /**
  * @brief 检查单臂 FK 位姿是否已到达目标（位置 + pitch 均在容差内）
  * @param arm    机械臂实例
@@ -770,7 +818,8 @@ static void action_4dof_handle(void)
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 if (td->use_waypoint) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE, ACT4_MOVE_TIMEOUT_MS);
-                } else {
+                }
+                else {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_GRAB, ACT4_MOVE_TIMEOUT_MS);
                 }
             }
@@ -793,7 +842,8 @@ static void action_4dof_handle(void)
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 if (action_4dof_is_place_action(s_ctx.action)) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE, ACT4_MOVE_TIMEOUT_MS);
-                } else {
+                }
+                else {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_GRAB, ACT4_MOVE_TIMEOUT_MS);
                 }
             }
@@ -803,7 +853,7 @@ static void action_4dof_handle(void)
     /* ═══════════════════════════════════════════════════════════
      * 子状态: GRAB — 移动到抓取点
      *
-     * 从预就位下降到物块位置。到位后（或超时容错）开启吸盘。
+     * 从预就位下降到物块位置。到位后（或超时容错）进入吸附保持/背部交接等待。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_GRAB:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -813,8 +863,11 @@ static void action_4dof_handle(void)
         {
             bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.target);
             bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.target);
-            if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
-                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_ON, ACT4_SUCTION_TIMEOUT_MS);
+            if ((left_ok && right_ok) || action_4dof_is_timed_out())
+            {
+                uint32_t hold_ms = action_4dof_is_back_get_action(s_ctx.action) ?
+                                   ACT4_PLACE_HOLD_MS : ACT4_SUCTION_TIMEOUT_MS;
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB, hold_ms);
             }
         }
         break;
@@ -822,24 +875,22 @@ static void action_4dof_handle(void)
     /* ═══════════════════════════════════════════════════════════
      * 子状态: SUCTION_CONTROL_GRAB — 控制吸盘吸附
      *
-     * 开启对应臂的电磁阀，等待微动开关触发(暂无)。
-     * 左臂→relay 0, 右臂→relay 1。
-     * 超时后容错推进（即使未检测到吸附）。
+     * 手臂吸盘已在动作触发时开启；此处仅定时等待。
+     * 背部取回动作先关闭对应背部吸盘，再等待背部释放稳定后撤退。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB:
         action_4dof_set_stage_targets(td, s_ctx.action,
                                       &td->left.target, &td->right.target,
                                       "L_suck", "R_suck");
-        if (td->use_left)  relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
-        if (td->use_right) relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
 
-        {
-            bool left_ok  = !td->use_left  || action_4dof_is_block_grabbed(0);
-            bool right_ok = !td->use_right || action_4dof_is_block_grabbed(1);
-
-            if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
-                /* 吸附成功（或超时容错）— 应用背部状态变更（背→手抓取清除） */
+        if (action_4dof_is_timed_out()) {
+            if (action_4dof_is_back_get_action(s_ctx.action) &&
+                s_ctx.timeout_ms != ACT4_BACK_RELEASE_HOLD_MS) {
+                action_4dof_close_source_back_suction(td);
                 action_4dof_apply_back_avoid_effects(td);
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB,
+                                          ACT4_BACK_RELEASE_HOLD_MS);
+            } else {
                 action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT, ACT4_MOVE_TIMEOUT_MS);
             }
         }
@@ -890,7 +941,7 @@ static void action_4dof_handle(void)
      *   阶段① 移动到位（timeout = ACT4_MOVE_TIMEOUT_MS）
      *   阶段② 到达后保持不动，等待背部吸盘吸住物块
      *          （timeout 切换为 ACT4_PLACE_HOLD_MS），
-     *          保持期满后机械臂释放物块进入 SUCTION_OFF。
+     *          保持期满后机械臂释放物块进入 SUCTION_CONTROL_PLACE。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_PLACE:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -904,47 +955,31 @@ static void action_4dof_handle(void)
             if (left_ok && right_ok) {
                 /* 已到达放置点 → 若尚未进入保持期则启动放置保持计时 */
                 if (s_ctx.timeout_ms != ACT4_PLACE_HOLD_MS) {
-                    /* 首次进入保持期 → 开启背部吸盘吸住物块 */
-                    if (td->left_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
-                        relay_control(RELAY_LEFT_BACK, SUCTION_ON);
-                    }
-                    if (td->right_back_effect == ACTION_4DOF_BACK_AVOID_SET) {
-                        relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
-                    }
+                    action_4dof_open_target_back_suction(td);
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE, ACT4_PLACE_HOLD_MS);
                 } else if (action_4dof_is_timed_out()) {
                     /* 保持时间到 → 机械臂释放物块 */
-                    action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_OFF, ACT4_RELEASE_TIMEOUT_MS);
+                    action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE, 0U);
                 }
             } else if (action_4dof_is_timed_out()) {
                 /* 移动超时容错 */
-                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_OFF, ACT4_RELEASE_TIMEOUT_MS);
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT, ACT4_MOVE_TIMEOUT_MS);
             }
         }
         break;
 
     /* ═══════════════════════════════════════════════════════════
-     * 子状态: SUCTION_OFF — 关闭吸盘，释放物块
+     * 子状态: SUCTION_CONTROL_PLACE — 关闭吸盘，释放物块
      *
-     * 关闭电磁阀，等待微动开关确认脱离。
+     * 到位保持结束后一次性关闭机械臂吸盘并进入撤退。
      * ═══════════════════════════════════════════════════════════ */
-    case ACTION_4DOF_SUBSTATE_SUCTION_OFF:
+    case ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE:
         action_4dof_set_stage_targets(td, s_ctx.action,
                                       &td->left.target, &td->right.target,
                                       "L_rel", "R_rel");
-        if (td->use_left)  relay_control(RELAY_LEFT_ARM,  SUCTION_OFF);
-        if (td->use_right) relay_control(RELAY_RIGHT_ARM, SUCTION_OFF);
-
-        {
-            bool left_ok  = !td->use_left  || !action_4dof_is_block_grabbed(0);
-            bool right_ok = !td->use_right || !action_4dof_is_block_grabbed(1);
-
-            if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
-                /* 释放成功 → 更新背上有块状态 */
-                action_4dof_apply_back_avoid_effects(td);
-                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT, ACT4_MOVE_TIMEOUT_MS);
-            }
-        }
+        action_4dof_control_arm_suction(td, SUCTION_OFF);
+        action_4dof_apply_back_avoid_effects(td);
+        action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT, ACT4_MOVE_TIMEOUT_MS);
         break;
 
     /* ═══════════════════════════════════════════════════════════
@@ -962,9 +997,6 @@ static void action_4dof_handle(void)
             s_ctx.action = ACTION_4DOF_IDLE;
             s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
             s_ctx.timeout_ms = 0U;
-            /* 机械臂电磁阀回复打开状态，准备下次抓取 */
-            if (td->use_left)  relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
-            if (td->use_right) relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
         }
         break;
 
@@ -984,7 +1016,8 @@ static void action_4dof_handle(void)
                 s_ctx.waypoint_idx++;
                 if (s_ctx.waypoint_idx < DANCE_WAYPOINT_COUNT) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_WAYPOINT, ACT4_WAYPOINT_HOLD_MS);
-                } else {
+                }
+                else {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_COMPLETE, ACT4_HOLD_MS);
                 }
             }
@@ -1099,6 +1132,11 @@ bool action_4dof_trigger(action_state_4dof_e action)
     s_ctx.active       = true;
     s_ctx.waypoint_idx = 0U;
 
+    const Action4DOF_TargetData *td = &s_action_targets[action];
+    if (action_4dof_is_get_action(action) || action_4dof_is_place_action(action)) {
+        action_4dof_control_arm_suction(td, SUCTION_ON);
+    }
+
     /* 根据动作类型选择起始子状态 */
     if (action_4dof_is_place_action(action)) {
         /* 放置类动作: 从 PLACE_APPROACH 开始 */
@@ -1128,6 +1166,8 @@ void action_4dof_abort(void)
     /* 关闭所有吸盘 */
     relay_control(RELAY_LEFT_ARM,  SUCTION_OFF);
     relay_control(RELAY_RIGHT_ARM, SUCTION_OFF);
+    relay_control(RELAY_LEFT_BACK,  SUCTION_OFF);
+    relay_control(RELAY_RIGHT_BACK, SUCTION_OFF);
 
     /* 复位状态机 */
     s_ctx.action       = ACTION_4DOF_IDLE;

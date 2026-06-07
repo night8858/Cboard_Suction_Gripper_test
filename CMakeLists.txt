@@ -68,7 +68,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/Planar_Robot_Arm.c
     application/Gripper/pneumatic_control.c
     application/Gripper/gimbal.c
-    application/Gripper/command_decode.c
+    application/Gripper/command_decode_4dof.c
     application/Gripper/block_inspect.c
     application/Gripper/input_arbiter.c
     application/Gripper/action_scheduler.c

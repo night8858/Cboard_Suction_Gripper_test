@@ -12,6 +12,7 @@
 #include "planar_robot_arm.h"
 #include "action_scheduler.h"
 #include "action_scheduler_4dof.h"
+#include "command_decode_4dof.h"
 #include "input_arbiter.h"
 #include "Dof4_Arm.h"
 #include "Dof4_Collision.h"
@@ -164,13 +165,20 @@ void arm_control_task(void *argument)
 
         /* 3. 4DOF 动作调度（动作激活时覆盖 RC/PC 目标） */
         action_4dof_loop();
+        if (action_4dof_is_active()) {
+            cmd4_clear_manual_pose();
+        }
 
         /* 4. IDLE 期间：根据物块位置持续设定自适应归位位姿 */
         if (!action_4dof_is_active()) {
-            Dof4_Pose idle_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
-            Dof4_Pose idle_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
-            Dof4_arm_set_target(&g_dof4_arm_left,  idle_left.x,  idle_left.y,  idle_left.z,  idle_left.pitch);
-            Dof4_arm_set_target(&g_dof4_arm_right, idle_right.x, idle_right.y, idle_right.z, idle_right.pitch);
+            if (!cmd4_manual_pose_active(CMD4_ARM_LEFT)) {
+                Dof4_Pose idle_left = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
+                Dof4_arm_set_target(&g_dof4_arm_left, idle_left.x, idle_left.y, idle_left.z, idle_left.pitch);
+            }
+            if (!cmd4_manual_pose_active(CMD4_ARM_RIGHT)) {
+                Dof4_Pose idle_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
+                Dof4_arm_set_target(&g_dof4_arm_right, idle_right.x, idle_right.y, idle_right.z, idle_right.pitch);
+            }
         }
 
         /* 5. 一步式控制循环 */

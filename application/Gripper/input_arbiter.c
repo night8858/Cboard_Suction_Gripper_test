@@ -529,6 +529,16 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
                 action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1);
             }
 
+            if (rc->rc.ch[2] < - RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM);
+            }
+
+            if (rc->rc.ch[2] > RC_CH_THRESHOLD)
+            {
+                action_4dof_trigger(ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM);
+            }
+
             if (rc->rc.ch[3] < - RC_CH_THRESHOLD)
             {
                 action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK);
@@ -536,8 +546,7 @@ static void rc_map_to_targets_4dof(uint32_t now_ms)
             }
             if (rc->rc.ch[3] > RC_CH_THRESHOLD)
             {
-                action_4dof_trigger(    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK              /**< 右臂放置物块到右背 */
-);
+                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK);
             }
 
     }
