@@ -7,7 +7,7 @@
             "type": "cortex-debug",                     // 调试器类型
             "request": "launch",                        // 调试请求类型
             "servertype": "openocd",                    // 使用 OpenOCD 作为调试服务器
-            "serverpath": "D:/OpenOCD-20260121-0.12.0/bin/openocd.exe", // OpenOCD 可执行文件路径
+            "serverpath": "/usr/bin/openocd",            // OpenOCD 可执行文件路径
             "cwd": "${workspaceFolder}",                                // 工作目录
             "executable": "${workspaceFolder}/build/Debug/Cboard_Suction_Gripper_test.elf",
             "configFiles": [
@@ -17,7 +17,7 @@
             "device": "STM32F407IIHx",                                            // 目标设备型号
             "svdFile": "${workspaceFolder}/STM32F4.svd",                          // SVD 文件路径
 
-            //"preLaunchTask": "Build Project"                                      // 预启动任务，确保在调试前构建项目
+            //"preLaunchTask": "Build Project"                                    // 预启动任务，确保在调试前构建项目
 
         }
     ]

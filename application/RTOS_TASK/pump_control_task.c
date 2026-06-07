@@ -1,7 +1,6 @@
 #include "DT7.h"
 #include "main.h"
 
-#include "freertos.h"
 #include "cmsis_os.h"
 
 #include "DJI_motor.h"

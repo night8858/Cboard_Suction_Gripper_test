@@ -45,11 +45,16 @@
 
 #define BLOCK_GET_DOWN_Z -0.22f    //TODO: 实测调整z的下降目标高度，确保能贴近物块但不碰撞
 
-#define BLOCK_HEIGHT -0.08f
-
+//特殊高度设定
+#define BLOCK_HEIGHT               -0.08f
+#define BLOCK_FIRST_LAYER_HEIGHT   -0.03f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
+#define CARRY_POINT_HEIGHT         0.15f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
+#define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
+#define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
 /* ════════════════════════════════════════════════════════════════
  * 外部引用
  * ════════════════════════════════════════════════════════════════ */
+
 
 extern Dof4_Arm g_dof4_arm_left;
 extern Dof4_Arm g_dof4_arm_right;
@@ -138,21 +143,21 @@ typedef struct {
  * 目标位姿数据库
  *
  * ┌──────────────────────────────────────────────────────────────┐
- * │ 重要：以下所有坐标均为占位值（TODO）！                         │
- * │ 请在硬件调试后替换为实际可到达的位姿。                         │
- * │                                                              │
- * │ 坐标格式: {x, y, z, pitch}  单位: m, rad                     │
- * │                                                              │
+ * │ 重要：以下所有坐标均为占位值（TODO）！                             │
+ * │ 请在硬件调试后替换为实际可到达的位姿。                             │
+ * │                                                             │
+ * │ 坐标格式: {x, y, z, pitch}  单位: m, rad                      │
+ * │                                                             │
  * │ 命名规则:                                                     │
  * │   前侧(FORWARD)  = 机器前方 (+X 方向)                          │
- * │   后侧(BACKWARD) = 机器后方 (-X 方向，需 J1 旋转约 180°)       │
- * │   左放置点 = 机身左侧 (+Y) 的储物区                            │
- * │   右放置点 = 机身右侧 (-Y) 的储物区                            │
+ * │   后侧(BACKWARD) = 机器后方 (-X 方向，需 J1 旋转约 180°)        │
+ * │   左放置点 = 机身左侧 (+Y) 的储物区                             │
+ * │   右放置点 = 机身右侧 (-Y) 的储物区                             │
  * │                                                              │
- * │ pitch 含义: TCP 末端俯仰角。0=水平向前, -1.57=垂直向下         │
- * │                                                              │
+ * │ pitch 含义: TCP 末端俯仰角。0=水平向前, -1.57=垂直向下            │
+ * │                                                             │
  * │ 调试技巧:                                                     │
- * │   1. 先用 RC 手动将臂移到期望位置                              │
+ * │   1. 先用 RC 手动将臂移到期望位置                               │
  * │   2. 读取 current_pose 作为目标值填入                          │
  * │   3. 微调后重新编译测试                                        │
  * └──────────────────────────────────────────────────────────────┘
@@ -174,10 +179,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
      *       → 吸取(SUCTION_ON) → 抬升撤退(RETREAT) → 归位(COMPLETE)
      * ──────────────────────────────────────────────────────────── */
     {
+        /*---------------------------调试完成---------------------------*/
         /* 左臂 */
         .left = {
             .approach = {0.355f, 0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, 0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, 0.425f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, 0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
             /* 中间途经点（如需经过某特定位置，取消注释）:
@@ -186,7 +192,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         /* 右臂 */
         .right = {
             .approach = {0.355f, -0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, -0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, -0.425f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, -0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -200,9 +206,10 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 流程: 仅左臂移动，右臂保持原位不动
      * ──────────────────────────────────────────────────────────── */
     {
+        /*---------------------------调试完成---------------------------*/
         .left = {
             .approach = {0.355f, 0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, 0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, 0.425f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, 0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -217,10 +224,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 流程: 仅右臂移动，左臂保持原位不动
      * ──────────────────────────────────────────────────────────── */
     {
+        /*---------------------------调试完成---------------------------*/
         .left      = {{{0}}},   /* 左臂不使用 */
         .right = {
             .approach = {0.355f, -0.361f, 0.175f, -0.30f},   /* 前侧预就位 */
-            .target   = {0.425f, -0.425f, BLOCK_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {0.425f, -0.425f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {0.298f, -0.308f, 0.075f, -0.10f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -243,7 +251,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
         .left = {
             .approach   = {0.12f, 0.26f, 0.13f, 0.0f},   /* 左背放置预就位 */
-            // .waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
+         //.waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
             .waypoint_0 = {-0.22f, 0.18f, 0.40f, -1.00f}, /* 放置前最后预就位，避让左背 */
             .target     = {-0.22f, 0.18f, 0.32f, -1.4f},  /* 左背放置点 */
             .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 放置后撤退 */
@@ -285,7 +293,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 注意: 右臂跨中线到左侧放置，需确认 J1 限位和碰撞安全。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left      = {{{0}}},
+        .left  = {{{0}}},
         .right = {
             .approach = {-0.062f, 0.074f, 0.18f, -0.30f},   /* 跨中线预就位（右臂→左背） */
             .target   = {-0.11f, 0.1325f, 0.03f, STAY_DOWN}, /* 左背放置点 */
@@ -305,11 +313,11 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         .left      = {{{0}}},
         .right = {
-            .approach   = {0.12f, -0.30f, 0.24f, 0.0f},   /* 右背放置预就位 */
-            .waypoint_0 = {-0.18f, -0.185f, 0.45f, -1.0f},   /* J1=+90° 半伸展绕行点 */
-            .target     = {-0.22f, -0.185f, 0.32f, -1.37f}, /* 右背放置点 */
-            .retreat    = {0.11f, -0.29f, 0.155f, -0.10f}, /* 放置后撤退 */
-            .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
+            .approach   = {0.12f,  -0.30f,  0.24f,  0.0f},   /* 右背放置预就位 */
+            .waypoint_0 = {-0.18f, -0.185f, 0.45f,  -1.0f},   /* J1=+90° 半伸展绕行点 */
+            .target     = {-0.22f, -0.185f, 0.32f,  -1.37f}, /* 右背放置点 */
+            .retreat    = {0.11f,  -0.29f,  0.155f, -0.10f}, /* 放置后撤退 */
+            .complete   = {0.02f,  0.00f,   0.20f,  -0.02f},
         },
         .use_left  = false,
         .use_right = true,

@@ -1,6 +1,5 @@
 #include "main.h"
 
-#include "freertos.h"
 #include "cmsis_os.h"
 
 #include "bsp_led.h"

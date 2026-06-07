@@ -4,7 +4,6 @@
 #include "gpio.h"
 
 #include "cmsis_os.h"
-#include "freertos.h"
 
 
 void led_heartbeat(void)

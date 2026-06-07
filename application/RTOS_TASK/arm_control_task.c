@@ -1,6 +1,5 @@
 #include "main.h"
 
-#include "freertos.h"
 #include "cmsis_os.h"
 
 #include "arm_control.h"
@@ -9,7 +8,7 @@
 #include "variables.h"
 #include <stdint.h>
 
-#include "planar_robot_arm.h"
+#include "Planar_Robot_Arm.h"
 #include "action_scheduler.h"
 #include "action_scheduler_4dof.h"
 #include "command_decode_4dof.h"
@@ -161,7 +160,7 @@ void arm_control_task(void *argument)
         //                                    g_dof4_arm_left.target_pose.z,
         //                                    g_dof4_arm_left.target_pose.pitch);
 
-         /* 2. 4DOF 动作调度: 若动作激活覆盖 target 数组 */
+        /* 2. 4DOF 动作调度: 若动作激活覆盖 target 数组 */
 
         /* 3. 4DOF 动作调度（动作激活时覆盖 RC/PC 目标） */
         action_4dof_loop();
