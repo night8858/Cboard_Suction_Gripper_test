@@ -119,6 +119,7 @@ void arm_control_task(void *argument)
     action_4dof_init();
     osDelay(100);
 
+
     /* ── 双臂基座位置偏置标定 ──
      * 取消注释并按实际安装偏移填入 dx/dy/dz（单位 m）。
      * base_offset 叠加到 URDF base 位置后，FK/IK 自动补偿。
@@ -146,6 +147,7 @@ void arm_control_task(void *argument)
          * 左右臂各自独立计算归位点，避免左臂被追指向右侧造成异常运动。 */
         if (!startup_executed) {
             Dof4_double_arm_Enable();  // 执行归位前确保输出已启用
+
             const Dof4_Pose startup_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
             const Dof4_Pose startup_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
             Dof4_Status startup_st = Dof4_dual_arm_startup_pose(&g_dof4_arm_left,

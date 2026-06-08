@@ -93,19 +93,18 @@ typedef enum {
     ACTION_BLOCK_GET_FORWARD = 1,                                 /**< 前侧物块同时抓取   */
     ACTION_BLOCK_GET_FORWARD_LEFT_ARM = 2,                        /**< 前侧物块左臂抓取   */
     ACTION_BLOCK_GET_FORWARD_RIGHT_ARM = 3,                       /**< 前侧物块右臂抓取   */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK = 4,                 /**< 左臂放置物块到左背 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_RIGHT_BACK = 5,                /**< 左臂放置物块到右背 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_LEFT_BACK =  6,               /**< 右臂放置物块到左背 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK = 7,              /**< 右臂放置物块到右背 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1 = 8,           /**< 右臂放置物块到左1放置点第一层 */
-    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2 = 9,           /**< 右臂放置物块到左1放置点第二层 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1 = 10,         /**< 右臂放置物块到右1放置点第一层 */
-    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2 = 11,         /**< 右臂放置物块到右1放置点第二层 */
-    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM = 12,                  /**< 从左背抓取到左手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM = 13,                 /**< 从右背抓取到左手上 */
-    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM = 14,                  /**< 从左背抓取到右手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 15,                 /**< 从右背抓取到右手上 */
-    ACTION_DANCE = 16,                                            /**< 神秘舞蹈动作 */
+    ACTION_BLOCK_PLACE_BACK = 4,                                  /**< 双臂同时放置物块到对应后背 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK = 5,                 /**< 左臂放置物块到左背 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK =  6,              /**< 右臂放置物块到右背 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1 = 7,            /**< 右臂放置物块到左1放置点第一层 */
+    ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2 = 8,            /**< 右臂放置物块到左1放置点第二层 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1 = 9,          /**< 右臂放置物块到右1放置点第一层 */
+    ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2 = 10,         /**< 右臂放置物块到右1放置点第二层 */
+    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM = 11,                  /**< 从左背抓取到左手上 */
+    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM = 12,                 /**< 从右背抓取到左手上 */
+    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM = 13,                  /**< 从左背抓取到右手上 */
+    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 14,                 /**< 从右背抓取到右手上 */
+    ACTION_DANCE = 15,                                            /**< 神秘舞蹈动作 */
     /* ── 预留扩展位 (按需取消注释) ── */
 
 } action_state_4dof_e;
@@ -127,9 +126,9 @@ typedef struct {
 extern BlockPlacementState g_block_state;
 
 /** @brief IDLE 位姿参数 — 相对于各自基座 (effective_base) 的偏移量 */
-#define IDLE_BASE_X      0.02f   /**< 基座前方 X 偏移，单位 m */
+#define IDLE_BASE_X      0.08f   /**< 基座前方 X 偏移，单位 m */
 #define IDLE_BASE_Y      0.00f   /**< 基座侧方 Y 偏移，单位 m（0=正前方） */
-#define IDLE_BASE_Z      0.20f   /**< 基座上方 Z 偏移，单位 m */
+#define IDLE_BASE_Z      0.27f   /**< 基座上方 Z 偏移，单位 m */
 #define IDLE_BASE_PITCH -0.02f   /**< 基准 pitch，单位 rad */
 
 /** @brief 根据物块位置状态获取指定臂的自适应 IDLE 位姿 */

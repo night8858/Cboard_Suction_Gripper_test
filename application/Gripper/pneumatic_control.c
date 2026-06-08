@@ -20,7 +20,7 @@ extern ramp_function_source_t pump_ramp;
 PumpCtrl g_pump = {
     .motor_id         = 1,
     .current_speed_rpm = 0.0f,
-    .target_speed_rpm  = 3000.0f,  /**< 默认目标转速 3000 RPM */
+    .target_speed_rpm  = 2800.0f,  /**< 默认目标转速 3000 RPM */
     .temperature       = 0,
     .is_running        = false,
 };

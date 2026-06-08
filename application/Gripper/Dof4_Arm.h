@@ -93,7 +93,7 @@ extern "C" {
 #define L_J2_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J3_ZERO_BIAS_DEG -1.47f
+#define L_J3_ZERO_BIAS_DEG -1.57f
 #define L_J3_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define L_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)

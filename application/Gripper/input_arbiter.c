@@ -557,39 +557,48 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
 
             if (rc->rc.ch[3] < - RC_CH_THRESHOLD)
             {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK);
+                action_4dof_trigger(ACTION_BLOCK_GET_FORWARD);
 
             }
             if (rc->rc.ch[3] > RC_CH_THRESHOLD)
             {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK);
+                action_4dof_trigger(ACTION_BLOCK_PLACE_BACK);
             }
 
     }
     else if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1)
     {
 
-        if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
-            {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1);
+        // if (rc->rc.ch[0] < - RC_CH_THRESHOLD)
+        //     {
+        //         action_4dof_trigger(ACTION_BLOCK_GET_FORWARD);
 
-            }
+        //     }
 
-            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
-            {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2);
-            }
+        //     if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+        //     {
+        //         action_4dof_trigger(ACTION_BLOCK_PLACE_BACK);
+        //     }
 
 
-            if (rc->rc.ch[1] < - RC_CH_THRESHOLD)
-            {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1);
-            }
+        //     if (rc->rc.ch[1] < - RC_CH_THRESHOLD)
+        //     {
+        //         action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1);
+        //     }
 
-            if (rc->rc.ch[1] > RC_CH_THRESHOLD)
-            {
-                action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2);
-            }
+            // if (rc->rc.ch[1] > RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2);
+            // }
+            // if (rc->rc.ch[2] < - RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM);
+            // }
+
+            // if (rc->rc.ch[2] > RC_CH_THRESHOLD)
+            // {
+            //     action_4dof_trigger(ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM);
+            // }
     }
 
              /* 气泵手动控制: s[0]==1 且 s[1]==1 时,

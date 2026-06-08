@@ -124,6 +124,7 @@
 #include "Dof4_Arm.h"
 #include "Dof4_Collision.h"
 #include "Trajectory_Planning.h"
+#include "pneumatic_control.h"
 
 #include <math.h>
 #include <string.h>
@@ -137,6 +138,13 @@
 #include "stm32f4xx_hal.h"
 #include "usart.h"
 #endif
+
+#define RELAY_LEFT_ARM    0U  /**< 左臂吸盘电磁阀（一号） */
+#define RELAY_RIGHT_ARM   1U  /**< 右臂吸盘电磁阀（二号） */
+#define RELAY_LEFT_BACK   2U  /**< 左背吸盘电磁阀（三号） */
+#define RELAY_RIGHT_BACK  3U  /**< 右背吸盘电磁阀（四号） */
+#define SUCTION_ON        1
+#define SUCTION_OFF       0
 
 
 /// ════════════════════════════════════════════════════════════════
@@ -1954,6 +1962,11 @@ void Dof4_double_arm_start(void)
 
 void Dof4_double_arm_Desable(void)
 {
+    relay_control(RELAY_LEFT_ARM,  SUCTION_OFF);
+    relay_control(RELAY_RIGHT_ARM, SUCTION_OFF);
+    relay_control(RELAY_LEFT_BACK,  SUCTION_OFF);
+    relay_control(RELAY_RIGHT_BACK, SUCTION_OFF);
+
     /* 右臂 4 路 */
     for (uint8_t i = 0; i < 8; ++i) {
         EnableTorque((int)(i + 1), false);  /* ID 从 1 开始 */
@@ -1962,6 +1975,11 @@ void Dof4_double_arm_Desable(void)
 
 void Dof4_double_arm_Enable(void)
 {
+    relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
+    relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
+    relay_control(RELAY_LEFT_BACK,  SUCTION_ON);
+    relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
+
     /* 右臂 4 路 */
     for (uint8_t i = 0; i < 8; ++i) {
         EnableTorque((int)(i + 1), true);  /* ID 从 1 开始 */
