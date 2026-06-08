@@ -126,9 +126,9 @@ typedef struct {
 extern BlockPlacementState g_block_state;
 
 /** @brief IDLE 位姿参数 — 相对于各自基座 (effective_base) 的偏移量 */
-#define IDLE_BASE_X      0.08f   /**< 基座前方 X 偏移，单位 m */
+#define IDLE_BASE_X      0.12f   /**< 基座前方 X 偏移，单位 m */
 #define IDLE_BASE_Y      0.00f   /**< 基座侧方 Y 偏移，单位 m（0=正前方） */
-#define IDLE_BASE_Z      0.27f   /**< 基座上方 Z 偏移，单位 m */
+#define IDLE_BASE_Z      0.25f   /**< 基座上方 Z 偏移，单位 m */
 #define IDLE_BASE_PITCH -0.02f   /**< 基准 pitch，单位 rad */
 
 /** @brief 根据物块位置状态获取指定臂的自适应 IDLE 位姿 */

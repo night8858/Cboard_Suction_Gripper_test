@@ -58,8 +58,8 @@
 //特殊距离设定
 #define BLOCK_HEIGHT               -0.08f
 //小狗为-0.03f   测试架为
-#define BLOCK_FIRST_LAYER_HEIGHT   -0.22f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
-#define CARRY_POINT_HEIGHT         0.17f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
+#define BLOCK_FIRST_LAYER_HEIGHT   -0.21f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
+#define CARRY_POINT_HEIGHT         0.07f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
 #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
 #define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
 //雷达给的是0.3的x
@@ -213,16 +213,16 @@ static const Action4DOF_TargetData s_action_targets[] = {
         /*---------------------------调试完成---------------------------*/
         /* 左臂 */
         .left = {
-            .approach = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.3f, -0.6f},   /* 前侧预就位 */
-            .target   = {BLOCK_X_DESTANCE_FROM_BASE, BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
-            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, 0.175f, -0.30f},   /* 抓取后撤退 */
+            .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.3f, -0.6f},   /* 前侧预就位 */
+            .target   = {BLOCK_X_DESTANCE_FROM_BASE, BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
+            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, 0.175f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
         /* 右臂 */
         .right = {
-            .approach = {BLOCK_X_DESTANCE_FROM_BASE-0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.3f, -0.60f},   /* 前侧预就位 */
+            .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.3f, -0.60f},   /* 前侧预就位 */
             .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
-            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE-0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), 0.175f, -0.30f},   /* 抓取后撤退 */
+            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), 0.175f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
         .use_left  = true,
@@ -237,9 +237,9 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         /*---------------------------调试完成---------------------------*/
         .left = {
-            .approach = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
-            .target   = {BLOCK_X_DESTANCE_FROM_BASE, BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
-            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
+            .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
+            .target   = {BLOCK_X_DESTANCE_FROM_BASE, BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
+            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
         .right     = {{{0}}},   /* 右臂不使用，保持原位 */
@@ -256,9 +256,9 @@ static const Action4DOF_TargetData s_action_targets[] = {
         /*---------------------------调试完成---------------------------*/
         .left      = {{{0}}},   /* 左臂不使用 */
         .right = {
-            .approach = {BLOCK_X_DESTANCE_FROM_BASE-0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
-            .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 前侧抓取点 */
-            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE-0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
+            .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
+            .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
+            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
         .use_left  = false,
@@ -275,26 +275,26 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         //ACTION_BLOCK_PLACE_BACK
         .left = {
-            .approach   = {0.12f, 0.26f, 0.13f, 0.0f},        /* 左背放置预就位 */
-            .waypoint_0 = {-0.22f, 0.18f, 0.45f, -1.00f},      /* J1 绕行中间点 */
-            .target     = {-0.22f, 0.18f, 0.32f, STAY_DOWN},   /* 左背放置点 */
-            .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},      /* 放置后撤退 */
+            .approach   = {0.12f, 0.30f, 0.13f, 0.0f},        /* 左背放置预就位 */
+            .waypoint_0 = {-0.22f, 0.185f, 0.45f, -1.00f},      /* J1 绕行中间点 */
+            .target     = {-0.22f, 0.185f, BLOCK_CARRY_HEIGHT + 0.02, STAY_DOWN},   /* 左背放置点 */
+            .retreat    = {0.18f, 0.25f, 0.155f, -0.40f},      /* 放置后撤退 */
             .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .right = {
             .approach   = {0.12f,  -0.30f,  0.24f,  0.0f},    /* 右背放置预就位 */
-            .waypoint_0 = {-0.18f, -0.185f, 0.45f,  -1.0f},    /* J1 绕行中间点 */
-            .target     = {-0.22f, -0.185f, 0.32f,  -1.37f},   /* 右背放置点 */
-            .retreat    = {0.11f,  -0.29f,  0.155f, -0.10f},   /* 放置后撤退 */
+            .waypoint_0 = {-0.22f, -0.185f, 0.45f,  -1.0f},    /* J1 绕行中间点 */
+            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT ,  STAY_DOWN},   /* 右背放置点 */
+            .retreat    = {0.18f,  -0.25f,  0.155f, -0.40f},   /* 放置后撤退 */
             .complete   = {0.02f,  0.00f,   0.20f,  -0.02f},
         },
         .use_left  = true,
         .use_right = true,
         .use_waypoint = true,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .left_back_avoid  = {0.24f, 0.16f, 0.22f, 0.20f},
+        .left_back_avoid  = {0.24f, 0.18f, 0.22f, 0.20f},
         .right_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .right_back_avoid  = {0.24f, -0.16f, 0.22f, 0.20f},
+        .right_back_avoid  = {0.24f, -0.18f, 0.22f, 0.20f},
     },
 
     /* ────────────────────────────────────────────────────────────
@@ -310,9 +310,9 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left = {
             .approach   = {0.12f, 0.26f, 0.13f, 0.0f},   /* 左背放置预就位 */
           //.waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
-            .waypoint_0 = {-0.22f, 0.18f, 0.45f , -1.00f}, /* 放置前最后预就位，避让左背 */
-            .target     = {-0.22f, 0.18f, 0.32f, STAY_DOWN},  /* 左背放置点 */
-            .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 放置后撤退 */
+            .waypoint_0 = {-0.22f, 0.185f, 0.45f , -1.00f}, /* 放置前最后预就位，避让左背 */
+            .target     = {-0.22f, 0.185f, BLOCK_CARRY_HEIGHT + 0.02, STAY_DOWN},  /* 左背放置点 */
+            .retreat    = {0.24f, 0.29f, 0.155f, -0.40f},   /* 放置后撤退 */
             .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
@@ -320,7 +320,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .use_right = false,
         .use_waypoint = true,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .left_back_avoid  = {0.24f, 0.16f, 0.22f, 0.20f}
+        .left_back_avoid  = {0.28f, 0.18f, 0.22f, 0.20f}
     },
 
     /* ────────────────────────────────────────────────────────────
@@ -336,16 +336,16 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left  = {{{0}}},
         .right = {
             .approach   = {0.12f, -0.26f, 0.13f, 0.0f},        /* TODO: 右背放置预就位 */
-            .waypoint_0 = {-0.22f, -0.18f, 0.45f, -1.00f},      /* TODO: J1 绕行中间点 */
-            .target     = {-0.22f, -0.18f, 0.32f, STAY_DOWN},   /* TODO: 右背放置点 */
-            .retreat    = {0.11f, -0.29f, 0.155f, -0.10f},      /* TODO: 放置后撤退 */
+            .waypoint_0 = {-0.22f, -0.185f, 0.45f, -1.00f},      /* TODO: J1 绕行中间点 */
+            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT, STAY_DOWN},   /* TODO: 右背放置点 */
+            .retreat    = {0.24f, -0.29f, 0.155f, -0.40f},      /* TODO: 放置后撤退 */
             .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,
         .use_right = true,
         .use_waypoint = true,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_SET,
-        .right_back_avoid  = {0.24f, -0.16f, 0.22f, 0.20f}
+        .right_back_avoid  = {0.28f, -0.18f, 0.22f, 0.20f}
     },
 
     /* ────────────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
         .left = {
             .approach = {0.35f, 0.2f, 0.30f, -0.30f},   /* 后侧预就位 */
-            .target   = {0.425f, 0.40f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
+            .target   = {0.425f, 0.40f, BLOCK_FIRST_LAYER_HEIGHT + 0.02 , STAY_DOWN}, /* 后侧抓取点 ⚠️ J1限位 */
             .retreat  = {0.25f, 0.16f, 0.25f, -0.50f},   /* 抓取后撤退 */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -438,8 +438,8 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left = {
             .approach   = {0.12f, 0.26f, 0.13f, 0.0f},     /* 左背抓取预就位 */
             .waypoint_0 = {-0.22f, 0.18f, 0.45f, -1.00f},   /* J1 绕行中间点 */
-            .target     = {-0.22f, 0.18f, 0.32f, -1.4f},    /* 左背物块抓取点 */
-            .retreat    = {0.11f, 0.29f, 0.155f, -0.10f},   /* 抓取后撤退 */
+            .target     = {-0.22f, 0.18f, BLOCK_CARRY_HEIGHT+ 0.02, -1.4f},    /* 左背物块抓取点 */
+            .retreat    = {0.13f, 0.42f, BLOCK_CARRY_HEIGHT + 0.02, -0.10f},   /* 抓取后撤退 */
             .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
@@ -459,8 +459,8 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         .left = {
             .approach   = {-0.062f, -0.074f, 0.18f, -0.30f}, /* 跨中线预就位 */
-            .target     = {-0.11f, -0.1325f, 0.03f, STAY_DOWN}, /* 右背物块抓取点 */
-            .retreat    = {-0.023f, -0.026f, 0.23f, -0.10f}, /* 抓取后撤退 */
+            .target     = {-0.11f, -0.1325f, BLOCK_CARRY_HEIGHT, STAY_DOWN}, /* 右背物块抓取点 */
+            .retreat    = {-0.023f, -0.026f, BLOCK_CARRY_HEIGHT, -0.10f}, /* 抓取后撤退 */
             .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
         },
         .right     = {{{0}}},
@@ -501,8 +501,8 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .right = {
             .approach   = {0.12f, -0.30f, 0.24f, 0.0f},     /* 右背抓取预就位 */
             .waypoint_0 = {-0.18f, -0.185f, 0.45f, -1.0f},   /* J1 绕行中间点 */
-            .target     = {-0.22f, -0.185f, 0.32f, -1.37f},  /* 右背物块抓取点 */
-            .retreat    = {0.11f, -0.29f, 0.155f, -0.10f},   /* 抓取后撤退 */
+            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT, -1.37f},  /* 右背物块抓取点 */
+            .retreat    = {0.13f, -0.42f,  BLOCK_CARRY_HEIGHT, -0.10f},   /* 抓取后撤退 */
             .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,
