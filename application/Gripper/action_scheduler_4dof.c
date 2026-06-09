@@ -125,6 +125,18 @@ BlockPlacementState g_block_state;
 #define ACT4_REACH_POS_TOL_M     0.03f
 /** @brief 到位判定：pitch 容差，单位 rad */
 #define ACT4_REACH_PITCH_TOL_RAD 0.05f
+/** @brief 关节轨迹到位判定容差，单位 rad。TODO: 实测后调整。 */
+#define ACT4_JOINT_REACH_TOL_RAD 0.05f
+
+/** @brief 动作表总数（枚举最后一个有效动作 + 1）。 */
+#define ACTION_4DOF_COUNT ((uint32_t)ACTION_DANCE + 1U)
+
+typedef enum {
+    ACTION_EXEC_MODE_POSE = 0,
+    ACTION_EXEC_MODE_JOINT,
+} Action4DOF_ExecMode;
+
+#define ACT4_JOINT_TODO {0.0f, 0.0f, 0.0f, 0.0f}
 
 /** @brief 左背占用时的默认左臂高位避让位姿，动作表可覆盖。 */
 static const Dof4_Pose s_default_left_back_avoid_pose  = {0.24f,  0.13f, 0.16f, -0.30f};
@@ -151,6 +163,51 @@ typedef struct {
     Dof4_Pose complete;       /**< 完成后的归位点（回到 IDLE 时的位置） */
 } Action4DOF_ArmTargets;
 
+#define ACT4_POSE_ARM_ZERO \
+    { \
+        .approach = {0.0f, 0.0f, 0.0f, 0.0f}, \
+        .waypoint_0 = {0.0f, 0.0f, 0.0f, 0.0f}, \
+        .target = {0.0f, 0.0f, 0.0f, 0.0f}, \
+        .retreat = {0.0f, 0.0f, 0.0f, 0.0f}, \
+        .complete = {0.0f, 0.0f, 0.0f, 0.0f}, \
+    }
+
+/** @brief 关节轨迹点，占位角度单位 rad。舵机速度统一使用 arm->cfg.servo_speed。 */
+typedef struct {
+    float j1;
+    float j2;
+    float j3;
+    float j4;
+} JointWaypoint;
+
+/** @brief 单臂后背动作关节轨迹点集合。 */
+typedef struct {
+    JointWaypoint approach;    /**< TODO: 后背动作预就位关节角。 */
+    JointWaypoint waypoint_1;  /**< TODO: 后背动作途经点 1。 */
+    JointWaypoint waypoint_2;  /**< TODO: 后背动作途经点 2。 */
+    JointWaypoint target;      /**< TODO: 后背交接目标关节角。 */
+    JointWaypoint retreat;     /**< TODO: 后背交接后撤退关节角。 */
+    JointWaypoint complete;    /**< TODO: 后背动作完成关节角。 */
+} Action4DOF_JointArmTargets;
+
+#define ACT4_JOINT_ARM_TODO \
+    { \
+        .approach = ACT4_JOINT_TODO, \
+        .waypoint_1 = ACT4_JOINT_TODO, \
+        .waypoint_2 = ACT4_JOINT_TODO, \
+        .target = ACT4_JOINT_TODO, \
+        .retreat = ACT4_JOINT_TODO, \
+        .complete = ACT4_JOINT_TODO, \
+    }
+
+/** @brief 后背动作关节轨迹数据。 */
+typedef struct {
+    Action4DOF_JointArmTargets left;
+    Action4DOF_JointArmTargets right;
+    bool use_left;
+    bool use_right;
+} Action4DOF_JointTargetData;
+
 typedef enum {
     ACTION_4DOF_BACK_AVOID_NONE = 0,
     ACTION_4DOF_BACK_AVOID_SET,
@@ -164,6 +221,7 @@ typedef struct {
     bool use_left;                /**< 本动作是否使用左臂 */
     bool use_right;               /**< 本动作是否使用右臂 */
     bool use_waypoint;            /**< 是否在 approach 和 target 之间插入中间途经点 */
+    Action4DOF_ExecMode exec_mode;/**< 运动执行模式：末端位姿或关节轨迹 */
     Action4DOF_BackAvoidEffect left_back_effect;
     Dof4_Pose left_back_avoid;
     Action4DOF_BackAvoidEffect right_back_effect;
@@ -242,7 +300,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
             .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
-        .right     = {{{0}}},   /* 右臂不使用，保持原位 */
+        .right     = ACT4_POSE_ARM_ZERO,   /* 右臂不使用，保持原位 */
         .use_left  = true,
         .use_right = false,
     },
@@ -254,7 +312,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * ──────────────────────────────────────────────────────────── */
     {
         /*---------------------------调试完成---------------------------*/
-        .left      = {{{0}}},   /* 左臂不使用 */
+        .left      = ACT4_POSE_ARM_ZERO,   /* 左臂不使用 */
         .right = {
             .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
             .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
@@ -268,29 +326,19 @@ static const Action4DOF_TargetData s_action_targets[] = {
     /* ────────────────────────────────────────────────────────────
      * [4] ACTION_BLOCK_PLACE_BACK — 双臂同时放置物块到对应后背
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 流程: 双臂同时携物块 → 放置预就位 → 途经点绕行 → 放置点
      *       → 预释放等待(背部吸附) → 关阀 → 释放后等待 → 撤退 → 归位
      * 左臂→左背，右臂→右背，同时执行。
      * ──────────────────────────────────────────────────────────── */
     {
         //ACTION_BLOCK_PLACE_BACK
-        .left = {
-            .approach   = {0.12f, 0.30f, 0.13f, 0.0f},        /* 左背放置预就位 */
-            .waypoint_0 = {-0.22f, 0.185f, 0.45f, -1.00f},      /* J1 绕行中间点 */
-            .target     = {-0.22f, 0.185f, BLOCK_CARRY_HEIGHT + 0.02, STAY_DOWN},   /* 左背放置点 */
-            .retreat    = {0.18f, 0.25f, 0.155f, -0.40f},      /* 放置后撤退 */
-            .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .right = {
-            .approach   = {0.12f,  -0.30f,  0.24f,  0.0f},    /* 右背放置预就位 */
-            .waypoint_0 = {-0.22f, -0.185f, 0.45f,  -1.0f},    /* J1 绕行中间点 */
-            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT ,  STAY_DOWN},   /* 右背放置点 */
-            .retreat    = {0.18f,  -0.25f,  0.155f, -0.40f},   /* 放置后撤退 */
-            .complete   = {0.02f,  0.00f,   0.20f,  -0.02f},
-        },
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = true,
         .use_waypoint = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_SET,
         .left_back_avoid  = {0.24f, 0.18f, 0.22f, 0.20f},
         .right_back_effect = ACTION_4DOF_BACK_AVOID_SET,
@@ -301,24 +349,19 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [5] ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
      *     左臂放置物块到左背（机身左侧后方的储物区）
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 流程: 左臂携物块 → 放置预就位(PLACE_APPROACH) → 放置点(PLACE)
      *       → 预释放等待(背吸吸附) → 关阀 → 释放后等待 → 撤退(RETREAT) → 归位(COMPLETE)
      * 右臂保持原位。
      * ──────────────────────────────────────────────────────────── */
     {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK
-        .left = {
-            .approach   = {0.12f, 0.26f, 0.13f, 0.0f},   /* 左背放置预就位 */
-          //.waypoint_0 = {0.12f, 0.26f, 0.13f, 0.0f}, /* J1=-90° 半伸展绕行点 */
-            .waypoint_0 = {-0.22f, 0.185f, 0.45f , -1.00f}, /* 放置前最后预就位，避让左背 */
-            .target     = {-0.22f, 0.185f, BLOCK_CARRY_HEIGHT + 0.02, STAY_DOWN},  /* 左背放置点 */
-            .retreat    = {0.24f, 0.29f, 0.155f, -0.40f},   /* 放置后撤退 */
-            .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
-        },
-        .right     = {{{0}}},
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = false,
         .use_waypoint = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_SET,
         .left_back_avoid  = {0.28f, 0.18f, 0.22f, 0.20f}
     },
@@ -327,23 +370,19 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [6] ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK
      *     右臂放置物块到右背（机身右侧后方的储物区）
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 流程: 右臂携物块 → 放置预就位(PLACE_APPROACH) → 途经点绕行 → 放置点(PLACE)
      *       → 预释放等待(背吸吸附) → 关阀 → 释放后等待 → 撤退(RETREAT) → 归位(COMPLETE)
      * 左臂保持原位。
      * ──────────────────────────────────────────────────────────── */
     {
         //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK
-        .left  = {{{0}}},
-        .right = {
-            .approach   = {0.12f, -0.26f, 0.13f, 0.0f},        /* TODO: 右背放置预就位 */
-            .waypoint_0 = {-0.22f, -0.185f, 0.45f, -1.00f},      /* TODO: J1 绕行中间点 */
-            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT, STAY_DOWN},   /* TODO: 右背放置点 */
-            .retreat    = {0.24f, -0.29f, 0.155f, -0.40f},      /* TODO: 放置后撤退 */
-            .complete   = {0.02f,  0.00f, 0.20f, -0.02f},
-        },
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = false,
         .use_right = true,
         .use_waypoint = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_SET,
         .right_back_avoid  = {0.28f, -0.18f, 0.22f, 0.20f}
     },
@@ -365,7 +404,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
             .retreat  = {0.25f, 0.16f, 0.25f, -0.50f},   /* 抓取后撤退 */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
-        .right     = {{{0}}},
+        .right     = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = false,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_NONE,  /* 外部放置，不修改后背避让状态 */
@@ -385,7 +424,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
             .retreat  = {0.212f,  0.308f, 0.15f, -0.30f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
-        .right     = {{{0}}},
+        .right     = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = false,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_NONE,  /* 外部放置，不修改后背避让状态 */
@@ -397,7 +436,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * ──────────────────────────────────────────────────────────── */
     {
         //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1
-        .left      = {{{0}}},
+        .left      = ACT4_POSE_ARM_ZERO,
         .right = {
             .approach = {0.35f, -0.2f, 0.30f, -0.30f},   /* TODO */
             .target   = {0.425f, -0.40f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN},
@@ -415,7 +454,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * ──────────────────────────────────────────────────────────── */
     {
         //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2
-        .left      = {{{0}}},
+        .left      = ACT4_POSE_ARM_ZERO,
         .right = {
             .approach = {0.35f, -0.35f, 0.34f, -1.00f},   /* TODO */
             .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT, STAY_DOWN},   /* TODO: 比F1高~0.04m */
@@ -431,21 +470,17 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [11] ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM
      *      左臂从左背抓取物块到手
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 流程: 左臂 → 左背预就位 → 途经点绕行 → 抓取点 → 吸取 → 撤退 → 归位
      * 抓取后左背储物区清空。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left = {
-            .approach   = {0.12f, 0.26f, 0.13f, 0.0f},     /* 左背抓取预就位 */
-            .waypoint_0 = {-0.22f, 0.18f, 0.45f, -1.00f},   /* J1 绕行中间点 */
-            .target     = {-0.22f, 0.18f, BLOCK_CARRY_HEIGHT+ 0.02, -1.4f},    /* 左背物块抓取点 */
-            .retreat    = {0.13f, 0.42f, BLOCK_CARRY_HEIGHT + 0.02, -0.10f},   /* 抓取后撤退 */
-            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
-        },
-        .right     = {{{0}}},
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = false,
         .use_waypoint = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
     },
 
@@ -453,19 +488,16 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [12] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM
      *      左臂从右背抓取物块到手（跨中线）
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 注意: 左臂跨中线到右侧，需确认 J1 限位和碰撞安全。
      * 抓取后右背储物区清空。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left = {
-            .approach   = {-0.062f, -0.074f, 0.18f, -0.30f}, /* 跨中线预就位 */
-            .target     = {-0.11f, -0.1325f, BLOCK_CARRY_HEIGHT, STAY_DOWN}, /* 右背物块抓取点 */
-            .retreat    = {-0.023f, -0.026f, BLOCK_CARRY_HEIGHT, -0.10f}, /* 抓取后撤退 */
-            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
-        },
-        .right     = {{{0}}},
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = false,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
     },
 
@@ -473,19 +505,16 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [13] ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM
      *      右臂从左背抓取物块到手（跨中线）
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 注意: 右臂跨中线到左侧，需确认 J1 限位和碰撞安全。
      * 抓取后左背储物区清空。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left      = {{{0}}},
-        .right = {
-            .approach   = {-0.062f, 0.074f, 0.18f, -0.30f},  /* 跨中线预就位 */
-            .target     = {-0.11f, 0.1325f, 0.03f, STAY_DOWN}, /* 左背物块抓取点 */
-            .retreat    = {-0.023f, 0.026f, 0.23f, -0.10f},  /* 抓取后撤退 */
-            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
-        },
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = false,
         .use_right = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .left_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
     },
 
@@ -493,21 +522,17 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * [14] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM
      *      右臂从右背抓取物块到手
      *
+     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
      * 流程: 右臂 → 右背预就位 → 途经点绕行 → 抓取点 → 吸取 → 撤退 → 归位
      * 抓取后右背储物区清空。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left      = {{{0}}},
-        .right = {
-            .approach   = {0.12f, -0.30f, 0.24f, 0.0f},     /* 右背抓取预就位 */
-            .waypoint_0 = {-0.18f, -0.185f, 0.45f, -1.0f},   /* J1 绕行中间点 */
-            .target     = {-0.22f, -0.185f, BLOCK_CARRY_HEIGHT, -1.37f},  /* 右背物块抓取点 */
-            .retreat    = {0.13f, -0.42f,  BLOCK_CARRY_HEIGHT, -0.10f},   /* 抓取后撤退 */
-            .complete   = {0.02f, 0.00f, 0.20f, -0.02f},
-        },
+        .left = ACT4_POSE_ARM_ZERO,
+        .right = ACT4_POSE_ARM_ZERO,
         .use_left  = false,
         .use_right = true,
         .use_waypoint = true,
+        .exec_mode = ACTION_EXEC_MODE_JOINT,
         .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
     },
 
@@ -520,16 +545,52 @@ static const Action4DOF_TargetData s_action_targets[] = {
      * 途经点数量由 DANCE_WAYPOINT_COUNT 定义（见下方）。
      * ──────────────────────────────────────────────────────────── */
     {
-        .left      = {{{0}}},   /* DANCE 使用 s_dance_waypoints，不使用此结构 */
-        .right     = {{{0}}},
+        .left      = ACT4_POSE_ARM_ZERO,   /* DANCE 使用 s_dance_waypoints，不使用此结构 */
+        .right     = ACT4_POSE_ARM_ZERO,
         .use_left  = true,
         .use_right = true,
     },
 };
 
-/* 动作总数（用于边界检查） */
-#define ACTION_4DOF_COUNT \
-    (sizeof(s_action_targets) / sizeof(s_action_targets[0]))
+/* 后背动作关节轨迹表。所有角度和速度均为 TODO 占位值，调试时逐点替换。 */
+static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] = {
+    [ACTION_BLOCK_PLACE_BACK] = {
+        .left = ACT4_JOINT_ARM_TODO,
+        .right = ACT4_JOINT_ARM_TODO,
+        .use_left = true,
+        .use_right = true,
+    },
+    [ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK] = {
+        .left = ACT4_JOINT_ARM_TODO,
+        .use_left = true,
+        .use_right = false,
+    },
+    [ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK] = {
+        .right = ACT4_JOINT_ARM_TODO,
+        .use_left = false,
+        .use_right = true,
+    },
+    [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM] = {
+        .left = ACT4_JOINT_ARM_TODO,
+        .use_left = true,
+        .use_right = false,
+    },
+    [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM] = {
+        .left = ACT4_JOINT_ARM_TODO,
+        .use_left = true,
+        .use_right = false,
+    },
+    [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM] = {
+        .right = ACT4_JOINT_ARM_TODO,
+        .use_left = false,
+        .use_right = true,
+    },
+    [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM] = {
+        .right = ACT4_JOINT_ARM_TODO,
+        .use_left = false,
+        .use_right = true,
+    },
+};
 
 /* ════════════════════════════════════════════════════════════════
  * DANCE 动作途经点序列
@@ -835,6 +896,212 @@ static bool action_4dof_arm_reached_pose(const Dof4_Arm *arm, const Dof4_Pose *t
     return (pos_err <= ACT4_REACH_POS_TOL_M) && (pitch_err <= ACT4_REACH_PITCH_TOL_RAD);
 }
 
+static void action_4dof_set_joint_arm_target(Dof4_Arm *arm, const JointWaypoint *waypoint)
+{
+    if (arm == NULL || waypoint == NULL) {
+        return;
+    }
+
+    Dof4_JointState joints = {{
+        waypoint->j1,
+        waypoint->j2,
+        waypoint->j3,
+        waypoint->j4,
+    }};
+    (void)Dof4_arm_set_joint_target(arm, &joints);
+}
+
+static void action_4dof_set_joint_stage_targets(const Action4DOF_JointTargetData *jd,
+                                                const JointWaypoint *left_waypoint,
+                                                const JointWaypoint *right_waypoint)
+{
+    if (jd == NULL) {
+        return;
+    }
+    if (jd->use_left) {
+        action_4dof_set_joint_arm_target(&g_dof4_arm_left, left_waypoint);
+    }
+    if (jd->use_right) {
+        action_4dof_set_joint_arm_target(&g_dof4_arm_right, right_waypoint);
+    }
+}
+
+static bool action_4dof_joint_reached(const Dof4_Arm *arm, const JointWaypoint *waypoint)
+{
+    if (arm == NULL || waypoint == NULL) {
+        return true;
+    }
+
+    const float target[DOF4_JOINT_COUNT] = {
+        waypoint->j1,
+        waypoint->j2,
+        waypoint->j3,
+        waypoint->j4,
+    };
+    for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
+        const float err = fabsf(Dof4_normalize_angle(arm->joint_actual.q[i] - target[i]));
+        if (err > ACT4_JOINT_REACH_TOL_RAD) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool action_4dof_joint_stage_reached(const Action4DOF_JointTargetData *jd,
+                                            const JointWaypoint *left_waypoint,
+                                            const JointWaypoint *right_waypoint)
+{
+    if (jd == NULL) {
+        return true;
+    }
+
+    bool left_ok = !jd->use_left ||
+                   action_4dof_joint_reached(&g_dof4_arm_left, left_waypoint);
+    bool right_ok = !jd->use_right ||
+                    action_4dof_joint_reached(&g_dof4_arm_right, right_waypoint);
+    return left_ok && right_ok;
+}
+
+static void action_4dof_finish_current_action(const Action4DOF_TargetData *td)
+{
+    action_4dof_control_arm_suction(td, SUCTION_ON);
+    s_ctx.active = false;
+    s_ctx.action = ACTION_4DOF_IDLE;
+    s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
+    s_ctx.timeout_ms = 0U;
+    s_ctx.waypoint_idx = 0U;
+}
+
+static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
+                                     const Action4DOF_JointTargetData *jd)
+{
+    if (td == NULL || jd == NULL || (!jd->use_left && !jd->use_right)) {
+        action_4dof_abort();
+        return;
+    }
+
+    switch (s_ctx.substate) {
+    case ACTION_4DOF_SUBSTATE_APPROACH:
+    case ACTION_4DOF_SUBSTATE_PLACE_APPROACH:
+        action_4dof_set_joint_stage_targets(jd,
+                                            &jd->left.approach,
+                                            &jd->right.approach);
+        if (action_4dof_joint_stage_reached(jd,
+                                            &jd->left.approach,
+                                            &jd->right.approach) ||
+            action_4dof_is_timed_out()) {
+            s_ctx.waypoint_idx = 0U;
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE,
+                                      ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_INTERMEDIATE:
+    {
+        const JointWaypoint *left_wp = (s_ctx.waypoint_idx == 0U)
+                                       ? &jd->left.waypoint_1
+                                       : &jd->left.waypoint_2;
+        const JointWaypoint *right_wp = (s_ctx.waypoint_idx == 0U)
+                                        ? &jd->right.waypoint_1
+                                        : &jd->right.waypoint_2;
+        action_4dof_set_joint_stage_targets(jd, left_wp, right_wp);
+        if (action_4dof_joint_stage_reached(jd, left_wp, right_wp) ||
+            action_4dof_is_timed_out()) {
+            if (s_ctx.waypoint_idx == 0U) {
+                s_ctx.waypoint_idx = 1U;
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE,
+                                          ACT4_MOVE_TIMEOUT_MS);
+            } else if (action_4dof_is_place_action(s_ctx.action)) {
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE,
+                                          ACT4_MOVE_TIMEOUT_MS);
+            } else {
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_GRAB,
+                                          ACT4_MOVE_TIMEOUT_MS);
+            }
+        }
+        break;
+    }
+
+    case ACTION_4DOF_SUBSTATE_GRAB:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.target, &jd->right.target);
+        if (action_4dof_joint_stage_reached(jd, &jd->left.target, &jd->right.target) ||
+            action_4dof_is_timed_out()) {
+            uint32_t hold_ms = action_4dof_is_back_get_action(s_ctx.action) ?
+                               ACT4_PLACE_HOLD_MS : ACT4_SUCTION_TIMEOUT_MS;
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB,
+                                      hold_ms);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.target, &jd->right.target);
+        if (action_4dof_is_timed_out()) {
+            if (action_4dof_is_back_get_action(s_ctx.action) &&
+                s_ctx.timeout_ms != ACT4_BACK_RELEASE_HOLD_MS) {
+                action_4dof_close_source_back_suction(td);
+                action_4dof_apply_back_avoid_effects(td);
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_GRAB,
+                                          ACT4_BACK_RELEASE_HOLD_MS);
+            } else {
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT,
+                                          ACT4_MOVE_TIMEOUT_MS);
+            }
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_PLACE:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.target, &jd->right.target);
+        if (action_4dof_joint_stage_reached(jd, &jd->left.target, &jd->right.target)) {
+            if (s_ctx.timeout_ms != ACT4_PLACE_PRE_RELEASE_BACK_MS) {
+                action_4dof_open_target_back_suction(td);
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE,
+                                          ACT4_PLACE_PRE_RELEASE_BACK_MS);
+            } else if (action_4dof_is_timed_out()) {
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE, 0U);
+            }
+        } else if (action_4dof_is_timed_out()) {
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT,
+                                      ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.target, &jd->right.target);
+        if (s_ctx.timeout_ms == 0U) {
+            action_4dof_control_arm_suction(td, SUCTION_OFF);
+            action_4dof_apply_back_avoid_effects(td);
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_SUCTION_CONTROL_PLACE,
+                                      ACT4_PLACE_POST_RELEASE_BACK_MS);
+        } else if (action_4dof_is_timed_out()) {
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_RETREAT,
+                                      ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_RETREAT:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.retreat, &jd->right.retreat);
+        if (action_4dof_joint_stage_reached(jd, &jd->left.retreat, &jd->right.retreat) ||
+            action_4dof_is_timed_out()) {
+            action_4dof_set_substate(ACTION_4DOF_SUBSTATE_COMPLETE,
+                                      ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_COMPLETE:
+        action_4dof_set_joint_stage_targets(jd, &jd->left.complete, &jd->right.complete);
+        if (action_4dof_joint_stage_reached(jd, &jd->left.complete, &jd->right.complete) ||
+            action_4dof_is_timed_out()) {
+            action_4dof_finish_current_action(td);
+        }
+        break;
+
+    case ACTION_4DOF_SUBSTATE_IDLE:
+    case ACTION_4DOF_SUBSTATE_WAYPOINT:
+    default:
+        break;
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════
  * 动作处理核心 — 状态机推进
  *
@@ -851,6 +1118,10 @@ static void action_4dof_handle(void)
     }
 
     const Action4DOF_TargetData *td = &s_action_targets[s_ctx.action];
+    if (td->exec_mode == ACTION_EXEC_MODE_JOINT) {
+        action_4dof_handle_joint(td, &s_back_joint_targets[s_ctx.action]);
+        return;
+    }
 
     /* 根据子状态执行对应阶段 */
     switch (s_ctx.substate) {
@@ -1318,4 +1589,3 @@ void action_4dof_loop(void)
     /* 推进状态机 */
     action_4dof_handle();
 }
-

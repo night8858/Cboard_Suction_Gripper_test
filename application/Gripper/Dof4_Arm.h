@@ -169,6 +169,14 @@ typedef enum {
 } Dof4_ArmState;
 
 /**
+ * @brief 单臂目标控制模式。
+ */
+typedef enum {
+    DOF4_CONTROL_MODE_POSE = 0,   /**< 末端位姿目标，经轨迹规划和 IK 控制。 */
+    DOF4_CONTROL_MODE_JOINT       /**< 关节角目标，绕过末端 IK 直接下发。 */
+} Dof4_ControlMode;
+
+/**
  * @brief 末端 TCP 位姿。
  */
 typedef struct {
@@ -257,6 +265,7 @@ typedef struct {
     Dof4_Pose current_pose;                /**< 当前 FK 位姿。 */
     Dof4_Pose target_pose;                 /**< 用户目标位姿。 */
     bool target_valid;                     /**< 用户目标是否有效。 */
+    Dof4_ControlMode control_mode;         /**< 当前目标控制模式。 */
 
     float joint_world[DOF4_LINK_SEGMENT_COUNT + 1U][3]; /**< J1、J2、J3、J4、TCP 世界坐标。 */
     uint8_t comm_fail_count;               /**< 连续通信失败次数。 */
@@ -405,6 +414,15 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
                                 float target_y,
                                 float target_z,
                                 float target_pitch);
+
+/**
+ * @brief 设置单臂关节目标并切换到关节控制模式。
+ * @param arm 机械臂实例。
+ * @param joints 目标关节角，单位 rad。
+ * @retval Dof4_Status 状态码。
+ */
+Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
+                                      const Dof4_JointState *joints);
 
 /**
  * @brief 读取单臂舵机反馈。

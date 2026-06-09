@@ -914,6 +914,7 @@ Dof4_Status Dof4_arm_config_init(Dof4_Arm *arm, const Dof4_ArmConfig *config)
     (void)Dof4_arm_forward_kinematics(arm, &arm->joint_actual, &arm->current_pose);
     arm->target_pose = arm->current_pose;
     arm->target_valid = false;
+    arm->control_mode = DOF4_CONTROL_MODE_POSE;
     arm->state = DOF4_ARM_STATE_IDLE;
     return DOF4_STATUS_OK;
 }
@@ -1353,6 +1354,30 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
 
     arm->target_pose = pose;
     arm->target_valid = true;
+    arm->control_mode = DOF4_CONTROL_MODE_POSE;
+    arm->last_status = DOF4_STATUS_OK;
+    return DOF4_STATUS_OK;
+}
+
+/**
+ * @brief 设置单臂关节目标并切换到关节控制模式。
+ * @param arm 机械臂实例。
+ * @param joints 目标关节角，单位 rad。
+ * @retval Dof4_Status 状态码。
+ */
+Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
+                                      const Dof4_JointState *joints)
+{
+    Dof4_Status st = latch_joint_target(arm, joints);
+    if (st != DOF4_STATUS_OK) {
+        if (arm != NULL) {
+            arm->last_status = st;
+        }
+        return st;
+    }
+
+    arm->target_valid = false;
+    arm->control_mode = DOF4_CONTROL_MODE_JOINT;
     arm->last_status = DOF4_STATUS_OK;
     return DOF4_STATUS_OK;
 }
@@ -1543,17 +1568,30 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
      * - 若轨迹未完成     → 沿已有轨迹按时间插值
      * - 若从未设目标     → 返回 current_pose（停在原地）
      */
+    const bool left_pose_mode = (arm_left->control_mode != DOF4_CONTROL_MODE_JOINT);
+    const bool right_pose_mode = (arm_right->control_mode != DOF4_CONTROL_MODE_JOINT);
+
     Dof4_Pose sample_left;
     Dof4_Pose sample_right;
-    st = sample_arm_target(arm_left, &g_planner_left, now_ms, &sample_left);
-    if (st != DOF4_STATUS_OK) {
-        arm_left->last_status = st;
-        return st;
+    if (left_pose_mode) {
+        st = sample_arm_target(arm_left, &g_planner_left, now_ms, &sample_left);
+        if (st != DOF4_STATUS_OK) {
+            arm_left->last_status = st;
+            return st;
+        }
+    } else {
+        (void)Dof4_cartesian_planner_init(&g_planner_left);
+        arm_left->target_valid = false;
     }
-    st = sample_arm_target(arm_right, &g_planner_right, now_ms, &sample_right);
-    if (st != DOF4_STATUS_OK) {
-        arm_right->last_status = st;
-        return st;
+    if (right_pose_mode) {
+        st = sample_arm_target(arm_right, &g_planner_right, now_ms, &sample_right);
+        if (st != DOF4_STATUS_OK) {
+            arm_right->last_status = st;
+            return st;
+        }
+    } else {
+        (void)Dof4_cartesian_planner_init(&g_planner_right);
+        arm_right->target_valid = false;
     }
 
     /* ─── ③ 逆运动学 ───────────────────────────────────────────────
@@ -1565,23 +1603,27 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
      */
     Dof4_JointState joints_left;
     Dof4_JointState joints_right;
-    st = Dof4_arm_inverse_kinematics(arm_left, &sample_left, -1.0f, &joints_left);
-    if (st != DOF4_STATUS_OK) {
-        /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
-        arm_left->last_status = st;
-        arm_left->target_valid = false;
-        arm_left->state = DOF4_ARM_STATE_IDLE;
-        arm_right->last_status = DOF4_STATUS_OK;
-        return DOF4_STATUS_OK;
+    if (left_pose_mode) {
+        st = Dof4_arm_inverse_kinematics(arm_left, &sample_left, -1.0f, &joints_left);
+        if (st != DOF4_STATUS_OK) {
+            /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
+            arm_left->last_status = st;
+            arm_left->target_valid = false;
+            arm_left->state = DOF4_ARM_STATE_IDLE;
+            arm_right->last_status = DOF4_STATUS_OK;
+            return DOF4_STATUS_OK;
+        }
     }
-    st = Dof4_arm_inverse_kinematics(arm_right, &sample_right, -1.0f, &joints_right);
-    if (st != DOF4_STATUS_OK) {
-        /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
-        arm_right->last_status = st;
-        arm_right->target_valid = false;
-        arm_right->state = DOF4_ARM_STATE_IDLE;
-        arm_left->last_status  = DOF4_STATUS_OK;
-        return DOF4_STATUS_OK;
+    if (right_pose_mode) {
+        st = Dof4_arm_inverse_kinematics(arm_right, &sample_right, -1.0f, &joints_right);
+        if (st != DOF4_STATUS_OK) {
+            /* IK 失败 → 软着陆：不移动臂，迫使下帧从当前位姿重新规划轨迹 */
+            arm_right->last_status = st;
+            arm_right->target_valid = false;
+            arm_right->state = DOF4_ARM_STATE_IDLE;
+            arm_left->last_status  = DOF4_STATUS_OK;
+            return DOF4_STATUS_OK;
+        }
     }
 
     /* ─── ④ 碰撞预检测 + 规避状态机 ───────────────────────────────
@@ -1672,15 +1714,19 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
     // }
 
     /* ─── ⑤ 锁存关节目标 ─────────────────────────────────────────── */
-    st = latch_joint_target(arm_left, &joints_left);
-    if (st != DOF4_STATUS_OK) {
-        arm_left->last_status = st;
-        return st;
+    if (left_pose_mode) {
+        st = latch_joint_target(arm_left, &joints_left);
+        if (st != DOF4_STATUS_OK) {
+            arm_left->last_status = st;
+            return st;
+        }
     }
-    st = latch_joint_target(arm_right, &joints_right);
-    if (st != DOF4_STATUS_OK) {
-        arm_right->last_status = st;
-        return st;
+    if (right_pose_mode) {
+        st = latch_joint_target(arm_right, &joints_right);
+        if (st != DOF4_STATUS_OK) {
+            arm_right->last_status = st;
+            return st;
+        }
     }
 
     /* ─── ⑥ 舵机下发 ─────────────────────────────────────────────── */
@@ -1690,8 +1736,12 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
     }
 
     /* ─── ⑦ 状态更新 ─────────────────────────────────────────────── */
-    arm_left->state   = g_planner_left.running  ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
-    arm_right->state  = g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE;
+    arm_left->state   = left_pose_mode
+                        ? (g_planner_left.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE)
+                        : DOF4_ARM_STATE_MOVING;
+    arm_right->state  = right_pose_mode
+                        ? (g_planner_right.running ? DOF4_ARM_STATE_MOVING : DOF4_ARM_STATE_IDLE)
+                        : DOF4_ARM_STATE_MOVING;
     arm_left->last_status  = DOF4_STATUS_OK;
     arm_right->last_status = DOF4_STATUS_OK;
     return DOF4_STATUS_OK;
