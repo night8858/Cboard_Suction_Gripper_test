@@ -42,6 +42,7 @@
 #include "action_scheduler_4dof.h"
 #include "Dof4_Arm.h"
 #include "pneumatic_control.h"
+#include "Trajectory_Planning.h"
 #include "stm32f4xx_hal.h"
 
 #include <string.h>
@@ -63,7 +64,7 @@
 #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
 #define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
 //雷达给的是0.3的x
-#define BLOCK_X_DESTANCE_FROM_BASE 0.4f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+#define BLOCK_X_DESTANCE_FROM_BASE 0.425f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.425f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
@@ -107,19 +108,35 @@ BlockPlacementState g_block_state;
 
 /** @brief 后背放置：到达目标点后、关闭手臂电磁阀前的预释放等待时间
  *  此阶段背部吸盘已打开，等待其牢固吸附物块后再松开手臂吸盘 */
-#define ACT4_PLACE_PRE_RELEASE_BACK_MS  1200U
+#define ACT4_PLACE_PRE_RELEASE_BACK_MS  2000U
 
 /** @brief 后背放置：关闭手臂电磁阀后、撤退前的释放后等待时间
  *  确保物块已完全交接给背部吸盘，机械臂移动不会带偏/刮碰物块 */
-#define ACT4_PLACE_POST_RELEASE_BACK_MS 1200U
+#define ACT4_PLACE_POST_RELEASE_BACK_MS 2000U
 
 /** @brief 外部放置：关闭手臂电磁阀后、撤退前的释放后等待时间
  *  物块靠重力落向堆叠点，需等待其稳定后再移动机械臂 */
-#define ACT4_PLACE_POST_RELEASE_EXT_MS  1200U
+#define ACT4_PLACE_POST_RELEASE_EXT_MS  2000U
 
 #define ACT4_RELEASE_TIMEOUT_MS        1000U   /**< 释放等待最大超时（保留备用） */
 #define ACT4_HOLD_MS                    100U   /**< 完成后保持时间（回 IDLE 前） */
 #define ACT4_WAYPOINT_HOLD_MS           100U   /**< 途经点停留时间（DANCE 用） */
+
+/* ── 多段轨迹平滑参数 ── */
+
+/** @brief 运动链中间途经点的默认前瞻切换距离，单位 m。
+ *  当机械臂末端距离当前目标小于此距离时，提前下发下一段目标，
+ *  使 5 次多项式规划器在速度尚高时自然衔接，消除走-停-走顿挫。 */
+#define ACT4_DEFAULT_BLEND_DIST_M        0.08f
+
+/** @brief 运动链中间途经点的默认通过速度因子。
+ *  0.0 = 零速停止（精确到位），0.5~0.7 = 以最高速度的 50%~70% 通过。
+ *  仅对末端位姿模式（POSE）生效；关节模式（JOINT）仅使用 blend_distance。 */
+#define ACT4_DEFAULT_VIA_SPEED_FACTOR    0.6f
+
+/** @brief 运动链终点（需精确停止执行吸取/释放）的前瞻切换距离，单位 m。
+ *  比中间途经点更紧，确保吸取/释放位置精度。 */
+#define ACT4_CHAIN_FINAL_BLEND_DIST_M    0.03f
 
 /** @brief 到位判定：位置容差，单位 m */
 #define ACT4_REACH_POS_TOL_M     0.03f
@@ -127,6 +144,9 @@ BlockPlacementState g_block_state;
 #define ACT4_REACH_PITCH_TOL_RAD 0.05f
 /** @brief 关节轨迹到位判定容差，单位 rad。TODO: 实测后调整。 */
 #define ACT4_JOINT_REACH_TOL_RAD 0.05f
+
+/** @brief 关节轨迹 blend 容差（运动链中间途经点用），单位 rad。比 reach 容差大以实现提前切换。 */
+#define ACT4_JOINT_BLEND_TOL_RAD 0.15f
 
 /** @brief 动作表总数（枚举最后一个有效动作 + 1）。 */
 #define ACTION_4DOF_COUNT ((uint32_t)ACTION_DANCE + 1U)
@@ -226,6 +246,10 @@ typedef struct {
     Dof4_Pose left_back_avoid;
     Action4DOF_BackAvoidEffect right_back_effect;
     Dof4_Pose right_back_avoid;
+
+    /* ── 多段轨迹平滑参数（可逐动作覆盖默认值）── */
+    float blend_dist_m;           /**< 运动链中间途经点的前瞻切换距离，0=使用到位判定 */
+    float via_speed_factor;       /**< 运动链中间途经点的通过速度因子，0=零速停止 */
 } Action4DOF_TargetData;
 
 /* ════════════════════════════════════════════════════════════════
@@ -315,7 +339,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left      = ACT4_POSE_ARM_ZERO,   /* 左臂不使用 */
         .right = {
             .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
-            .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
+            .target   = {BLOCK_X_DESTANCE_FROM_BASE, -BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT , STAY_DOWN}, /* 前侧抓取点 */
             .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, -(BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f), BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
@@ -420,7 +444,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         //ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F2
         .left = {
             .approach = {0.212f,  0.35f, 0.30f, -0.30f},   /* TODO: 左1放置点F2预就位 */
-            .target   = {0.425f,  0.40f, BLOCK_SECOND_LAYER_HEIGHT, STAY_DOWN},   /* TODO: 左1放置点F2（比F1高~0.04m） */
+            .target   = {0.425f,  0.40f, BLOCK_SECOND_LAYER_HEIGHT+ 0.02f, STAY_DOWN},   /* TODO: 左1放置点F2（比F1高~0.04m） */
             .retreat  = {0.212f,  0.308f, 0.15f, -0.30f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -439,7 +463,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left      = ACT4_POSE_ARM_ZERO,
         .right = {
             .approach = {0.35f, -0.2f, 0.30f, -0.30f},   /* TODO */
-            .target   = {0.425f, -0.40f, BLOCK_FIRST_LAYER_HEIGHT, STAY_DOWN},
+            .target   = {0.425f, -0.40f, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN},
             .retreat  = {0.25f, -0.16f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -457,7 +481,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left      = ACT4_POSE_ARM_ZERO,
         .right = {
             .approach = {0.35f, -0.35f, 0.34f, -1.00f},   /* TODO */
-            .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT, STAY_DOWN},   /* TODO: 比F1高~0.04m */
+            .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT+ 0.02f, STAY_DOWN},   /* TODO: 比F1高~0.04m */
             .retreat  = {0.25f, -0.30f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -521,28 +545,70 @@ static const Action4DOF_TargetData s_action_targets[] = {
 /* 后背动作关节轨迹表。所有角度均为 TODO 占位值，调试时逐点替换。 */
 static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] = {
     [ACTION_BLOCK_PLACE_BACK] = {
-        .left = ACT4_JOINT_ARM_TODO,
-        .right = ACT4_JOINT_ARM_TODO,
+        .left = {
+            .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
+            .waypoint_1 = {1.57f, 1.5f, -1.7f, -1.463f},
+            .waypoint_2 = {3.1f, 1.5f, -1.19f, -1.68f},
+            .target =     {3.04f, 1.57f, -1.88f, -1.247f},
+            .retreat =    {3.1f, 1.5f, -1.19f, -1.68f},
+            .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
+        },
+        .right = {
+            .approach =   {0.042f, 1.5f, -1.7f, -1.463f},
+            .waypoint_1 = {-1.57f, 1.5f, -1.7f, -1.463f},
+            .waypoint_2 = {-3.1f, 1.5f, -1.19f, -1.68f},
+            .target =     {-3.04f, 1.57f, -1.88f, -1.247f},
+            .retreat =    {-3.1f, 1.5f, -1.19f, -1.68f},
+            .complete =   {0.042f, 1.5f, -1.7f, -1.463f},
+        },
         .use_left = true,
         .use_right = true,
     },
     [ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK] = {
-        .left = ACT4_JOINT_ARM_TODO,
+        .left = {
+            .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
+            .waypoint_1 = {1.57f, 1.5f, -1.7f, -1.463f},
+            .waypoint_2 = {3.1f, 1.5f, -1.19f, -1.68f},
+            .target =     {3.04f, 1.57f, -1.88f, -1.247f},//在此之后还需要一个中间点，不然容易打到
+            .retreat =    {3.1f, 1.5f, -1.19f, -1.68f},
+            .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
+        },
         .use_left = true,
         .use_right = false,
     },
     [ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK] = {
-        .right = ACT4_JOINT_ARM_TODO,
+        .right = {
+                .approach =   {0.042f,1.5f,-1.7f,-1.463f}, 
+        .waypoint_1 = {-1.57f,1.5f,-1.7f,-1.463f}, 
+        .waypoint_2 = {-3.1f,1.5f,-1.0f,-1.68f}, 
+        .target =     {-3.04f,1.57f,-1.88f,-1.247f}, 
+        .retreat =    {-3.1f,1.5f,-1.80f,-1.68f}, 
+        .complete =   {0.042f,1.5f,-1.7f,-1.463f}, 
+    },
         .use_left = false,
         .use_right = true,
     },
     [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM] = {
-        .left = ACT4_JOINT_ARM_TODO,
+        .left = {
+            .approach =   {3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_1 = {3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_2 = {1.57f, 1.5f, -1.7f, -1.463f},
+            .target =     {3.04f, 1.57f, -1.88f, -1.247f},
+            .retreat =    {-0.042f, 1.5f, -1.7f, -1.463f},
+            .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
+        },
         .use_left = true,
         .use_right = false,
     },
     [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM] = {
-        .right = ACT4_JOINT_ARM_TODO,
+        .right = {
+            .approach =   {-3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_1 = {-3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_2 = {-1.57f, 1.5f, -1.7f, -1.463f},
+            .target =     {-3.04f, 1.57f, -1.88f, -1.247f},
+            .retreat =    {0.042f, 1.5f, -1.7f, -1.463f},
+            .complete =   {0.042f, 1.5f, -1.7f, -1.463f},
+        },
         .use_left = false,
         .use_right = true,
     },
@@ -745,6 +811,14 @@ static void action_4dof_close_source_back_suction(const Action4DOF_TargetData *t
     }
 }
 
+static void action_4dof_set_arm_target_smooth(Dof4_Arm *arm,
+                                              const Action4DOF_TargetData *td,
+                                              action_4dof_substate_e substate,
+                                              bool is_place,
+                                              char arm_side,
+                                              const Dof4_Pose *work_pose,
+                                              const char *label);
+
 /**
  * @brief 给当前阶段同时下发工作臂目标和非工作臂避让目标。
  *
@@ -753,6 +827,8 @@ static void action_4dof_close_source_back_suction(const Action4DOF_TargetData *t
  * - 非工作臂根据当前动作自动选择抓取避让位或放置避让位；
  * - 双臂动作中两臂都是工作臂，不会额外套用避让位；
  * - DANCE 使用单独 waypoint 流程，不调用本函数。
+ *
+ * 内部根据运动链状态自动选择 via-point（平滑通过）或 stop-point（精确停止）模式。
  *
  * @param td 当前动作目标数据，包含工作臂选择标志。
  * @param action 当前动作枚举，用于选择避让位类型。
@@ -771,15 +847,200 @@ static void action_4dof_set_stage_targets(const Action4DOF_TargetData *td,
     if (td == NULL) {
         return;
     }
-    (void)action;
+
+    const bool is_place = action_4dof_is_place_action(action);
 
     if (td->use_left) {
-        action_4dof_set_arm_target(&g_dof4_arm_left, left_work_pose, left_label);
+        action_4dof_set_arm_target_smooth(&g_dof4_arm_left, td, s_ctx.substate,
+                                          is_place, 'L', left_work_pose, left_label);
     }
 
     if (td->use_right) {
-        action_4dof_set_arm_target(&g_dof4_arm_right, right_work_pose, right_label);
+        action_4dof_set_arm_target_smooth(&g_dof4_arm_right, td, s_ctx.substate,
+                                          is_place, 'R', right_work_pose, right_label);
     }
+}
+
+/**
+ * @brief 判断当前子状态是否为运动链的终点（需精确停止执行吸取/释放）。
+ *
+ * 运动链终点定义为：该子状态之后紧跟吸盘操作子状态或动作完成。
+ * 对于终点，使用零终端速度 + 原有到位判定；对于中间途经点，使用
+ * 非零通过速度 + 前瞻切换距离实现平滑衔接。
+ *
+ * @param substate 当前子状态。
+ * @param is_place 是否为放置类动作（影响 INTERMEDIATE 后的目标判断）。
+ * @retval true  当前子状态是运动链终点，应精确停止。
+ * @retval false 当前子状态是运动链中间途经点，可平滑通过。
+ */
+static bool action_4dof_is_motion_chain_final(action_4dof_substate_e substate,
+                                              bool is_place)
+{
+    switch (substate) {
+    case ACTION_4DOF_SUBSTATE_GRAB:    /* GRAB 后进入 SUCTION_CONTROL_GRAB */
+    case ACTION_4DOF_SUBSTATE_PLACE:   /* PLACE 后进入 SUCTION_CONTROL_PLACE */
+    case ACTION_4DOF_SUBSTATE_COMPLETE:/* COMPLETE 后动作结束回到 IDLE */
+        return true;
+
+    case ACTION_4DOF_SUBSTATE_APPROACH:
+    case ACTION_4DOF_SUBSTATE_PLACE_APPROACH:
+    case ACTION_4DOF_SUBSTATE_RETREAT:
+        return false;  /* 这些子状态后紧跟另一个运动子状态 */
+
+    case ACTION_4DOF_SUBSTATE_INTERMEDIATE:
+        /* INTERMEDIATE 后进入 GRAB（抓取）或 PLACE（放置），它们本身就是终点 */
+        return false;
+
+    default:
+        return true;   /* 未知子状态保守按终点处理 */
+    }
+}
+
+/**
+ * @brief 获取运动链中当前子状态的“下一站”目标位姿，用于计算通过速度。
+ *
+ * 通过速度方向 = 下一站 - 当前站 的单位方向向量。
+ *
+ * @param td 当前动作目标数据。
+ * @param substate 当前子状态。
+ * @param is_place 是否为放置类动作。
+ * @param arm_side 'L'=左臂, 'R'=右臂。
+ * @param next_pose 输出下一站目标位姿。
+ * @retval true  成功获取下一站目标。
+ * @retval false 无法获取（如当前已是终点或数据无效）。
+ */
+static bool action_4dof_get_next_target_pose(const Action4DOF_TargetData *td,
+                                             action_4dof_substate_e substate,
+                                             bool is_place,
+                                             char arm_side,
+                                             Dof4_Pose *next_pose)
+{
+    if (td == NULL || next_pose == NULL) {
+        return false;
+    }
+
+    const Action4DOF_ArmTargets *arm = (arm_side == 'L') ? &td->left : &td->right;
+
+    switch (substate) {
+    case ACTION_4DOF_SUBSTATE_APPROACH:
+    case ACTION_4DOF_SUBSTATE_PLACE_APPROACH:
+        /* 下一站 = waypoint_0（如果有）或 target */
+        if (td->use_waypoint) {
+            *next_pose = arm->waypoint_0;
+        } else {
+            *next_pose = arm->target;
+        }
+        return true;
+
+    case ACTION_4DOF_SUBSTATE_INTERMEDIATE:
+        /* 下一站 = target（GRAB 或 PLACE） */
+        *next_pose = arm->target;
+        return true;
+
+    case ACTION_4DOF_SUBSTATE_RETREAT:
+        /* 下一站 = complete（但 complete 是动态 idle，用 retreat 本身方向延续） */
+        *next_pose = arm->complete;
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+/**
+ * @brief 设置单臂目标位姿，根据是否为运动链终点选择 via-point 或 stop-point 模式。
+ *
+ * @param arm 机械臂实例。
+ * @param td 当前动作目标数据。
+ * @param substate 当前子状态。
+ * @param is_place 是否为放置类动作。
+ * @param arm_side 'L'=左臂, 'R'=右臂。
+ * @param work_pose 本阶段目标位姿。
+ * @param label 调试标签。
+ */
+static void action_4dof_set_arm_target_smooth(Dof4_Arm *arm,
+                                              const Action4DOF_TargetData *td,
+                                              action_4dof_substate_e substate,
+                                              bool is_place,
+                                              char arm_side,
+                                              const Dof4_Pose *work_pose,
+                                              const char *label)
+{
+    if (arm == NULL || td == NULL || work_pose == NULL) {
+        return;
+    }
+    (void)label;
+
+    const bool is_final = action_4dof_is_motion_chain_final(substate, is_place);
+    const float speed_factor = (td->via_speed_factor > 0.0f)
+                               ? td->via_speed_factor
+                               : ACT4_DEFAULT_VIA_SPEED_FACTOR;
+
+    if (!is_final && speed_factor > 0.0f) {
+        /* 运动链中间途经点：使用非零终端速度平滑通过 */
+        Dof4_Pose next_pose;
+        float via_vel[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        if (action_4dof_get_next_target_pose(td, substate, is_place, arm_side, &next_pose)) {
+            Dof4_compute_via_velocity(work_pose, &next_pose, speed_factor,
+                                      arm->cfg.cart_vel_mps,
+                                      arm->cfg.pitch_vel_rps,
+                                      via_vel);
+        }
+
+        (void)Dof4_arm_set_target_via(arm, work_pose->x, work_pose->y,
+                                      work_pose->z, work_pose->pitch, via_vel);
+    } else {
+        /* 运动链终点 或 零速因子：精确停止 */
+        (void)Dof4_arm_set_target(arm, work_pose->x, work_pose->y,
+                                  work_pose->z, work_pose->pitch);
+    }
+}
+
+/**
+ * @brief 获取当前子状态的前瞻切换距离。
+ *
+ * 运动链中间途经点使用较大的 blend_distance 实现提前切换；
+ * 运动链终点使用较紧的 chain_final 距离确保操作精度。
+ *
+ * @param td 当前动作目标数据。
+ * @param substate 当前子状态。
+ * @param is_place 是否为放置类动作。
+ * @retval float 前瞻切换距离，单位 m。
+ */
+static float action_4dof_get_blend_dist(const Action4DOF_TargetData *td,
+                                        action_4dof_substate_e substate,
+                                        bool is_place)
+{
+    const bool is_final = action_4dof_is_motion_chain_final(substate, is_place);
+
+    if (is_final) {
+        return ACT4_CHAIN_FINAL_BLEND_DIST_M;
+    }
+
+    return (td->blend_dist_m > 0.0f) ? td->blend_dist_m : ACT4_DEFAULT_BLEND_DIST_M;
+}
+
+/**
+ * @brief 检查单臂末端是否在目标位姿的 blend 距离内。
+ * @param arm 机械臂实例。
+ * @param target 目标位姿。
+ * @param blend_dist_m blend 距离，单位 m。
+ * @retval true  当前末端距目标 <= blend_dist_m。
+ * @retval false 未进入 blend 范围或参数无效。
+ */
+static bool action_4dof_arm_within_blend(const Dof4_Arm *arm,
+                                         const Dof4_Pose *target,
+                                         float blend_dist_m)
+{
+    if (arm == NULL || target == NULL) {
+        return true;  /* 无效参数视为已到位，避免卡死 */
+    }
+    const float dx = arm->current_pose.x - target->x;
+    const float dy = arm->current_pose.y - target->y;
+    const float dz = arm->current_pose.z - target->z;
+    const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    return (dist <= blend_dist_m);
 }
 
 /**
@@ -903,6 +1164,35 @@ static bool action_4dof_joint_reached(const Dof4_Arm *arm, const JointWaypoint *
     return true;
 }
 
+/**
+ * @brief 检查单臂关节角是否在目标关节的 blend 容差内（用于运动链中间途经点提前切换）。
+ * @param arm 机械臂实例。
+ * @param waypoint 目标关节途经点。
+ * @retval true  所有关节角距目标 <= ACT4_JOINT_BLEND_TOL_RAD。
+ * @retval false 未进入 blend 范围。
+ */
+static bool action_4dof_joint_within_blend(const Dof4_Arm *arm,
+                                           const JointWaypoint *waypoint)
+{
+    if (arm == NULL || waypoint == NULL) {
+        return true;
+    }
+
+    const float target[DOF4_JOINT_COUNT] = {
+        waypoint->j1,
+        waypoint->j2,
+        waypoint->j3,
+        waypoint->j4,
+    };
+    for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
+        const float err = fabsf(Dof4_normalize_angle(arm->joint_actual.q[i] - target[i]));
+        if (err > ACT4_JOINT_BLEND_TOL_RAD) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool action_4dof_joint_stage_reached(const Action4DOF_JointTargetData *jd,
                                             const JointWaypoint *left_waypoint,
                                             const JointWaypoint *right_waypoint)
@@ -915,6 +1205,28 @@ static bool action_4dof_joint_stage_reached(const Action4DOF_JointTargetData *jd
                    action_4dof_joint_reached(&g_dof4_arm_left, left_waypoint);
     bool right_ok = !jd->use_right ||
                     action_4dof_joint_reached(&g_dof4_arm_right, right_waypoint);
+    return left_ok && right_ok;
+}
+
+/**
+ * @brief 检查双臂关节角是否在目标关节的 blend 容差内。
+ * @param jd 关节目标数据。
+ * @param left_waypoint 左臂目标。
+ * @param right_waypoint 右臂目标。
+ * @retval true  双臂均在 blend 容差内。
+ */
+static bool action_4dof_joint_stage_within_blend(const Action4DOF_JointTargetData *jd,
+                                                  const JointWaypoint *left_waypoint,
+                                                  const JointWaypoint *right_waypoint)
+{
+    if (jd == NULL) {
+        return true;
+    }
+
+    bool left_ok = !jd->use_left ||
+                   action_4dof_joint_within_blend(&g_dof4_arm_left, left_waypoint);
+    bool right_ok = !jd->use_right ||
+                    action_4dof_joint_within_blend(&g_dof4_arm_right, right_waypoint);
     return left_ok && right_ok;
 }
 
@@ -942,9 +1254,9 @@ static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
         action_4dof_set_joint_stage_targets(jd,
                                             &jd->left.approach,
                                             &jd->right.approach);
-        if (action_4dof_joint_stage_reached(jd,
-                                            &jd->left.approach,
-                                            &jd->right.approach) ||
+        if (action_4dof_joint_stage_within_blend(jd,
+                                                 &jd->left.approach,
+                                                 &jd->right.approach) ||
             action_4dof_is_timed_out()) {
             s_ctx.waypoint_idx = 0U;
             action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE,
@@ -961,7 +1273,7 @@ static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
                                         ? &jd->right.waypoint_1
                                         : &jd->right.waypoint_2;
         action_4dof_set_joint_stage_targets(jd, left_wp, right_wp);
-        if (action_4dof_joint_stage_reached(jd, left_wp, right_wp) ||
+        if (action_4dof_joint_stage_within_blend(jd, left_wp, right_wp) ||
             action_4dof_is_timed_out()) {
             if (s_ctx.waypoint_idx == 0U) {
                 s_ctx.waypoint_idx = 1U;
@@ -1036,7 +1348,7 @@ static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
 
     case ACTION_4DOF_SUBSTATE_RETREAT:
         action_4dof_set_joint_stage_targets(jd, &jd->left.retreat, &jd->right.retreat);
-        if (action_4dof_joint_stage_reached(jd, &jd->left.retreat, &jd->right.retreat) ||
+        if (action_4dof_joint_stage_within_blend(jd, &jd->left.retreat, &jd->right.retreat) ||
             action_4dof_is_timed_out()) {
             action_4dof_set_substate(ACTION_4DOF_SUBSTATE_COMPLETE,
                                       ACT4_MOVE_TIMEOUT_MS);
@@ -1044,10 +1356,22 @@ static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
         break;
 
     case ACTION_4DOF_SUBSTATE_COMPLETE:
-        action_4dof_set_joint_stage_targets(jd, &jd->left.complete, &jd->right.complete);
-        if (action_4dof_joint_stage_reached(jd, &jd->left.complete, &jd->right.complete) ||
-            action_4dof_is_timed_out()) {
-            action_4dof_finish_current_action(td);
+        /* 两阶段：先达关节 complete 途经点，再切 POSE 模式回自适应 idle */
+        if (s_ctx.timeout_ms == ACT4_MOVE_TIMEOUT_MS) {
+            /* 阶段①：移动到关节 complete 途经点 */
+            action_4dof_set_joint_stage_targets(jd, &jd->left.complete, &jd->right.complete);
+            if (action_4dof_joint_stage_reached(jd, &jd->left.complete, &jd->right.complete) ||
+                action_4dof_is_timed_out()) {
+                /* 关节到位 → 切换到 POSE 模式，驱动机械臂回到自适应 idle 位姿 */
+                action_4dof_set_complete_targets(td);
+                action_4dof_set_substate(ACTION_4DOF_SUBSTATE_COMPLETE, ACT4_HOLD_MS);
+            }
+        } else {
+            /* 阶段②：保持在 POSE idle 目标，等待短暂稳定后结束 */
+            action_4dof_set_complete_targets(td);
+            if (action_4dof_is_timed_out()) {
+                action_4dof_finish_current_action(td);
+            }
         }
         break;
 
@@ -1085,7 +1409,7 @@ static void action_4dof_handle(void)
     /* ═══════════════════════════════════════════════════════════
      * 子状态: APPROACH — 移动到预就位点
      *
-     * 设定预就位目标，到位后（或超时容错）进入 GRAB。
+     * 运动链中间途经点：使用 blend_distance 提前切换，via_vel 平滑通过。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_APPROACH:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -1093,8 +1417,12 @@ static void action_4dof_handle(void)
                                       "L_ap", "R_ap");
 
         {
-            bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.approach);
-            bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.approach);
+            const float blend = action_4dof_get_blend_dist(td, s_ctx.substate,
+                                   action_4dof_is_place_action(s_ctx.action));
+            bool left_ok  = !td->use_left  ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_left,  &td->left.approach, blend);
+            bool right_ok = !td->use_right ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_right, &td->right.approach, blend);
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 if (td->use_waypoint) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE, ACT4_MOVE_TIMEOUT_MS);
@@ -1109,7 +1437,7 @@ static void action_4dof_handle(void)
     /* ═══════════════════════════════════════════════════════════
      * 子状态: INTERMEDIATE — 中间途经点（J1 绕行安全位）
      *
-     * 使用 waypoint_0 作为目标，到位后进入 GRAB（抓取流）或 PLACE（放置流）。
+     * 运动链中间途经点：使用 blend_distance 提前切换，via_vel 平滑通过。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_INTERMEDIATE:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -1117,8 +1445,12 @@ static void action_4dof_handle(void)
                                       "L_wp0", "R_wp0");
 
         {
-            bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.waypoint_0);
-            bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.waypoint_0);
+            const float blend = action_4dof_get_blend_dist(td, s_ctx.substate,
+                                   action_4dof_is_place_action(s_ctx.action));
+            bool left_ok  = !td->use_left  ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_left,  &td->left.waypoint_0, blend);
+            bool right_ok = !td->use_right ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_right, &td->right.waypoint_0, blend);
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 if (action_4dof_is_place_action(s_ctx.action)) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_PLACE, ACT4_MOVE_TIMEOUT_MS);
@@ -1178,6 +1510,8 @@ static void action_4dof_handle(void)
 
     /* ═══════════════════════════════════════════════════════════
      * 子状态: RETREAT — 携带物块撤退到安全高度
+     *
+     * 运动链中间途经点：使用 blend_distance 提前切换到 COMPLETE。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_RETREAT:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -1185,8 +1519,12 @@ static void action_4dof_handle(void)
                                       "L_ret", "R_ret");
 
         {
-            bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.retreat);
-            bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.retreat);
+            const float blend = action_4dof_get_blend_dist(td, s_ctx.substate,
+                                   action_4dof_is_place_action(s_ctx.action));
+            bool left_ok  = !td->use_left  ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_left,  &td->left.retreat, blend);
+            bool right_ok = !td->use_right ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_right, &td->right.retreat, blend);
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 action_4dof_set_substate(ACTION_4DOF_SUBSTATE_COMPLETE, ACT4_HOLD_MS);
             }
@@ -1195,6 +1533,8 @@ static void action_4dof_handle(void)
 
     /* ═══════════════════════════════════════════════════════════
      * 子状态: PLACE_APPROACH — 移动到放置预就位点
+     *
+     * 运动链中间途经点：使用 blend_distance 提前切换。
      * ═══════════════════════════════════════════════════════════ */
     case ACTION_4DOF_SUBSTATE_PLACE_APPROACH:
         action_4dof_set_stage_targets(td, s_ctx.action,
@@ -1202,8 +1542,12 @@ static void action_4dof_handle(void)
                                       "L_pap", "R_pap");
 
         {
-            bool left_ok  = !td->use_left  || action_4dof_arm_reached_pose(&g_dof4_arm_left,  &td->left.approach);
-            bool right_ok = !td->use_right || action_4dof_arm_reached_pose(&g_dof4_arm_right, &td->right.approach);
+            const float blend = action_4dof_get_blend_dist(td, s_ctx.substate,
+                                   action_4dof_is_place_action(s_ctx.action));
+            bool left_ok  = !td->use_left  ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_left,  &td->left.approach, blend);
+            bool right_ok = !td->use_right ||
+                            action_4dof_arm_within_blend(&g_dof4_arm_right, &td->right.approach, blend);
             if ((left_ok && right_ok) || action_4dof_is_timed_out()) {
                 if (td->use_waypoint) {
                     action_4dof_set_substate(ACTION_4DOF_SUBSTATE_INTERMEDIATE, ACT4_MOVE_TIMEOUT_MS);

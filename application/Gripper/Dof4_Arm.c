@@ -209,9 +209,9 @@
 /** @brief J3 上限，单位 rad。 */
 #define DOF4_J3_MAX 0.0f
 /** @brief J4 下限，单位 rad。 */
-#define DOF4_J4_MIN (-1.57f)
+#define DOF4_J4_MIN (-1.68f)
 /** @brief J4 上限，单位 rad。 */
-#define DOF4_J4_MAX 1.57f
+#define DOF4_J4_MAX 1.68f
 
 /** @brief 几何解算退化阈值。 */
 #define DOF4_GEOM_EPS 1.0e-6f
@@ -676,10 +676,12 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
                                                                arm->cfg.pitch_vel_rps);
         const float *v0 = (planner->running && planner->has_last_vel)
                           ? planner->last_sample_vel : NULL;
+        const float *vf = arm->target_is_via ? arm->target_via_vel : NULL;
         Dof4_Status st = Dof4_cartesian_planner_plan(planner,
                                                      &plan_start,
                                                      v0,
                                                      &arm->target_pose,
+                                                     vf,
                                                      now_ms,
                                                      duration);
         if (st != DOF4_STATUS_OK) {
@@ -833,8 +835,8 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
     cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
     cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
-    cfg.servo_speed = 3000U;
-    cfg.servo_acc = 80U;
+    cfg.servo_speed = 2400U;
+    cfg.servo_acc = 60U;
 
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
@@ -1354,7 +1356,64 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
 
     arm->target_pose = pose;
     arm->target_valid = true;
+    arm->target_is_via = false;
     arm->control_mode = DOF4_CONTROL_MODE_POSE;
+    arm->last_status = DOF4_STATUS_OK;
+    return DOF4_STATUS_OK;
+}
+
+/**
+ * @brief 设置单臂途经点目标位姿（非零终端速度，平滑通过不停止）。
+ * @param arm 机械臂实例。
+ * @param target_x 目标 X，单位 m。
+ * @param target_y 目标 Y，单位 m。
+ * @param target_z 目标 Z，单位 m。
+ * @param target_pitch 目标 pitch，单位 rad。
+ * @param via_vel 通过速度 (x,y,z,pitch)，NULL=退化为零速停止。
+ * @retval Dof4_Status 状态码。
+ */
+Dof4_Status Dof4_arm_set_target_via(Dof4_Arm *arm,
+                                    float target_x,
+                                    float target_y,
+                                    float target_z,
+                                    float target_pitch,
+                                    const float via_vel[4])
+{
+    if (arm == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+
+    /* workspace 检查（与 set_target 相同） */
+    Dof4_Pose arm_pose = {target_x - g_dof4_world_offset.x,
+                          target_y - g_dof4_world_offset.y,
+                          target_z - g_dof4_world_offset.z,
+                          target_pitch};
+    Dof4_Status st = check_workspace(arm, &arm_pose);
+    if (st != DOF4_STATUS_OK) {
+        arm->last_status = st;
+        return st;
+    }
+
+    arm->target_pose.x = target_x;
+    arm->target_pose.y = target_y;
+    arm->target_pose.z = target_z;
+    arm->target_pose.pitch = target_pitch;
+    arm->target_valid = true;
+    arm->target_is_via = true;
+    arm->control_mode = DOF4_CONTROL_MODE_POSE;
+
+    if (via_vel != NULL) {
+        arm->target_via_vel[0] = via_vel[0];
+        arm->target_via_vel[1] = via_vel[1];
+        arm->target_via_vel[2] = via_vel[2];
+        arm->target_via_vel[3] = via_vel[3];
+    } else {
+        arm->target_via_vel[0] = 0.0f;
+        arm->target_via_vel[1] = 0.0f;
+        arm->target_via_vel[2] = 0.0f;
+        arm->target_via_vel[3] = 0.0f;
+    }
+
     arm->last_status = DOF4_STATUS_OK;
     return DOF4_STATUS_OK;
 }

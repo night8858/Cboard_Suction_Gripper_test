@@ -195,7 +195,9 @@ Dof4_Status Dof4_cartesian_planner_init(Dof4_CartesianPlanner *planner)
  * @brief 规划 x/y/z/pitch 四通道五次轨迹。
  * @param planner 规划器。
  * @param start 起点位姿。
+ * @param v0 起点速度 (x,y,z,pitch)，NULL=零初速。
  * @param target 终点位姿。
+ * @param vf 终点速度 (x,y,z,pitch)，NULL=零末速（精确停止）。
  * @param start_time_ms 起始时间戳，单位 ms。
  * @param duration_s 轨迹时长，单位 s。
  * @retval Dof4_Status 状态码。
@@ -204,6 +206,7 @@ Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
                                         const Dof4_Pose *start,
                                         const float v0[4],
                                         const Dof4_Pose *target,
+                                        const float vf[4],
                                         uint32_t start_time_ms,
                                         float duration_s)
 {
@@ -224,24 +227,30 @@ Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
     const float vz = (v0 != NULL) ? v0[2] : 0.0f;
     const float vp = (v0 != NULL) ? v0[3] : 0.0f;
 
+    /* vf=NULL 时退化为零末速（精确停止） */
+    const float vfx = (vf != NULL) ? vf[0] : 0.0f;
+    const float vfy = (vf != NULL) ? vf[1] : 0.0f;
+    const float vfz = (vf != NULL) ? vf[2] : 0.0f;
+    const float vfp = (vf != NULL) ? vf[3] : 0.0f;
+
     Dof4_Status st;
     st = Traj_quintic_init(&planner->axis[0], start->x, vx, 0.0f,
-                           target->x, 0.0f, 0.0f, duration_s);
+                           target->x, vfx, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
     st = Traj_quintic_init(&planner->axis[1], start->y, vy, 0.0f,
-                           target->y, 0.0f, 0.0f, duration_s);
+                           target->y, vfy, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
     st = Traj_quintic_init(&planner->axis[2], start->z, vz, 0.0f,
-                           target->z, 0.0f, 0.0f, duration_s);
+                           target->z, vfz, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
     st = Traj_quintic_init(&planner->axis[3], start->pitch, vp, 0.0f,
-                           target->pitch, 0.0f, 0.0f, duration_s);
+                           target->pitch, vfp, 0.0f, duration_s);
     if (st != DOF4_STATUS_OK) {
         return st;
     }
@@ -359,4 +368,69 @@ bool Dof4_cartesian_target_changed(const Dof4_CartesianPlanner *planner,
         return true;
     }
     return false;
+}
+
+/**
+ * @brief 根据当前目标与下一目标的方向，计算途经点合理通过速度。
+ *
+ * 用于运动链中间途经点，使机械臂以非零速度平滑通过而不停止。
+ * 通过速度大小 = speed_factor * max_speed_mps（笛卡尔）和
+ * speed_factor * pitch_vel_rps（pitch），方向指向下一目标。
+ *
+ * 当 speed_factor <= 0 或 next_target 为空时，输出零速度（退化到精确停止）。
+ *
+ * @param current_target 当前途经点位姿。
+ * @param next_target 下一个目标位姿（运动链中的下一站）。
+ * @param speed_factor 通过速度因子（0=零速停止，建议 0.5~0.7）。
+ * @param max_speed_mps 笛卡尔速度上限，单位 m/s。
+ * @param pitch_vel_rps pitch 速度上限，单位 rad/s。
+ * @param via_vel 输出通过速度 (x,y,z,pitch)，单位 m/s 和 rad/s。
+ */
+void Dof4_compute_via_velocity(const Dof4_Pose *current_target,
+                               const Dof4_Pose *next_target,
+                               float speed_factor,
+                               float max_speed_mps,
+                               float pitch_vel_rps,
+                               float via_vel[4])
+{
+    if (via_vel == NULL) {
+        return;
+    }
+
+    /* 退化情况：零速停止 */
+    if (speed_factor <= 0.0f || current_target == NULL || next_target == NULL) {
+        via_vel[0] = 0.0f;
+        via_vel[1] = 0.0f;
+        via_vel[2] = 0.0f;
+        via_vel[3] = 0.0f;
+        return;
+    }
+
+    /* 笛卡尔方向：从当前目标指向下一目标 */
+    const float dx = next_target->x - current_target->x;
+    const float dy = next_target->y - current_target->y;
+    const float dz = next_target->z - current_target->z;
+    const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    const float speed_mag = speed_factor * max_speed_mps;
+
+    if (dist > 1.0e-6f) {
+        const float inv_dist = 1.0f / dist;
+        via_vel[0] = dx * inv_dist * speed_mag;
+        via_vel[1] = dy * inv_dist * speed_mag;
+        via_vel[2] = dz * inv_dist * speed_mag;
+    } else {
+        via_vel[0] = 0.0f;
+        via_vel[1] = 0.0f;
+        via_vel[2] = 0.0f;
+    }
+
+    /* pitch 方向：沿 pitch 变化方向，大小受限 */
+    const float dpitch = next_target->pitch - current_target->pitch;
+    const float pitch_speed = speed_factor * pitch_vel_rps;
+    if (fabsf(dpitch) > 1.0e-6f) {
+        via_vel[3] = (dpitch > 0.0f) ? pitch_speed : -pitch_speed;
+    } else {
+        via_vel[3] = 0.0f;
+    }
 }

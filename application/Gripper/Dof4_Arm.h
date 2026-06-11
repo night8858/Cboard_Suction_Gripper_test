@@ -266,6 +266,8 @@ typedef struct {
     Dof4_Pose target_pose;                 /**< 用户目标位姿。 */
     bool target_valid;                     /**< 用户目标是否有效。 */
     Dof4_ControlMode control_mode;         /**< 当前目标控制模式。 */
+    float target_via_vel[4];              /**< 途经点终端速度 (x,y,z,pitch)，仅 target_is_via 时有效。 */
+    bool target_is_via;                   /**< 当前目标是否为途经点（非零终端速度平滑通过）。 */
 
     float joint_world[DOF4_LINK_SEGMENT_COUNT + 1U][3]; /**< J1、J2、J3、J4、TCP 世界坐标。 */
     uint8_t comm_fail_count;               /**< 连续通信失败次数。 */
@@ -414,6 +416,28 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
                                 float target_y,
                                 float target_z,
                                 float target_pitch);
+
+/**
+ * @brief 设置单臂途经点目标位姿（非零终端速度，平滑通过不停止）。
+ *
+ * 与 Dof4_arm_set_target() 的区别在于途经点模式允许非零终端速度，
+ * 机械臂将以 via_vel 指定的速度通过该目标点后继续向下一目标运动。
+ * 适用于运动链中间途经点。终点请使用 Dof4_arm_set_target()（零速停止）。
+ *
+ * @param arm 机械臂实例。
+ * @param target_x 目标 X，单位 m。
+ * @param target_y 目标 Y，单位 m。
+ * @param target_z 目标 Z，单位 m。
+ * @param target_pitch 目标 pitch，单位 rad。
+ * @param via_vel 通过速度 (x,y,z,pitch)，NULL=退化为零速停止。
+ * @retval Dof4_Status 状态码。
+ */
+Dof4_Status Dof4_arm_set_target_via(Dof4_Arm *arm,
+                                    float target_x,
+                                    float target_y,
+                                    float target_z,
+                                    float target_pitch,
+                                    const float via_vel[4]);
 
 /**
  * @brief 设置单臂关节目标并切换到关节控制模式。

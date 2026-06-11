@@ -95,7 +95,9 @@ Dof4_Status Dof4_cartesian_planner_init(Dof4_CartesianPlanner *planner);
  * @brief 规划 x/y/z/pitch 笛卡尔五次轨迹。
  * @param planner 规划器。
  * @param start 起点位姿。
+ * @param v0 起点速度 (x,y,z,pitch)，NULL=零初速。
  * @param target 终点位姿。
+ * @param vf 终点速度 (x,y,z,pitch)，NULL=零末速（精确停止）。
  * @param start_time_ms 起始时间戳，单位 ms。
  * @param duration_s 轨迹时长，单位 s。
  * @retval Dof4_Status 状态码。
@@ -104,6 +106,7 @@ Dof4_Status Dof4_cartesian_planner_plan(Dof4_CartesianPlanner *planner,
                                         const Dof4_Pose *start,
                                         const float v0[4],
                                         const Dof4_Pose *target,
+                                        const float vf[4],
                                         uint32_t start_time_ms,
                                         float duration_s);
 
@@ -139,6 +142,27 @@ float Dof4_cartesian_compute_duration(const Dof4_Pose *start,
  */
 bool Dof4_cartesian_target_changed(const Dof4_CartesianPlanner *planner,
                                    const Dof4_Pose *target);
+
+/**
+ * @brief 根据当前目标与下一目标的方向，计算途经点合理通过速度。
+ *
+ * 用于运动链中间途经点，使机械臂以非零速度平滑通过而不停止。
+ * 通过速度大小 = speed_factor * max_speed_mps（笛卡尔）和
+ * speed_factor * pitch_vel_rps（pitch），方向指向下一目标。
+ *
+ * @param current_target 当前途经点位姿。
+ * @param next_target 下一个目标位姿（运动链中的下一站）。
+ * @param speed_factor 通过速度因子（0=零速停止，0.5~0.7=通过速度）。
+ * @param max_speed_mps 笛卡尔速度上限，单位 m/s。
+ * @param pitch_vel_rps pitch 速度上限，单位 rad/s。
+ * @param via_vel 输出通过速度 (x,y,z,pitch)，单位 m/s 和 rad/s。
+ */
+void Dof4_compute_via_velocity(const Dof4_Pose *current_target,
+                               const Dof4_Pose *next_target,
+                               float speed_factor,
+                               float max_speed_mps,
+                               float pitch_vel_rps,
+                               float via_vel[4]);
 
 #ifdef __cplusplus
 }
