@@ -210,19 +210,19 @@ void usartr_debug_task(void const *argument)
       // g_dof4_arm_right.target_servo_pos[0], g_dof4_arm_right.target_servo_pos[1],
       // g_dof4_arm_right.target_servo_pos[2], g_dof4_arm_right.target_servo_pos[3]);
 
-      uart_dma_printf(
-      &huart6, "%4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f\n",
-        g_dof4_arm_left.current_pose.x, g_dof4_arm_left.current_pose.y,
-        g_dof4_arm_left.current_pose.z, g_dof4_arm_left.current_pose.pitch,
-        g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y,
-        g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch);
+      // uart_dma_printf(
+      // &huart6, "%4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f, %4.3f\n",
+      //   g_dof4_arm_left.current_pose.x, g_dof4_arm_left.current_pose.y,
+      //   g_dof4_arm_left.current_pose.z, g_dof4_arm_left.current_pose.pitch,
+      //   g_dof4_arm_right.current_pose.x, g_dof4_arm_right.current_pose.y,
+      //   g_dof4_arm_right.current_pose.z, g_dof4_arm_right.current_pose.pitch);
 
-      //       uart_dma_printf(
-      //   &huart6, "%4.3f, %4.3f, %4.3f, %4.3f,%4.3f, %4.3f, %4.3f, %4.3f\n",
-      // g_dof4_arm_left.joint_actual.q[0], g_dof4_arm_left.joint_actual.q[1],
-      // g_dof4_arm_left.joint_actual.q[2], g_dof4_arm_left.joint_actual.q[3],
-      // g_dof4_arm_right.joint_actual.q[0], g_dof4_arm_right.joint_actual.q[1],
-      // g_dof4_arm_right.joint_actual.q[2], g_dof4_arm_right.joint_actual.q[3]);
+            uart_dma_printf(
+        &huart6, "%4.3f, %4.3f, %4.3f, %4.3f,%4.3f, %4.3f, %4.3f, %4.3f\n",
+      g_dof4_arm_left.joint_actual.q[0], g_dof4_arm_left.joint_actual.q[1],
+      g_dof4_arm_left.joint_actual.q[2], g_dof4_arm_left.joint_actual.q[3],
+      g_dof4_arm_right.joint_actual.q[0], g_dof4_arm_right.joint_actual.q[1],
+      g_dof4_arm_right.joint_actual.q[2], g_dof4_arm_right.joint_actual.q[3]);
         
 
       osDelay(4);

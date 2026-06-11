@@ -53,7 +53,7 @@ extern "C" {
 
 /* R_J3: 实物轴按安装对应 URDF -Y；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J3_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J3_ZERO_BIAS_DEG -1.47f
+#define R_J3_ZERO_BIAS_DEG -1.61f
 #define R_J3_SERVO_SIGN (-1)
 #define R_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define R_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)

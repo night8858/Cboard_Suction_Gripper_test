@@ -457,8 +457,49 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
     const RC_ctrl_t *rc = &s_rc_snapshot;
     static uint32_t s_last_step_ms = 0U;
 
+    /* ── 继电器手动控制 (s[1]==3, s[0]==1)：与 arm_started 无关，
+     *   始终允许遥控器独立控制电磁阀，不受启动门控限制 ── */
+    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1) 
+    {
+            if (rc->rc.ch[0] < -RC_CH_THRESHOLD)
+            {
+                relay_control(0, 0);
+            }
+            else
+            {
+                relay_control(0, 1);
+            }
+
+            if (rc->rc.ch[0] > RC_CH_THRESHOLD)
+            {
+                relay_control(1, 0);
+            }
+            else
+            {
+                relay_control(1, 1);
+            }
+            if (rc->rc.ch[1] < -RC_CH_THRESHOLD)
+            {
+                relay_control(2, 0);
+            }
+            else
+            {
+                relay_control(2, 1);
+            }
+
+            if (rc->rc.ch[1] > RC_CH_THRESHOLD)
+            {
+                relay_control(3, 0);
+            }
+            else
+            {
+                relay_control(3, 1);
+            }
+    
+    }
+
     /* ── 启动门控：未启动时仅处理启动触发 + 气泵控制，
-     *             拒绝所有手动控制、动作触发等运动指令 ── */
+     *             拒绝所有手动运动控制、动作触发等运动指令 ── */
     if (!arm_started) {
         if (rc->rc.s[0] == 2 && rc->rc.s[1] == 2) {
             static bool s_ch3_was_high = false;
@@ -473,55 +514,9 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
         return;
     }
 
-    /* 拨杆 s[1]==3 时进入手动控制模式 */
-    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1) {
-        const bool x_active = (abs(rc->rc.ch[3]) > DOF4_RC_DEADZONE);
-        const bool y_active = (abs(rc->rc.ch[2]) > DOF4_RC_DEADZONE);
-        const bool z_active = (abs(rc->rc.ch[1]) > DOF4_RC_DEADZONE);
-        if (!x_active && !y_active && !z_active) {
-            s_last_step_ms = now_ms;
-            return;
-        }
-
-        uint32_t dt_ms = (s_last_step_ms == 0U)
-                             ? DOF4_RC_MANUAL_FALLBACK_DT_MS
-                             : (uint32_t)(now_ms - s_last_step_ms);
-        if (dt_ms > DOF4_RC_MANUAL_MAX_DT_MS) {
-            dt_ms = DOF4_RC_MANUAL_MAX_DT_MS;
-        }
-        s_last_step_ms = now_ms;
-
-        Dof4_Pose target = g_dof4_arm_right.target_valid
-                               ? g_dof4_arm_right.target_pose
-                               : g_dof4_arm_right.current_pose;
-        const float step = DOF4_RC_MANUAL_SPEED_MPS * ((float)dt_ms * 0.001f);
-
-        if (x_active && rc->rc.ch[3] > 0) {
-            target.x += step;
-        } else if (x_active) {
-            target.x -= step;
-        }
-
-        if (y_active && rc->rc.ch[2] > 0) {
-            target.y += step;
-        } else if (y_active) {
-            target.y -= step;
-        }
-
-        if (z_active && rc->rc.ch[1] > 0) {
-            target.z += step;
-        } else if (z_active) {
-            target.z -= step;
-        }
-
-        Dof4_clamp_to_workspace(&g_dof4_arm_right, &target);
-        (void)Dof4_arm_set_target(&g_dof4_arm_right,
-                                  target.x,
-                                  target.y,
-                                  target.z,
-                                  target.pitch);
-    } 
-    else if (rc->rc.s[1] == 3 && rc->rc.s[0] == 3)
+    /* 拨杆 s[1]==3 时进入手动控制模式 (运动控制部分)
+     * 注: s[0]==1 的继电器控制已在上方 arm_started 门控之前处理 */
+    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 3)
     {
         //固定位置测试的程序
             if (rc->rc.ch[0] < - RC_CH_THRESHOLD)

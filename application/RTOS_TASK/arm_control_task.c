@@ -139,6 +139,8 @@ void arm_control_task(void *argument)
 
         /* ── 启动门控：放行前仅处理 RC 输入，不执行任何运动指令 ── */
         if (!g_dof4_arm_started) {
+         Dof4_batch_read_all_servo(&g_dof4_arm_left, &g_dof4_arm_right);
+            
             osDelay(5);
             continue;
         }

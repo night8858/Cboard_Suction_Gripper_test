@@ -485,41 +485,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [12] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM
-     *      左臂从右背抓取物块到手（跨中线）
-     *
-     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
-     * 注意: 左臂跨中线到右侧，需确认 J1 限位和碰撞安全。
-     * 抓取后右背储物区清空。
-     * ──────────────────────────────────────────────────────────── */
-    {
-        .left = ACT4_POSE_ARM_ZERO,
-        .right = ACT4_POSE_ARM_ZERO,
-        .use_left  = true,
-        .use_right = false,
-        .exec_mode = ACTION_EXEC_MODE_JOINT,
-        .right_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
-    },
-
-    /* ────────────────────────────────────────────────────────────
-     * [13] ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM
-     *      右臂从左背抓取物块到手（跨中线）
-     *
-     * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
-     * 注意: 右臂跨中线到左侧，需确认 J1 限位和碰撞安全。
-     * 抓取后左背储物区清空。
-     * ──────────────────────────────────────────────────────────── */
-    {
-        .left = ACT4_POSE_ARM_ZERO,
-        .right = ACT4_POSE_ARM_ZERO,
-        .use_left  = false,
-        .use_right = true,
-        .exec_mode = ACTION_EXEC_MODE_JOINT,
-        .left_back_effect = ACTION_4DOF_BACK_AVOID_CLEAR,
-    },
-
-    /* ────────────────────────────────────────────────────────────
-     * [14] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM
+     * [12] ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM
      *      右臂从右背抓取物块到手
      *
      * 运动: 使用 s_back_joint_targets[] 中的关节轨迹，不使用 Dof4_Pose/IK。
@@ -537,7 +503,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 
     /* ────────────────────────────────────────────────────────────
-     * [15] ACTION_DANCE — 神秘舞蹈动作
+     * [13] ACTION_DANCE — 神秘舞蹈动作
      *
      * 多途经点序列动作。DANCE 不使用固定的 approach/target/retreat 字段，
      * 而是通过 WAYPOINT 子状态 + s_dance_waypoints[] 数组依次访问各途经点。
@@ -552,7 +518,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 };
 
-/* 后背动作关节轨迹表。所有角度和速度均为 TODO 占位值，调试时逐点替换。 */
+/* 后背动作关节轨迹表。所有角度均为 TODO 占位值，调试时逐点替换。 */
 static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] = {
     [ACTION_BLOCK_PLACE_BACK] = {
         .left = ACT4_JOINT_ARM_TODO,
@@ -574,16 +540,6 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .left = ACT4_JOINT_ARM_TODO,
         .use_left = true,
         .use_right = false,
-    },
-    [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM] = {
-        .left = ACT4_JOINT_ARM_TODO,
-        .use_left = true,
-        .use_right = false,
-    },
-    [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM] = {
-        .right = ACT4_JOINT_ARM_TODO,
-        .use_left = false,
-        .use_right = true,
     },
     [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM] = {
         .right = ACT4_JOINT_ARM_TODO,

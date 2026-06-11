@@ -101,10 +101,8 @@ typedef enum {
     ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1 = 9,          /**< 右臂放置物块到右1放置点第一层 */
     ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F2 = 10,         /**< 右臂放置物块到右1放置点第二层 */
     ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM = 11,                  /**< 从左背抓取到左手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_LEFT_ARM = 12,                 /**< 从右背抓取到左手上 */
-    ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_RIGHT_ARM = 13,                  /**< 从左背抓取到右手上 */
-    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 14,                 /**< 从右背抓取到右手上 */
-    ACTION_DANCE = 15,                                            /**< 神秘舞蹈动作 */
+    ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM = 12,                 /**< 从右背抓取到右手上 */
+    ACTION_DANCE = 13,                                            /**< 神秘舞蹈动作 */
     /* ── 预留扩展位 (按需取消注释) ── */
 
 } action_state_4dof_e;
