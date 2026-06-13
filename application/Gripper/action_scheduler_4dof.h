@@ -121,6 +121,12 @@ typedef struct {
     bool right_back;       /**< 右背储物区有物块 */
 } BlockPlacementState;
 
+/** @brief 上位机动态目标动作类型 */
+typedef enum {
+    ACTION_4DOF_DYNAMIC_PICK = 0,   /**< 从传入的世界坐标抓取物块 */
+    ACTION_4DOF_DYNAMIC_PLACE = 1,  /**< 将物块放置到传入的世界坐标 */
+} Action4DOF_DynamicOperation;
+
 extern BlockPlacementState g_block_state;
 
 /** @brief IDLE 位姿参数 — 相对于各自基座 (effective_base) 的偏移量 */
@@ -155,11 +161,32 @@ void action_4dof_loop(void);
 /** @brief 触发指定动作（仅 IDLE 时可触发） */
 bool action_4dof_trigger(action_state_4dof_e action);
 
+/** @brief 由上位机触发指定预设动作，完成后产生一次完成事件 */
+bool action_4dof_trigger_from_pc(action_state_4dof_e action);
+
+/**
+ * @brief 由上位机触发单臂动态目标取放动作
+ * @param arm_id 左臂或右臂
+ * @param operation 取块或外部放块
+ * @param target_world 目标点，世界坐标系，单位 m
+ * @retval true 动作已接受
+ * @retval false 参数非法、轨迹不可达或当前忙
+ */
+bool action_4dof_trigger_dynamic_from_pc(Dof4_ArmId arm_id,
+                                         Action4DOF_DynamicOperation operation,
+                                         const Dof4_Pose *target_world);
+
 /** @brief 强制中止当前动作，回到 IDLE，关闭所有吸盘 */
 void action_4dof_abort(void);
 
 /** @brief 查询动作是否正在执行中 */
 bool action_4dof_is_active(void);
+
+/** @brief 查询是否存在待发送的上位机动作完成事件 */
+bool action_4dof_completion_pending(void);
+
+/** @brief 完成帧发送成功后清除待发送事件 */
+void action_4dof_completion_acknowledge(void);
 
 #ifdef __cplusplus
 }

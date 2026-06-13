@@ -64,7 +64,7 @@
 #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
 #define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
 //雷达给的是0.3的x
-#define BLOCK_X_DESTANCE_FROM_BASE 0.425f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+#define BLOCK_X_DESTANCE_FROM_BASE 0.4f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.425f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
@@ -544,6 +544,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
 
 /* 后背动作关节轨迹表。所有角度均为 TODO 占位值，调试时逐点替换。 */
 static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] = {
+    //同时放置到背部的动作使用以下轨迹，单臂放置到背部的动作使用对应臂的轨迹，其他动作不使用关节轨迹。
     [ACTION_BLOCK_PLACE_BACK] = {
         .left = {
             .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
@@ -564,6 +565,7 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .use_left = true,
         .use_right = true,
     },
+    //单臂放置到背部的动作使用以下轨迹，左->左背，右->右背，另一臂不使用轨迹保持原位。
     [ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK] = {
         .left = {
             .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
@@ -576,9 +578,10 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .use_left = true,
         .use_right = false,
     },
+
     [ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK] = {
         .right = {
-                .approach =   {0.042f,1.5f,-1.7f,-1.463f}, 
+        .approach =   {0.042f,1.5f,-1.7f,-1.463f},
         .waypoint_1 = {-1.57f,1.5f,-1.7f,-1.463f}, 
         .waypoint_2 = {-3.1f,1.5f,-1.0f,-1.68f}, 
         .target =     {-3.04f,1.57f,-1.88f,-1.247f}, 
@@ -588,6 +591,7 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .use_left = false,
         .use_right = true,
     },
+    //从背部抓取到手的动作使用以下轨迹，左背->左手，右背->右手，另一臂不使用轨迹保持原位。
     [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM] = {
         .left = {
             .approach =   {3.1f, 1.5f, -1.19f, -1.68f},
@@ -657,8 +661,7 @@ static const DanceWaypoint s_dance_waypoints[DANCE_WAYPOINT_COUNT] = {
         .left  = { 0.02f,  0.00f, 0.20f, -0.02f},   /* TODO: 归位 */
         .right = { 0.02f,  0.00f, 0.20f, -0.02f},   /* TODO: 归位 */
     },
-    /* 添加更多途经点只需在此数组末尾追加即可 */
-};
+    /* 添加更多途经点只需在此数组末尾追加即可 */};
 
 /* ════════════════════════════════════════════════════════════════
  * 内部状态机上下文
@@ -671,9 +674,13 @@ typedef struct {
     uint32_t                timeout_ms;     /**< 当前子状态的超时时间 */
     uint8_t                 waypoint_idx;   /**< 当前途经点索引（DANCE 用） */
     bool                    active;         /**< 是否有动作正在执行 */
+    bool                    triggered_by_pc;/**< 当前动作是否来自上位机 */
+    bool                    use_runtime_targets; /**< 是否使用动态目标副本 */
+    Action4DOF_TargetData   runtime_targets; /**< 当前动态动作目标 */
 } Action4DOF_Ctx;
 
 static Action4DOF_Ctx s_ctx;
+static volatile bool s_completion_pending;
 
 /* ════════════════════════════════════════════════════════════════
  * 内部辅助函数
@@ -1233,11 +1240,16 @@ static bool action_4dof_joint_stage_within_blend(const Action4DOF_JointTargetDat
 static void action_4dof_finish_current_action(const Action4DOF_TargetData *td)
 {
     action_4dof_control_arm_suction(td, SUCTION_ON);
+    if (s_ctx.triggered_by_pc) {
+        s_completion_pending = true;
+    }
     s_ctx.active = false;
     s_ctx.action = ACTION_4DOF_IDLE;
     s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
     s_ctx.timeout_ms = 0U;
     s_ctx.waypoint_idx = 0U;
+    s_ctx.triggered_by_pc = false;
+    s_ctx.use_runtime_targets = false;
 }
 
 static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
@@ -1397,7 +1409,9 @@ static void action_4dof_handle(void)
         return;
     }
 
-    const Action4DOF_TargetData *td = &s_action_targets[s_ctx.action];
+    const Action4DOF_TargetData *td = s_ctx.use_runtime_targets
+                                      ? &s_ctx.runtime_targets
+                                      : &s_action_targets[s_ctx.action];
     if (td->exec_mode == ACTION_EXEC_MODE_JOINT) {
         action_4dof_handle_joint(td, &s_back_joint_targets[s_ctx.action]);
         return;
@@ -1659,14 +1673,7 @@ static void action_4dof_handle(void)
         action_4dof_set_complete_targets(td);
 
         if (action_4dof_is_timed_out()) {
-            /* 动作完成 → 打开本动作涉及的手臂电磁阀，防止真空泵憋压 */
-            action_4dof_control_arm_suction(td, SUCTION_ON);
-
-            /* 动作完全结束，回到 IDLE */
-            s_ctx.active = false;
-            s_ctx.action = ACTION_4DOF_IDLE;
-            s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
-            s_ctx.timeout_ms = 0U;
+            action_4dof_finish_current_action(td);
         }
         break;
 
@@ -1767,6 +1774,7 @@ void action_4dof_init(void)
     s_ctx.action   = ACTION_4DOF_IDLE;
     s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
     s_ctx.active   = false;
+    s_completion_pending = false;
 
     /* 复位全局物块位置状态 */
     memset(&g_block_state, 0, sizeof(g_block_state));
@@ -1791,7 +1799,9 @@ void action_4dof_init(void)
  * @retval true  动作被接受，状态机已进入对应起始子状态。
  * @retval false 当前已有动作运行，或 action 非法。
  */
-bool action_4dof_trigger(action_state_4dof_e action)
+static bool action_4dof_trigger_internal(action_state_4dof_e action,
+                                         bool triggered_by_pc,
+                                         const Action4DOF_TargetData *runtime_targets)
 {
     /* 检查当前是否有动作正在执行 */
     if (s_ctx.active) {
@@ -1807,8 +1817,15 @@ bool action_4dof_trigger(action_state_4dof_e action)
     s_ctx.action       = action;
     s_ctx.active       = true;
     s_ctx.waypoint_idx = 0U;
+    s_ctx.triggered_by_pc = triggered_by_pc;
+    s_ctx.use_runtime_targets = (runtime_targets != NULL);
+    if (runtime_targets != NULL) {
+        s_ctx.runtime_targets = *runtime_targets;
+    }
 
-    const Action4DOF_TargetData *td = &s_action_targets[action];
+    const Action4DOF_TargetData *td = s_ctx.use_runtime_targets
+                                      ? &s_ctx.runtime_targets
+                                      : &s_action_targets[action];
     if (action_4dof_is_get_action(action) || action_4dof_is_place_action(action)) {
         action_4dof_control_arm_suction(td, SUCTION_ON);
     }
@@ -1826,6 +1843,109 @@ bool action_4dof_trigger(action_state_4dof_e action)
     }
 
     return true;
+}
+
+bool action_4dof_trigger(action_state_4dof_e action)
+{
+    return action_4dof_trigger_internal(action, false, NULL);
+}
+
+bool action_4dof_trigger_from_pc(action_state_4dof_e action)
+{
+    return action_4dof_trigger_internal(action, true, NULL);
+}
+
+static bool action_4dof_pose_is_finite(const Dof4_Pose *pose)
+{
+    return pose != NULL &&
+           isfinite(pose->x) &&
+           isfinite(pose->y) &&
+           isfinite(pose->z) &&
+           isfinite(pose->pitch);
+}
+
+static bool action_4dof_pose_is_reachable(Dof4_Arm *arm, const Dof4_Pose *pose)
+{
+    Dof4_JointState joints;
+
+    if (!action_4dof_pose_is_finite(pose)) {
+        return false;
+    }
+    if (Dof4_arm_inverse_kinematics(arm, pose, -1.0f, &joints) != DOF4_STATUS_OK) {
+        return false;
+    }
+
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; i++) {
+        if (!isfinite(joints.q[i]) ||
+            joints.q[i] < arm->cfg.joint_min[i] ||
+            joints.q[i] > arm->cfg.joint_max[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void action_4dof_translate_pose(Dof4_Pose *pose,
+                                       float dx,
+                                       float dy,
+                                       float dz)
+{
+    pose->x += dx;
+    pose->y += dy;
+    pose->z += dz;
+}
+
+bool action_4dof_trigger_dynamic_from_pc(Dof4_ArmId arm_id,
+                                         Action4DOF_DynamicOperation operation,
+                                         const Dof4_Pose *target_world)
+{
+    if (s_ctx.active ||
+        (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) ||
+        (operation != ACTION_4DOF_DYNAMIC_PICK &&
+         operation != ACTION_4DOF_DYNAMIC_PLACE) ||
+        !action_4dof_pose_is_finite(target_world)) {
+        return false;
+    }
+
+    action_state_4dof_e action;
+    if (operation == ACTION_4DOF_DYNAMIC_PICK) {
+        action = (arm_id == DOF4_ARM_LEFT)
+                 ? ACTION_BLOCK_GET_FORWARD_LEFT_ARM
+                 : ACTION_BLOCK_GET_FORWARD_RIGHT_ARM;
+    } else {
+        action = (arm_id == DOF4_ARM_LEFT)
+                 ? ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
+                 : ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1;
+    }
+
+    Action4DOF_TargetData runtime_targets = s_action_targets[action];
+    Action4DOF_ArmTargets *arm_targets = (arm_id == DOF4_ARM_LEFT)
+                                         ? &runtime_targets.left
+                                         : &runtime_targets.right;
+    Dof4_Arm *arm = (arm_id == DOF4_ARM_LEFT)
+                    ? &g_dof4_arm_left
+                    : &g_dof4_arm_right;
+
+    const float dx = target_world->x - arm_targets->target.x;
+    const float dy = target_world->y - arm_targets->target.y;
+    const float dz = target_world->z - arm_targets->target.z;
+
+    action_4dof_translate_pose(&arm_targets->approach, dx, dy, dz);
+    if (runtime_targets.use_waypoint) {
+        action_4dof_translate_pose(&arm_targets->waypoint_0, dx, dy, dz);
+    }
+    action_4dof_translate_pose(&arm_targets->target, dx, dy, dz);
+    action_4dof_translate_pose(&arm_targets->retreat, dx, dy, dz);
+
+    if (!action_4dof_pose_is_reachable(arm, &arm_targets->approach) ||
+        (runtime_targets.use_waypoint &&
+         !action_4dof_pose_is_reachable(arm, &arm_targets->waypoint_0)) ||
+        !action_4dof_pose_is_reachable(arm, &arm_targets->target) ||
+        !action_4dof_pose_is_reachable(arm, &arm_targets->retreat)) {
+        return false;
+    }
+
+    return action_4dof_trigger_internal(action, true, &runtime_targets);
 }
 
 
@@ -1854,6 +1974,8 @@ void action_4dof_abort(void)
     s_ctx.active       = false;
     s_ctx.timeout_ms   = 0U;
     s_ctx.waypoint_idx = 0U;
+    s_ctx.triggered_by_pc = false;
+    s_ctx.use_runtime_targets = false;
 }
 
 /**
@@ -1864,6 +1986,16 @@ void action_4dof_abort(void)
 bool action_4dof_is_active(void)
 {
     return s_ctx.active;
+}
+
+bool action_4dof_completion_pending(void)
+{
+    return s_completion_pending;
+}
+
+void action_4dof_completion_acknowledge(void)
+{
+    s_completion_pending = false;
 }
 
 /**

@@ -14,7 +14,9 @@
 #define CMD4_VALVE_CONTROL      0x04u
 #define CMD4_ANSWER_CONTROL     0x05u
 #define CMD4_PUMP_CONTROL       0x06u
+#define CMD4_TARGET_ACTION_CONTROL 0x07u
 #define CMD4_ARM_START          0x99u
+#define CMD4_ACTION_DONE        0xCCu
 
 /*
  * BB 01 feedback:
@@ -34,7 +36,15 @@
 #define CMD4_FRAME_VALVE_LEN      7u
 #define CMD4_FRAME_ANSWER_LEN     8u
 #define CMD4_FRAME_PUMP_LEN      10u
+
+/*
+ * BB 07 dynamic target action:
+ *   BB 07 arm_id operation x y z FF EE CRC8
+ *   arm_id/operation + 3 float32 LE requires 19 bytes total.
+ */
+#define CMD4_FRAME_TARGET_ACTION_LEN 19u
 #define CMD4_FRAME_ARM_START_LEN  5u  /* BB 99 FF EE CRC8，无 DATA 段 */
+#define CMD4_FRAME_ACTION_DONE_LEN 5u  /* BB CC FF EE CRC8，无 DATA 段 */
 
 #define CMD4_FRAME_MAX_LEN       CMD4_FRAME_FEEDBACK_LEN
 
@@ -44,6 +54,7 @@
 uint8_t cmd4_crc8_calc(const uint8_t *data, uint16_t len);
 
 void cmd4_send_feedback(void);
+void cmd4_send_action_done(void);
 void cmd4_rx_process(void);
 void cmd4_rx_feed(const uint8_t *buf, uint32_t len);
 

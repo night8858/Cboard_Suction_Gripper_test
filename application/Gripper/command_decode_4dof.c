@@ -22,20 +22,26 @@
  *
  * ### 命令字一览
  *
- *   | 命令字 | 名称             | 方向       | 说明                         |
+ *   | 命令字  | 名称              | 方向        | 说明                         |
  *   |--------|------------------|------------|------------------------------|
- *   | 0x01   | CMD4_FEEDBACK    | STM32→PC   | 周期反馈当前双臂位姿+阀门状态 |
+ *   | 0x01   | CMD4_FEEDBACK    | STM32→PC   | 周期反馈当前双臂位姿+阀门状态     |
  *   | 0x02   | CMD4_POSE_CONTROL| PC→STM32   | 手动设定单臂目标位姿 (x,y,z,pitch) |
- *   | 0x03   | CMD4_ACTION_CONTROL| PC→STM32 | 触发预设动作 (抓取/放置/舞蹈)  |
- *   | 0x04   | CMD4_VALVE_CONTROL| PC→STM32   | 手动控制单个电磁阀开关         |
+ *   | 0x03   | CMD4_ACTION_CONTROL| PC→STM32 | 触发预设动作 (抓取/放置/舞蹈)    |
+ *   | 0x04   | CMD4_VALVE_CONTROL| PC→STM32   | 手动控制单个电磁阀开关          |
  *   | 0x05   | CMD4_ANSWER_CONTROL| PC→STM32  | 语音应答控制 (预留)            |
  *   | 0x06   | CMD4_PUMP_CONTROL | PC→STM32   | 气泵启停 + 转速设置            |
+ *   | 0x07   | CMD4_TARGET_ACTION_CONTROL | PC→STM32 | 单臂动态目标取放        |
+ *   | 0xCC   | CMD4_ACTION_DONE  | STM32→PC   | 上位机动作执行完成             |
  *
  * ### 特殊命令
  *
  *
  *   |   BB 99 FF EE CRC8 |    机械臂的启动指令
  *
+ *
+ * ### 下位机运动完成反馈
+ *
+ *   |   BB CC FF EE CRC8 |    机械臂完成当前动作的反馈(将该命令表示上一次执行的动作已完成)
  *
  * ### RX 状态机
  *
@@ -46,7 +52,7 @@
  *       │                                      (收完N字节)
  *       │                                          ▼
  *       │                                    WAIT_T1 ──(0xFF)──▶ WAIT_T2
- *       │                                         │                │
+ *       │                                         │              │
  *       └──────────(CRC错/非法)──────────────────┘          (0xEE)│
  *                                                                ▼
  *                                                          VERIFY_CRC
@@ -66,12 +72,13 @@
  *   - 阀门/气泵控制不受动作调度影响，始终可独立操作
  */
 
+/* ── 头文件包含 ── */
 #include "command_decode_4dof.h"
 
-#include "Dof4_Arm.h"
-#include "action_scheduler_4dof.h"
-#include "pneumatic_control.h"
-#include "virtual_serial_port.h"
+#include "Dof4_Arm.h"           /* 4DOF 机械臂运动学模型 */
+#include "action_scheduler_4dof.h" /* 4DOF 动作调度器接口 */
+#include "pneumatic_control.h"   /* 气泵/电磁阀控制接口 */
+#include "virtual_serial_port.h" /* 虚拟串口 (VCP) 收发接口 */
 
 /* ════════════════════════════════════════════════════════════════
  * float / uint8_t[4] 共用体 —— 用于小端字节序的浮点数编解码
@@ -85,7 +92,7 @@ typedef union {
 } cmd4_float_bytes_u;
 
 /* ── 外部引用 ── */
-extern PumpCtrl g_pump;
+extern PumpCtrl g_pump;  /**< 全局气泵控制实例，管理启停与目标转速 */
 
 /* ════════════════════════════════════════════════════════════════
  * 模块内部状态
@@ -118,19 +125,19 @@ static bool s_manual_pose_active[2] = {false, false};
  * 查表法比逐位计算快约 8 倍，适合嵌入式实时场景。
  * ════════════════════════════════════════════════════════════════ */
 static const uint8_t s_cmd4_crc8_table[256] = {
-    0x00u, 0x07u, 0x0Eu, 0x09u, 0x1Cu, 0x1Bu, 0x12u, 0x15u,
-    0x38u, 0x3Fu, 0x36u, 0x31u, 0x24u, 0x23u, 0x2Au, 0x2Du,
-    0x70u, 0x77u, 0x7Eu, 0x79u, 0x6Cu, 0x6Bu, 0x62u, 0x65u,
-    0x48u, 0x4Fu, 0x46u, 0x41u, 0x54u, 0x53u, 0x5Au, 0x5Du,
-    0xE0u, 0xE7u, 0xEEu, 0xE9u, 0xFCu, 0xFBu, 0xF2u, 0xF5u,
-    0xD8u, 0xDFu, 0xD6u, 0xD1u, 0xC4u, 0xC3u, 0xCAu, 0xCDu,
-    0x90u, 0x97u, 0x9Eu, 0x99u, 0x8Cu, 0x8Bu, 0x82u, 0x85u,
-    0xA8u, 0xAFu, 0xA6u, 0xA1u, 0xB4u, 0xB3u, 0xBAu, 0xBDu,
-    0xC7u, 0xC0u, 0xC9u, 0xCEu, 0xDBu, 0xDCu, 0xD5u, 0xD2u,
-    0xFFu, 0xF8u, 0xF1u, 0xF6u, 0xE3u, 0xE4u, 0xEDu, 0xEAu,
-    0xB7u, 0xB0u, 0xB9u, 0xBEu, 0xABu, 0xACu, 0xA5u, 0xA2u,
-    0x8Fu, 0x88u, 0x81u, 0x86u, 0x93u, 0x94u, 0x9Du, 0x9Au,
-    0x27u, 0x20u, 0x29u, 0x2Eu, 0x3Bu, 0x3Cu, 0x35u, 0x32u,
+      0x00u, 0x07u, 0x0Eu, 0x09u, 0x1Cu, 0x1Bu, 0x12u, 0x15u,
+      0x38u, 0x3Fu, 0x36u, 0x31u, 0x24u, 0x23u, 0x2Au, 0x2Du,
+     0x70u, 0x77u, 0x7Eu, 0x79u, 0x6Cu, 0x6Bu, 0x62u, 0x65u,
+     0x48u, 0x4Fu, 0x46u, 0x41u, 0x54u, 0x53u, 0x5Au, 0x5Du,
+     0xE0u, 0xE7u, 0xEEu, 0xE9u, 0xFCu, 0xFBu, 0xF2u, 0xF5u,
+     0xD8u, 0xDFu, 0xD6u, 0xD1u, 0xC4u, 0xC3u, 0xCAu, 0xCDu,
+     0x90u, 0x97u, 0x9Eu, 0x99u, 0x8Cu, 0x8Bu, 0x82u, 0x85u,
+     0xA8u, 0xAFu, 0xA6u, 0xA1u, 0xB4u, 0xB3u, 0xBAu, 0xBDu,
+     0xC7u, 0xC0u, 0xC9u, 0xCEu, 0xDBu, 0xDCu, 0xD5u, 0xD2u,
+     0xFFu, 0xF8u, 0xF1u, 0xF6u, 0xE3u, 0xE4u, 0xEDu, 0xEAu,
+     0xB7u, 0xB0u, 0xB9u, 0xBEu, 0xABu, 0xACu, 0xA5u, 0xA2u,
+     0x8Fu, 0x88u, 0x81u, 0x86u, 0x93u, 0x94u, 0x9Du, 0x9Au,
+     0x27u, 0x20u, 0x29u, 0x2Eu, 0x3Bu, 0x3Cu, 0x35u, 0x32u,
     0x1Fu, 0x18u, 0x11u, 0x16u, 0x03u, 0x04u, 0x0Du, 0x0Au,
     0x57u, 0x50u, 0x59u, 0x5Eu, 0x4Bu, 0x4Cu, 0x45u, 0x42u,
     0x6Fu, 0x68u, 0x61u, 0x66u, 0x73u, 0x74u, 0x7Du, 0x7Au,
@@ -215,7 +222,7 @@ static inline float cmd4_get_float_le(const uint8_t *data)
  *
  * 反馈帧格式 (CMD4_FEEDBACK, 0x01):
  *   ┌──────┬──────┬─────────────────────────────────────┬──────┬──────┬──────┬──────┬──────┐
- *   │ 0xBB │ 0x01 │ L_x L_y L_z L_pitch  R_x R_y R_z   │ V0.. │ SW   │ RSVD │ 0xFF │ 0xEE │ CRC8 │
+ *   │ 0xBB │ 0x01 │ L_x L_y L_z L_pitch  R_x R_y R_z    │ V0.. │ SW   │ RSVD │ 0xFF │ 0xEE │ CRC8 │
  *   │      │      │ R_pitch (8×float32 LE = 32B)        │ V3   │ 5B   │      │      │      │
  *   └──────┴──────┴─────────────────────────────────────┴──────┴──────┴──────┴──────┴──────┘
  *
@@ -270,6 +277,33 @@ void cmd4_send_feedback(void)
     (void)vcp_transmit(frame, CMD4_FRAME_FEEDBACK_LEN);
 }
 
+/**
+ * @brief 发送上位机动作完成帧
+ *
+ * 帧格式: BB CC FF EE CRC8。只有调度器记录了待发送完成事件时才发送，
+ * 且仅在 VCP 发送成功后清除事件；断连或 USB 忙时保留事件供下周期重试。
+ */
+void cmd4_send_action_done(void)
+{
+    if (!action_4dof_completion_pending()) {
+        return;
+    }
+
+    uint8_t frame[CMD4_FRAME_ACTION_DONE_LEN] = {
+        CMD4_FRAME_HEADER_BYTE,
+        CMD4_ACTION_DONE,
+        CMD4_FRAME_TAIL_BYTE1,
+        CMD4_FRAME_TAIL_BYTE2,
+        0u,
+    };
+    frame[CMD4_FRAME_ACTION_DONE_LEN - 1u] =
+        cmd4_crc8_calc(frame, CMD4_FRAME_ACTION_DONE_LEN - 1u);
+
+    if (vcp_transmit(frame, CMD4_FRAME_ACTION_DONE_LEN) == 0u) {
+        action_4dof_completion_acknowledge();
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════
  * RX 帧接收状态机
  *
@@ -306,7 +340,7 @@ static uint8_t s_data_remain = 0u;
  *
  * 未知命令字返回 0，导致状态机立即复位。
  *
- * @param cmd 命令字 (0x01~0x06)
+ * @param cmd 命令字
  * @retval uint8_t DATA 段字节数; 0 表示非法命令
  */
 static uint8_t cmd4_data_len_by_cmd(uint8_t cmd)
@@ -322,6 +356,8 @@ static uint8_t cmd4_data_len_by_cmd(uint8_t cmd)
             return (uint8_t)(CMD4_FRAME_ANSWER_LEN - 5u);
         case CMD4_PUMP_CONTROL:
             return (uint8_t)(CMD4_FRAME_PUMP_LEN - 5u);
+        case CMD4_TARGET_ACTION_CONTROL:
+            return (uint8_t)(CMD4_FRAME_TARGET_ACTION_LEN - 5u);
         case CMD4_ARM_START:
             return (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);  /* DATA 段长度 = 0 */
         default:
@@ -447,10 +483,6 @@ static void cmd4_rx_state_machine(uint8_t byte)
  * 以下函数由 cmd4_dispatch_frame() 根据命令字分发调用。
  * 各 handler 接收的 data 指针已跳过 HDR+CMD，直接指向 DATA 段首字节。
  * ════════════════════════════════════════════════════════════════ */
-
-
-
-
 /**
  * @brief 处理 CMD4_POSE_CONTROL (0x02) —— 手动设定单臂目标位姿
  *
@@ -515,7 +547,43 @@ static void cmd4_handle_action_control(const uint8_t *data)
         return;
     }
 
-    (void)action_4dof_trigger((action_state_4dof_e)action_id);
+    (void)action_4dof_trigger_from_pc((action_state_4dof_e)action_id);
+}
+
+/**
+ * @brief 处理 CMD4_TARGET_ACTION_CONTROL (0x07) —— 动态目标取放
+ *
+ * DATA 段格式 (14 字节):
+ *   [0]      arm_id     0=左臂, 1=右臂
+ *   [1]      operation  0=取块, 1=外部放块
+ *   [2..5]   x          世界坐标 X (float32 LE, 米)
+ *   [6..9]   y          世界坐标 Y (float32 LE, 米)
+ *   [10..13] z          世界坐标 Z (float32 LE, 米)
+ *
+ * pitch 以及 approach/retreat 的相对姿态沿用对应单臂动作模板。
+ */
+static void cmd4_handle_target_action_control(const uint8_t *data)
+{
+    uint8_t arm_id = data[0];
+    uint8_t operation = data[1];
+    Dof4_Pose target = {
+        .x = cmd4_get_float_le(&data[2]),
+        .y = cmd4_get_float_le(&data[6]),
+        .z = cmd4_get_float_le(&data[10]),
+        .pitch = 0.0f,
+    };
+
+    if (arm_id > CMD4_ARM_RIGHT ||
+        operation > (uint8_t)ACTION_4DOF_DYNAMIC_PLACE) {
+        return;
+    }
+
+    if (action_4dof_trigger_dynamic_from_pc(
+            (Dof4_ArmId)arm_id,
+            (Action4DOF_DynamicOperation)operation,
+            &target)) {
+        cmd4_clear_manual_pose();
+    }
 }
 
 /**
@@ -547,7 +615,7 @@ static void cmd4_handle_valve_control(const uint8_t *data)
  */
 static void cmd4_handle_answer_control(const uint8_t *data)
 {
-    (void)data;
+    (void)data;  /* 预留命令，当前不处理；静默丢弃参数以消除 unused-parameter 警告 */
 }
 
 /**
@@ -623,6 +691,12 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
         case CMD4_PUMP_CONTROL:       /* 0x06: 气泵控制, 帧长 10B */
             if (len == CMD4_FRAME_PUMP_LEN) {
                 cmd4_handle_pump_control(data);
+            }
+            break;
+
+        case CMD4_TARGET_ACTION_CONTROL: /* 0x07: 动态目标取放, 帧长 19B */
+            if (len == CMD4_FRAME_TARGET_ACTION_LEN) {
+                cmd4_handle_target_action_control(data);
             }
             break;
 

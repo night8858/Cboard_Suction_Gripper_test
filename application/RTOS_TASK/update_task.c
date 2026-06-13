@@ -23,6 +23,7 @@ void update_task(void const *argument)
 
       cmd4_rx_process();
       block_inspect_process();
+      cmd4_send_action_done();
       cmd4_send_feedback();
       osDelay(20);
 

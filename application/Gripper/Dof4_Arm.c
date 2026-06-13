@@ -154,13 +154,13 @@
 /// ════════════════════════════════════════════════════════════════
 
 /** @brief URDF 左臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_L_BASE_X 0.10760f
+#define DOF4_URDF_L_BASE_X 0.0f
 /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
 #define DOF4_URDF_L_BASE_Y 0.13342f
 /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
 #define DOF4_URDF_L_BASE_Z 0.0f
 /** @brief URDF 右臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_R_BASE_X 0.10758f
+#define DOF4_URDF_R_BASE_X 0.0f
 /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
 #define DOF4_URDF_R_BASE_Y (-0.13265f)
 /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
