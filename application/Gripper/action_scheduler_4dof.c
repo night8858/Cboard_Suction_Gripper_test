@@ -52,19 +52,19 @@
 /// ════════════════════════════════════════════════════════════════
 //特殊角度
 #define STAY_LEVEL 0.0f
-#define STAY_DOWN  -1.45f
+#define STAY_DOWN  -1.5f
 
 #define BLOCK_GET_DOWN_Z -0.22f    //TODO: 实测调整z的下降目标高度，确保能贴近物块但不碰撞
 
 //特殊距离设定
 #define BLOCK_HEIGHT               -0.08f
 //小狗为-0.03f   测试架为
-#define BLOCK_FIRST_LAYER_HEIGHT   -0.21f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
+#define BLOCK_FIRST_LAYER_HEIGHT   -0.215f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
 #define CARRY_POINT_HEIGHT         0.07f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
 #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
 #define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
 //雷达给的是0.3的x
-#define BLOCK_X_DESTANCE_FROM_BASE 0.4f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+#define BLOCK_X_DESTANCE_FROM_BASE 0.45f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.425f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
@@ -462,10 +462,10 @@ static const Action4DOF_TargetData s_action_targets[] = {
         //ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1
         .left      = ACT4_POSE_ARM_ZERO,
         .right = {
-            .approach = {0.35f, -0.2f, 0.30f, -0.30f},   /* TODO */
-            .target   = {0.425f, -0.40f, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN},
-            .retreat  = {0.25f, -0.16f, 0.25f, -0.50f},   /* TODO */
-            .complete = {0.02f,  0.00f, 0.20f, -0.02f},
+            .approach = {0.35f, -0.35f, 0.34f, -1.00f},   /* TODO */
+            .target   = {0.425f, -0.45f, BLOCK_FIRST_LAYER_HEIGHT + 0.03f, STAY_DOWN},   /* TODO: 比F1高~0.04m */
+            .retreat  = {0.25f, -0.30f, 0.25f, -0.50f},   /* TODO */
+            .complete = {0.02f,  -0.00f, 0.20f, -0.02f},
         },
         .use_left  = false,
         .use_right = true ,
@@ -481,7 +481,7 @@ static const Action4DOF_TargetData s_action_targets[] = {
         .left      = ACT4_POSE_ARM_ZERO,
         .right = {
             .approach = {0.35f, -0.35f, 0.34f, -1.00f},   /* TODO */
-            .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT+ 0.02f, STAY_DOWN},   /* TODO: 比F1高~0.04m */
+            .target   = {0.425f, -0.45f, BLOCK_SECOND_LAYER_HEIGHT+ 0.03f, STAY_DOWN},   /* TODO: 比F1高~0.04m */
             .retreat  = {0.25f, -0.30f, 0.25f, -0.50f},   /* TODO */
             .complete = {0.02f,  0.00f, 0.20f, -0.02f},
         },
@@ -570,9 +570,9 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .left = {
             .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
             .waypoint_1 = {1.57f, 1.5f, -1.7f, -1.463f},
-            .waypoint_2 = {3.1f, 1.5f, -1.19f, -1.68f},
-            .target =     {3.04f, 1.57f, -1.88f, -1.247f},//在此之后还需要一个中间点，不然容易打到
-            .retreat =    {3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_2 = {2.8f, 1.5f, -1.19f, -1.68f},
+            .target =     {2.8f, 1.57f, -1.88f, -1.247f},//在此之后还需要一个中间点，不然容易打到
+            .retreat =    {2.1f, 1.5f, -1.19f, -1.68f},
             .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
         },
         .use_left = true,
@@ -583,9 +583,9 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
         .right = {
         .approach =   {0.042f,1.5f,-1.7f,-1.463f},
         .waypoint_1 = {-1.57f,1.5f,-1.7f,-1.463f}, 
-        .waypoint_2 = {-3.1f,1.5f,-1.0f,-1.68f}, 
-        .target =     {-3.04f,1.57f,-1.88f,-1.247f}, 
-        .retreat =    {-3.1f,1.5f,-1.80f,-1.68f}, 
+        .waypoint_2 = {-2.8f,1.5f,-1.0f,-1.68f}, 
+        .target =     {-2.8f,1.57f,-1.88f,-1.247f}, 
+        .retreat =    {-2.0f,1.5f,-1.80f,-1.68f}, 
         .complete =   {0.042f,1.5f,-1.7f,-1.463f}, 
     },
         .use_left = false,
@@ -606,11 +606,11 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
     },
     [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM] = {
         .right = {
-            .approach =   {-3.1f, 1.5f, -1.19f, -1.68f},
-            .waypoint_1 = {-3.1f, 1.5f, -1.19f, -1.68f},
-            .waypoint_2 = {-1.57f, 1.5f, -1.7f, -1.463f},
-            .target =     {-3.04f, 1.57f, -1.88f, -1.247f},
-            .retreat =    {0.042f, 1.5f, -1.7f, -1.463f},
+        .approach =   {-1.57f, 1.5f, -1.19f, -1.68f},
+        .waypoint_1 = {-2.0f,1.5f,-1.0f,-1.463f}, 
+        .waypoint_2 = {-2.8f,1.5f,-1.0f,-1.68f}, 
+        .target =     {-2.8f,1.57f,-1.88f,-1.247f}, 
+        .retreat =    {-1.57f,1.5f,-1.80f,-1.68f}, 
             .complete =   {0.042f, 1.5f, -1.7f, -1.463f},
         },
         .use_left = false,

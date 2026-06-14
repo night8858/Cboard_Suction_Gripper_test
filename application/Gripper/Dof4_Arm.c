@@ -872,8 +872,8 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
     cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
     cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
-    cfg.servo_speed = 2400U;
-    cfg.servo_acc = 40U;
+    cfg.servo_speed = 1200U;
+    cfg.servo_acc = 20U;
 
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
