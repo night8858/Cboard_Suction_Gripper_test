@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "Dof4_Arm.h"
+
 #define CMD4_FRAME_HEADER_BYTE  0xBBu
 #define CMD4_FRAME_TAIL_BYTE1   0xFFu
 #define CMD4_FRAME_TAIL_BYTE2   0xEEu
@@ -15,6 +17,7 @@
 #define CMD4_ANSWER_CONTROL     0x05u
 #define CMD4_PUMP_CONTROL       0x06u
 #define CMD4_TARGET_ACTION_CONTROL 0x07u
+#define CMD4_DIAGNOSTIC         0x08u
 #define CMD4_ARM_START          0x99u
 #define CMD4_ACTION_DONE        0xCCu
 
@@ -43,17 +46,30 @@
  *   arm_id/operation + 3 float32 LE requires 19 bytes total.
  */
 #define CMD4_FRAME_TARGET_ACTION_LEN 19u
+
+/*
+ * BB 08 clipping diagnostic (STM32 -> PC only):
+ *   arm_id mode reason joint_mask
+ *   requested_pose[4] requested_joints[4] limited_joints[4]
+ *   limited_pose[4] target_servo_pos[4] FF EE CRC8
+ */
+#define CMD4_FRAME_DIAGNOSTIC_LEN 81u
 #define CMD4_FRAME_ARM_START_LEN  5u  /* BB 99 FF EE CRC8，无 DATA 段 */
 #define CMD4_FRAME_ACTION_DONE_LEN 5u  /* BB CC FF EE CRC8，无 DATA 段 */
 
-#define CMD4_FRAME_MAX_LEN       CMD4_FRAME_FEEDBACK_LEN
+#define CMD4_FRAME_MAX_LEN       CMD4_FRAME_DIAGNOSTIC_LEN
 
 #define CMD4_ARM_LEFT            0u
 #define CMD4_ARM_RIGHT           1u
 
 uint8_t cmd4_crc8_calc(const uint8_t *data, uint16_t len);
+uint16_t cmd4_build_diagnostic_frame(uint8_t arm_id,
+                                     const Dof4_ClipDiagnostic *diagnostic,
+                                     uint8_t *frame,
+                                     uint16_t frame_size);
 
 void cmd4_send_feedback(void);
+void cmd4_send_diagnostic(void);
 void cmd4_send_action_done(void);
 void cmd4_rx_process(void);
 void cmd4_rx_feed(const uint8_t *buf, uint32_t len);

@@ -31,6 +31,7 @@
  *   | 0x05   | CMD4_ANSWER_CONTROL| PC→STM32  | 语音应答控制 (预留)            |
  *   | 0x06   | CMD4_PUMP_CONTROL | PC→STM32   | 气泵启停 + 转速设置            |
  *   | 0x07   | CMD4_TARGET_ACTION_CONTROL | PC→STM32 | 单臂动态目标取放        |
+ *   | 0x08   | CMD4_DIAGNOSTIC   | STM32→PC   | 关节目标裁剪事件诊断           |
  *   | 0xCC   | CMD4_ACTION_DONE  | STM32→PC   | 上位机动作执行完成             |
  *
  * ### 特殊命令
@@ -79,6 +80,11 @@
 #include "action_scheduler_4dof.h" /* 4DOF 动作调度器接口 */
 #include "pneumatic_control.h"   /* 气泵/电磁阀控制接口 */
 #include "virtual_serial_port.h" /* 虚拟串口 (VCP) 收发接口 */
+
+_Static_assert(CMD4_FRAME_DIAGNOSTIC_LEN ==
+                   (2U + 4U + 4U * 4U + 4U * 4U + 4U * 4U +
+                    4U * 4U + DOF4_JOINT_COUNT * 2U + 2U + 1U),
+               "CMD4 diagnostic frame length mismatch");
 
 /* ════════════════════════════════════════════════════════════════
  * float / uint8_t[4] 共用体 —— 用于小端字节序的浮点数编解码
@@ -203,6 +209,14 @@ static inline void cmd4_put_float_le(uint8_t *buf, uint8_t *idx, float v)
     buf[(*idx)++] = fb.b[3];
 }
 
+/** @brief 将 int16_t 以小端字节序写入缓冲区，idx 自增 2。 */
+static inline void cmd4_put_i16_le(uint8_t *buf, uint8_t *idx, int16_t value)
+{
+    const uint16_t raw = (uint16_t)value;
+    buf[(*idx)++] = (uint8_t)(raw & 0xFFu);
+    buf[(*idx)++] = (uint8_t)(raw >> 8);
+}
+
 /** @brief 从缓冲区以小端字节序读取一个 float (不修改位置) */
 static inline float cmd4_get_float_le(const uint8_t *data)
 {
@@ -275,6 +289,97 @@ void cmd4_send_feedback(void)
     frame[idx] = cmd4_crc8_calc(frame, (uint16_t)idx);  /* CRC 覆盖 idx 个字节 */
 
     (void)vcp_transmit(frame, CMD4_FRAME_FEEDBACK_LEN);
+}
+
+/**
+ * @brief 将裁剪诊断快照编码为 CMD4_DIAGNOSTIC 帧。
+ * @retval uint16_t 成功时返回固定帧长，参数无效或缓冲区不足时返回 0。
+ */
+uint16_t cmd4_build_diagnostic_frame(uint8_t arm_id,
+                                     const Dof4_ClipDiagnostic *diagnostic,
+                                     uint8_t *frame,
+                                     uint16_t frame_size)
+{
+    if (diagnostic == NULL || frame == NULL ||
+        arm_id > CMD4_ARM_RIGHT ||
+        frame_size < CMD4_FRAME_DIAGNOSTIC_LEN) {
+        return 0U;
+    }
+
+    uint8_t idx = 0U;
+
+    frame[idx++] = CMD4_FRAME_HEADER_BYTE;
+    frame[idx++] = CMD4_DIAGNOSTIC;
+    frame[idx++] = arm_id;
+    frame[idx++] = (uint8_t)diagnostic->control_mode;
+    frame[idx++] = diagnostic->reason;
+    frame[idx++] = diagnostic->joint_mask;
+
+    cmd4_put_float_le(frame, &idx, diagnostic->requested_pose.x);
+    cmd4_put_float_le(frame, &idx, diagnostic->requested_pose.y);
+    cmd4_put_float_le(frame, &idx, diagnostic->requested_pose.z);
+    cmd4_put_float_le(frame, &idx, diagnostic->requested_pose.pitch);
+
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        cmd4_put_float_le(frame, &idx, diagnostic->requested_joints.q[i]);
+    }
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        cmd4_put_float_le(frame, &idx, diagnostic->limited_joints.q[i]);
+    }
+
+    cmd4_put_float_le(frame, &idx, diagnostic->limited_pose.x);
+    cmd4_put_float_le(frame, &idx, diagnostic->limited_pose.y);
+    cmd4_put_float_le(frame, &idx, diagnostic->limited_pose.z);
+    cmd4_put_float_le(frame, &idx, diagnostic->limited_pose.pitch);
+
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        cmd4_put_i16_le(frame, &idx, diagnostic->target_servo_pos[i]);
+    }
+
+    frame[idx++] = CMD4_FRAME_TAIL_BYTE1;
+    frame[idx++] = CMD4_FRAME_TAIL_BYTE2;
+    const uint8_t crc = cmd4_crc8_calc(frame, (uint16_t)idx);
+    frame[idx++] = crc;
+    return idx;
+}
+
+/**
+ * @brief 发送最近一次关节目标裁剪诊断事件。
+ *
+ * 每次调用最多发送一条事件。USB 忙或断开时保留 pending，发送成功后仅在
+ * event_id 未变化时确认，避免覆盖控制任务刚写入的新事件。
+ */
+void cmd4_send_diagnostic(void)
+{
+    if (vcp_is_connected() == 0u) {
+        return;
+    }
+
+    Dof4_Arm *arm = NULL;
+    uint8_t arm_id = CMD4_ARM_LEFT;
+    if (g_dof4_arm_left.clip_diagnostic.pending) {
+        arm = &g_dof4_arm_left;
+    } else if (g_dof4_arm_right.clip_diagnostic.pending) {
+        arm = &g_dof4_arm_right;
+        arm_id = CMD4_ARM_RIGHT;
+    } else {
+        return;
+    }
+
+    const Dof4_ClipDiagnostic diagnostic = arm->clip_diagnostic;
+    uint8_t frame[CMD4_FRAME_DIAGNOSTIC_LEN];
+    const uint16_t frame_len = cmd4_build_diagnostic_frame(arm_id,
+                                                            &diagnostic,
+                                                            frame,
+                                                            sizeof(frame));
+    if (frame_len == 0U) {
+        return;
+    }
+
+    if (vcp_transmit(frame, frame_len) == 0u &&
+        arm->clip_diagnostic.event_id == diagnostic.event_id) {
+        arm->clip_diagnostic.pending = false;
+    }
 }
 
 /**

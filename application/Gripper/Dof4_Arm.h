@@ -17,14 +17,14 @@ extern "C" {
 #define M_PI_F 3.14159265358979323846f
 #endif
 
-/** @brief 弧度转角度比例。URDF <limit lower upper> 为弧度，下面的 DEG 限位由它换算得到。 */
+/** @brief 弧度转角度比例。 */
 #define DOF4_RAD_TO_DEG (180.0f / M_PI_F)
 
 /**
  * @brief 舵机映射公共常量。
  *
  * ZERO_POS 是舵机 position 零位，默认 2048，不是角度。
- * ZERO_BIAS_DEG 是实际/URDF 角度偏置，用于安装后微调。
+ * ZERO_BIAS_RAD 是实际/URDF 角度偏置，用于安装后微调。
  * URDF_MIN/MAX_DEG 只作用在实际/URDF 角度上，正反向换算都会先/后夹紧。
  */
 #define DOF4_SERVO_MIN_POS 0
@@ -39,28 +39,28 @@ extern "C" {
 
 /* R_J1: URDF +Z；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J1_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J1_ZERO_BIAS_DEG -1.57f
+#define R_J1_ZERO_BIAS_RAD -1.57f
 #define R_J1_SERVO_SIGN (-1)
 #define R_J1_URDF_MIN_DEG (-1.135f * DOF4_RAD_TO_DEG)  /* +10° 扩展 */
 #define R_J1_URDF_MAX_DEG (3.49f * DOF4_RAD_TO_DEG)
 
 /* R_J2: 实物轴按安装对应 URDF -Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J2_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J2_ZERO_BIAS_DEG 2.67f
+#define R_J2_ZERO_BIAS_RAD 2.67f
 #define R_J2_SERVO_SIGN (1)
 #define R_J2_URDF_MIN_DEG (-2.70f * DOF4_RAD_TO_DEG)
 #define R_J2_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 /* R_J3: 实物轴按安装对应 URDF -Y；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J3_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J3_ZERO_BIAS_DEG -1.61f
+#define R_J3_ZERO_BIAS_RAD -1.61f
 #define R_J3_SERVO_SIGN (-1)
 #define R_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define R_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 /* R_J4: 实物轴按安装对应 URDF +Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J4_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J4_ZERO_BIAS_DEG 0.0f
+#define R_J4_ZERO_BIAS_RAD 0.0f
 #define R_J4_SERVO_SIGN (1)
 #define R_J4_URDF_MIN_DEG (-1.57f * DOF4_RAD_TO_DEG)
 #define R_J4_URDF_MAX_DEG (1.57f * DOF4_RAD_TO_DEG)
@@ -76,30 +76,30 @@ extern "C" {
  *      若转动方向与 URDF 正角方向相反 → SIGN = -1
  *   4. 更新对应 L_Jx_SERVO_SIGN 并删除本 TODO
  *
- * 同时需实测 ZERO_BIAS_DEG：在全伸直状态下读取 position 值，
+ * 同时需实测 ZERO_BIAS_RAD：在全伸直状态下读取 position 值，
  * 反算零位偏置角。当前偏置值直接从右臂镜像，仅作参考。
  * ═══════════════════════════════════════════════════════════════ */
 
 #define L_J1_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J1_ZERO_BIAS_DEG 1.57f
+#define L_J1_ZERO_BIAS_RAD 1.57f
 #define L_J1_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J1_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)  /* -215°, 下限扩展 15° */
 #define L_J1_URDF_MAX_DEG (1.135f * DOF4_RAD_TO_DEG)  /* +65°, 上限扩展 10° */
 
 #define L_J2_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J2_ZERO_BIAS_DEG 2.67f
+#define L_J2_ZERO_BIAS_RAD 2.67f
 #define L_J2_SERVO_SIGN (1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J2_URDF_MIN_DEG (-2.70f * DOF4_RAD_TO_DEG)
 #define L_J2_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J3_ZERO_BIAS_DEG -1.57f
+#define L_J3_ZERO_BIAS_RAD -1.57f
 #define L_J3_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
 #define L_J3_URDF_MAX_DEG (0.0f * DOF4_RAD_TO_DEG)
 
 #define L_J4_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J4_ZERO_BIAS_DEG -0.08f
+#define L_J4_ZERO_BIAS_RAD -0.08f
 #define L_J4_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J4_URDF_MIN_DEG (-1.57f * DOF4_RAD_TO_DEG)
 #define L_J4_URDF_MAX_DEG (1.57f * DOF4_RAD_TO_DEG)
@@ -176,6 +176,13 @@ typedef enum {
     DOF4_CONTROL_MODE_JOINT       /**< 关节角目标，绕过末端 IK 直接下发。 */
 } Dof4_ControlMode;
 
+/** @brief 目标关节在锁存阶段发生裁剪的原因位。 */
+typedef enum {
+    DOF4_CLIP_REASON_NONE = 0,
+    DOF4_CLIP_REASON_JOINT_LIMIT = (1U << 0),
+    DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1)
+} Dof4_ClipReason;
+
 /**
  * @brief 末端 TCP 位姿。
  */
@@ -195,6 +202,20 @@ typedef Dof4_Pose Dof4_EndEffectorPose;
 typedef struct {
     float q[DOF4_JOINT_COUNT];  /**< J1~J4 关节角，单位 rad。 */
 } Dof4_JointState;
+
+/** @brief 最近一次关节裁剪事件的诊断快照。 */
+typedef struct {
+    Dof4_Pose requested_pose;              /**< 裁剪前关节角对应的 FK 位姿。 */
+    Dof4_JointState requested_joints;      /**< IK 或关节模式给出的原始关节角。 */
+    Dof4_JointState limited_joints;        /**< 最终舵机命令对应的关节角。 */
+    Dof4_Pose limited_pose;                /**< 最终关节角对应的预测 FK 位姿。 */
+    int16_t target_servo_pos[DOF4_JOINT_COUNT]; /**< 最终目标舵机步进。 */
+    Dof4_ControlMode control_mode;          /**< 事件发生时的控制模式。 */
+    uint8_t reason;                        /**< Dof4_ClipReason 位组合。 */
+    uint8_t joint_mask;                    /**< bit0~bit3 分别对应 J1~J4。 */
+    uint32_t event_id;                     /**< 内部事件序号，用于发送并发确认。 */
+    volatile bool pending;                 /**< 诊断事件等待发送。 */
+} Dof4_ClipDiagnostic;
 
 /**
  * @brief 机械臂配置。
@@ -270,6 +291,10 @@ typedef struct {
     bool target_is_via;                   /**< 当前目标是否为途经点（非零终端速度平滑通过）。 */
 
     float joint_world[DOF4_LINK_SEGMENT_COUNT + 1U][3]; /**< J1、J2、J3、J4、TCP 世界坐标。 */
+    uint8_t active_clip_reason;            /**< 当前锁存结果的裁剪原因。 */
+    uint8_t active_clip_joint_mask;        /**< 当前锁存结果的裁剪关节位图。 */
+    uint32_t clip_event_counter;            /**< 裁剪事件递增序号。 */
+    Dof4_ClipDiagnostic clip_diagnostic;   /**< 待上报的最近一次裁剪事件。 */
     uint8_t comm_fail_count;               /**< 连续通信失败次数。 */
     Dof4_Status last_status;               /**< 最近一次错误码。 */
 } Dof4_Arm;

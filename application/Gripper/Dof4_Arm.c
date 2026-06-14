@@ -124,12 +124,12 @@
 #include "Dof4_Arm.h"
 #include "Dof4_Collision.h"
 #include "Trajectory_Planning.h"
-#include "pneumatic_control.h"
 
 #include <math.h>
 #include <string.h>
 
 #ifndef DOF4_HOST_TEST
+#include "pneumatic_control.h"
 #include "cmsis_os.h"
 #include "SCS.h"
 #include "SCSCL.h"
@@ -137,6 +137,19 @@
 #include "SMS_STS.h"
 #include "stm32f4xx_hal.h"
 #include "usart.h"
+#else
+static void dof4_host_relay_control(uint8_t relay_id, uint8_t state)
+{
+    (void)relay_id;
+    (void)state;
+}
+static void dof4_host_enable_torque(int servo_id, bool enable)
+{
+    (void)servo_id;
+    (void)enable;
+}
+#define relay_control dof4_host_relay_control
+#define EnableTorque dof4_host_enable_torque
 #endif
 
 #define RELAY_LEFT_ARM    0U  /**< 左臂吸盘电磁阀（一号） */
@@ -200,18 +213,15 @@
 #define DOF4_R_J1_MIN (-1.135f)
 /** @brief 右臂 J1 上限，单位 rad。 */
 #define DOF4_R_J1_MAX 3.49f
-/** @brief J2 下限，单位 rad。 */
-#define DOF4_J2_MIN (-2.70f)
-/** @brief J2 上限，单位 rad。原 URDF 限位 0（水平），扩展至 1.75（~100°）以允许上抬。 */
-#define DOF4_J2_MAX 1.75f
-/** @brief J3 下限，单位 rad。 */
-#define DOF4_J3_MIN (-4.44f)
-/** @brief J3 上限，单位 rad。 */
-#define DOF4_J3_MAX 0.0f
-/** @brief J4 下限，单位 rad。 */
-#define DOF4_J4_MIN (-1.68f)
-/** @brief J4 上限，单位 rad。 */
-#define DOF4_J4_MAX 1.68f
+/** @brief J2 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
+#define DOF4_J2_SERVO_REL_MIN (-2.70f)
+#define DOF4_J2_SERVO_REL_MAX 1.75f
+/** @brief J3 相对舵机中位的下限；绝对上限允许到 q3=0 的伸直姿态。 */
+#define DOF4_J3_SERVO_REL_MIN (-4.44f)
+#define DOF4_J3_ABS_MAX 0.0f
+/** @brief J4 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
+#define DOF4_J4_SERVO_REL_MIN (-1.68f)
+#define DOF4_J4_SERVO_REL_MAX 1.68f
 
 /** @brief 几何解算退化阈值。 */
 #define DOF4_GEOM_EPS 1.0e-6f
@@ -698,30 +708,32 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
  * @param joints 目标关节角。
  * @retval Dof4_Status 状态码。
  */
-static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *joints)
+static Dof4_Status latch_joint_target(Dof4_Arm *arm,
+                                      const Dof4_JointState *joints,
+                                      Dof4_ControlMode control_mode)
 {
     if (arm == NULL || joints == NULL) {
         return DOF4_STATUS_NULL_PARAM;
     }
 
-    Dof4_JointState limited_joints;
+    Dof4_JointState limited_joints = *joints;
+    uint8_t clip_reason = DOF4_CLIP_REASON_NONE;
+    uint8_t clip_joint_mask = 0U;
+
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         if (arm->cfg.servo_sign[i] == 0) {
             return DOF4_STATUS_BAD_CONFIG;
         }
 
-        if (i == 0U) {  /* J1 is wraparound; select the servo-valid equivalent below. */
-            limited_joints.q[i] = joints->q[i];
-        } else {
-            const float relative_q = joints->q[i] - arm->cfg.servo_offset[i];
-            const float limited_relative_q = clamp_float(relative_q,
-                                                         arm->cfg.joint_min[i],
-                                                         arm->cfg.joint_max[i]);
-            limited_joints.q[i] = limited_relative_q + arm->cfg.servo_offset[i];
+        if (i != 0U) {
+            limited_joints.q[i] = clamp_joint_angle_rad(arm, i, joints->q[i]);
+            if (limited_joints.q[i] != joints->q[i]) {
+                clip_reason |= DOF4_CLIP_REASON_JOINT_LIMIT;
+                clip_joint_mask |= (uint8_t)(1U << i);
+            }
         }
     }
 
-    Dof4_Status status = DOF4_STATUS_OK;
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         if (i == 0U) {
             float selected_angle = limited_joints.q[i];
@@ -732,32 +744,63 @@ static Dof4_Status latch_joint_target(Dof4_Arm *arm, const Dof4_JointState *join
                                                           &servo_pos);
             limited_joints.q[i] = selected_angle;
             arm->target_servo_pos[i] = servo_pos;
-            if (st != DOF4_STATUS_OK) {
-                status = st;
+            if (st == DOF4_STATUS_SERVO_LIMIT) {
+                (void)Dof4_servo_to_angle(arm, i, servo_pos, &limited_joints.q[i]);
+                clip_reason |= DOF4_CLIP_REASON_SERVO_LIMIT;
+                clip_joint_mask |= (uint8_t)(1U << i);
+            } else if (st != DOF4_STATUS_OK) {
+                return st;
             }
             continue;
         }
 
-        float servo_angle = (limited_joints.q[i] - arm->cfg.servo_offset[i]) *
-                            (float)arm->cfg.servo_sign[i];
-        if (arm->cfg.servo_reverse[i] != 0U) {
-            servo_angle = -servo_angle;
-        }
-
-        const float steps_f = (float)arm->cfg.servo_zero[i] +
-                              servo_angle * DOF4_SERVO_POS_PER_RAD;
-        const int32_t rounded = (int32_t)((steps_f >= 0.0f) ? (steps_f + 0.5f) : (steps_f - 0.5f));
+        const int32_t rounded = joint_angle_to_servo_steps_raw(arm, i, limited_joints.q[i]);
         if (rounded < arm->cfg.servo_min[i] || rounded > arm->cfg.servo_max[i]) {
             arm->target_servo_pos[i] = clamp_i16(rounded,
                                                  arm->cfg.servo_min[i],
                                                  arm->cfg.servo_max[i]);
-            status = DOF4_STATUS_SERVO_LIMIT;
+            (void)Dof4_servo_to_angle(arm,
+                                      i,
+                                      arm->target_servo_pos[i],
+                                      &limited_joints.q[i]);
+            clip_reason |= DOF4_CLIP_REASON_SERVO_LIMIT;
+            clip_joint_mask |= (uint8_t)(1U << i);
         } else {
             arm->target_servo_pos[i] = (int16_t)rounded;
         }
     }
+
     arm->joint_target = limited_joints;
-    return status;
+
+    const bool clip_changed = (clip_reason != arm->active_clip_reason) ||
+                              (clip_joint_mask != arm->active_clip_joint_mask);
+    arm->active_clip_reason = clip_reason;
+    arm->active_clip_joint_mask = clip_joint_mask;
+
+    if (clip_reason != DOF4_CLIP_REASON_NONE && clip_changed) {
+        Dof4_Arm requested_arm = *arm;
+        Dof4_Arm limited_arm = *arm;
+
+        arm->clip_diagnostic.requested_joints = *joints;
+        arm->clip_diagnostic.limited_joints = limited_joints;
+        (void)Dof4_arm_forward_kinematics(&requested_arm,
+                                          joints,
+                                          &arm->clip_diagnostic.requested_pose);
+        (void)Dof4_arm_forward_kinematics(&limited_arm,
+                                          &limited_joints,
+                                          &arm->clip_diagnostic.limited_pose);
+        for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
+            arm->clip_diagnostic.target_servo_pos[i] = arm->target_servo_pos[i];
+        }
+        arm->clip_diagnostic.control_mode = control_mode;
+        arm->clip_diagnostic.reason = clip_reason;
+        arm->clip_diagnostic.joint_mask = clip_joint_mask;
+        arm->clip_event_counter++;
+        arm->clip_diagnostic.event_id = arm->clip_event_counter;
+        arm->clip_diagnostic.pending = true;
+    }
+
+    return DOF4_STATUS_OK;
 }
 
 /**
@@ -825,18 +868,12 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.shoulder_z = DOF4_URDF_SHOULDER_Z;
     cfg.link_len[0] = DOF4_URDF_LINK2_LEN;
     cfg.link_len[1] = DOF4_URDF_LINK3_LEN;
-    cfg.joint_min[1] = DOF4_J2_MIN;
-    cfg.joint_max[1] = DOF4_J2_MAX;
-    cfg.joint_min[2] = DOF4_J3_MIN;
-    cfg.joint_max[2] = DOF4_J3_MAX;
-    cfg.joint_min[3] = DOF4_J4_MIN;
-    cfg.joint_max[3] = DOF4_J4_MAX;
     cfg.ws_min[2] = -0.6f;           // TCP Z 方向工作空间下限（相对于基座）
     cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
     cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
     cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
     cfg.servo_speed = 2400U;
-    cfg.servo_acc = 60U;
+    cfg.servo_acc = 40U;
 
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
@@ -849,10 +886,10 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_zero[1] = R_J2_ZERO_POS;
         cfg.servo_zero[2] = R_J3_ZERO_POS;
         cfg.servo_zero[3] = R_J4_ZERO_POS;
-        cfg.servo_offset[0] = R_J1_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[1] = R_J2_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[2] = R_J3_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[3] = R_J4_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
+        cfg.servo_offset[0] = R_J1_ZERO_BIAS_RAD;
+        cfg.servo_offset[1] = R_J2_ZERO_BIAS_RAD;
+        cfg.servo_offset[2] = R_J3_ZERO_BIAS_RAD;
+        cfg.servo_offset[3] = R_J4_ZERO_BIAS_RAD;
         cfg.servo_sign[0] = R_J1_SERVO_SIGN;
         cfg.servo_sign[1] = R_J2_SERVO_SIGN;
         cfg.servo_sign[2] = R_J3_SERVO_SIGN;
@@ -862,15 +899,26 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
         cfg.servo_zero[1] = L_J2_ZERO_POS;
         cfg.servo_zero[2] = L_J3_ZERO_POS;
         cfg.servo_zero[3] = L_J4_ZERO_POS;
-        cfg.servo_offset[0] = L_J1_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[1] = L_J2_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[2] = L_J3_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
-        cfg.servo_offset[3] = L_J4_ZERO_BIAS_DEG / DOF4_RAD_TO_DEG;
+        cfg.servo_offset[0] = L_J1_ZERO_BIAS_RAD;
+        cfg.servo_offset[1] = L_J2_ZERO_BIAS_RAD;
+        cfg.servo_offset[2] = L_J3_ZERO_BIAS_RAD;
+        cfg.servo_offset[3] = L_J4_ZERO_BIAS_RAD;
         cfg.servo_sign[0] = L_J1_SERVO_SIGN;
         cfg.servo_sign[1] = L_J2_SERVO_SIGN;
         cfg.servo_sign[2] = L_J3_SERVO_SIGN;
         cfg.servo_sign[3] = L_J4_SERVO_SIGN;
     }
+
+    /*
+     * J2/J4 原配置描述的是舵机相对中位的机械行程。运行时统一保存为
+     * URDF 绝对关节角，避免锁存路径和 Dof4_angle_to_servo() 语义不一致。
+     */
+    cfg.joint_min[1] = cfg.servo_offset[1] + DOF4_J2_SERVO_REL_MIN;
+    cfg.joint_max[1] = cfg.servo_offset[1] + DOF4_J2_SERVO_REL_MAX;
+    cfg.joint_min[2] = cfg.servo_offset[2] + DOF4_J3_SERVO_REL_MIN;
+    cfg.joint_max[2] = DOF4_J3_ABS_MAX;
+    cfg.joint_min[3] = cfg.servo_offset[3] + DOF4_J4_SERVO_REL_MIN;
+    cfg.joint_max[3] = cfg.servo_offset[3] + DOF4_J4_SERVO_REL_MAX;
     return cfg;
 
 }
@@ -907,8 +955,11 @@ Dof4_Status Dof4_arm_config_init(Dof4_Arm *arm, const Dof4_ArmConfig *config)
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         arm->servo_pos[i] = arm->cfg.servo_zero[i];
         arm->target_servo_pos[i] = arm->cfg.servo_zero[i];
-        arm->joint_actual.q[i] = 0.0f;
-        arm->joint_target.q[i] = 0.0f;
+        (void)Dof4_servo_to_angle(arm,
+                                  i,
+                                  arm->servo_pos[i],
+                                  &arm->joint_actual.q[i]);
+        arm->joint_target.q[i] = arm->joint_actual.q[i];
     }
 
 
@@ -949,20 +1000,6 @@ Dof4_Status Dof4_dual_arm_init(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
     if (st != DOF4_STATUS_OK) {
         return st;
     }
-
-        /* ── 左臂舵机零位与角度偏置标定 ── */
-    Dof4_arm_set_servo_offset(arm_left, 0, L_J1_ZERO_POS, L_J1_ZERO_BIAS_DEG);  // J1
-    Dof4_arm_set_servo_offset(arm_left, 1, L_J2_ZERO_POS, L_J2_ZERO_BIAS_DEG);  // J2
-    Dof4_arm_set_servo_offset(arm_left, 2, L_J3_ZERO_POS, L_J3_ZERO_BIAS_DEG);  // J3
-    Dof4_arm_set_servo_offset(arm_left, 3, L_J4_ZERO_POS, L_J4_ZERO_BIAS_DEG);  // J4
-
-        /* ── 右臂舵机零位与角度偏置标定 ── */
-    Dof4_arm_set_servo_offset(arm_right, 0, R_J1_ZERO_POS, R_J1_ZERO_BIAS_DEG);  // J1
-    Dof4_arm_set_servo_offset(arm_right, 1, R_J2_ZERO_POS, R_J2_ZERO_BIAS_DEG);  // J2
-    Dof4_arm_set_servo_offset(arm_right, 2, R_J3_ZERO_POS, R_J3_ZERO_BIAS_DEG);  // J3
-    Dof4_arm_set_servo_offset(arm_right, 3, R_J4_ZERO_POS, R_J4_ZERO_BIAS_DEG);  // J4
-
-
 
     (void)Dof4_cartesian_planner_init(&g_planner_left);
     (void)Dof4_cartesian_planner_init(&g_planner_right);
@@ -1427,7 +1464,7 @@ Dof4_Status Dof4_arm_set_target_via(Dof4_Arm *arm,
 Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
                                       const Dof4_JointState *joints)
 {
-    Dof4_Status st = latch_joint_target(arm, joints);
+    Dof4_Status st = latch_joint_target(arm, joints, DOF4_CONTROL_MODE_JOINT);
     if (st != DOF4_STATUS_OK) {
         if (arm != NULL) {
             arm->last_status = st;
@@ -1774,14 +1811,14 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
 
     /* ─── ⑤ 锁存关节目标 ─────────────────────────────────────────── */
     if (left_pose_mode) {
-        st = latch_joint_target(arm_left, &joints_left);
+        st = latch_joint_target(arm_left, &joints_left, DOF4_CONTROL_MODE_POSE);
         if (st != DOF4_STATUS_OK) {
             arm_left->last_status = st;
             return st;
         }
     }
     if (right_pose_mode) {
-        st = latch_joint_target(arm_right, &joints_right);
+        st = latch_joint_target(arm_right, &joints_right, DOF4_CONTROL_MODE_POSE);
         if (st != DOF4_STATUS_OK) {
             arm_right->last_status = st;
             return st;

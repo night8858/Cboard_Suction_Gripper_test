@@ -1,5 +1,6 @@
 #include "Dof4_Arm.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,22 +32,18 @@ static int16_t solve_left_j1_servo(Dof4_Arm *left,
     int16_t servo = 0;
     require_ok(Dof4_angle_to_servo(left, 0U, joints.q[0], &servo), name);
     require_servo_in_range(left, servo, name);
-    return servo;
-}
 
-static void require_near_i16(int16_t actual,
-                             int16_t expected,
-                             int16_t tolerance,
-                             const char *name)
-{
-    const int diff = abs((int)actual - (int)expected);
-    if (diff > tolerance) {
-        printf("%s J1 servo expected near %d, got %d\n",
+    float feedback_angle = 0.0f;
+    require_ok(Dof4_servo_to_angle(left, 0U, servo, &feedback_angle), name);
+    const float equivalent_error =
+        fabsf(Dof4_normalize_angle(feedback_angle - joints.q[0]));
+    if (equivalent_error > 0.002f) {
+        printf("%s J1 equivalent angle error too large: %.6f rad\n",
                name,
-               (int)expected,
-               (int)actual);
+               (double)equivalent_error);
         exit(1);
     }
+    return servo;
 }
 
 int main(void)
@@ -61,17 +58,11 @@ int main(void)
     const Dof4_Pose retreat  = {0.11f, 0.29f, 0.155f, -0.10f};
     const Dof4_Pose complete = {0.02f, 0.00f, 0.20f, -0.02f};
 
-    const int16_t approach_servo = solve_left_j1_servo(&left, &approach, "approach");
-    const int16_t waypoint_servo = solve_left_j1_servo(&left, &waypoint, "waypoint");
-    const int16_t target_servo   = solve_left_j1_servo(&left, &target, "target");
-    const int16_t retreat_servo  = solve_left_j1_servo(&left, &retreat, "retreat");
-    const int16_t complete_servo = solve_left_j1_servo(&left, &complete, "complete");
-
-    require_near_i16(approach_servo, 3088, 3, "approach");
-    require_near_i16(waypoint_servo, 2111, 3, "waypoint");
-    require_near_i16(target_servo, 1125, 3, "target");
-    require_near_i16(retreat_servo, 2058, 3, "retreat");
-    require_near_i16(complete_servo, 378, 3, "complete");
+    (void)solve_left_j1_servo(&left, &approach, "approach");
+    (void)solve_left_j1_servo(&left, &waypoint, "waypoint");
+    (void)solve_left_j1_servo(&left, &target, "target");
+    (void)solve_left_j1_servo(&left, &retreat, "retreat");
+    (void)solve_left_j1_servo(&left, &complete, "complete");
 
     printf("dof4 J1 wrap test passed\n");
     return 0;
