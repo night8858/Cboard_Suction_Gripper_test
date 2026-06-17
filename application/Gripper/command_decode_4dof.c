@@ -30,7 +30,7 @@
  *   | 0x04   | CMD4_VALVE_CONTROL| PC→STM32   | 手动控制单个电磁阀开关          |
  *   | 0x05   | CMD4_ANSWER_CONTROL| PC→STM32  | 语音应答控制 (预留)            |
  *   | 0x06   | CMD4_PUMP_CONTROL | PC→STM32   | 气泵启停 + 转速设置            |
- *   | 0x07   | CMD4_TARGET_ACTION_CONTROL | PC→STM32 | 单臂动态目标取放        |
+ *   | 0x07   | CMD4_TARGET_ACTION_CONTROL     | PC→STM32 | 单臂动态目标取放        |
  *   | 0x08   | CMD4_DIAGNOSTIC   | STM32→PC   | 关节目标裁剪事件诊断           |
  *   | 0xCC   | CMD4_ACTION_DONE  | STM32→PC   | 上位机动作执行完成             |
  *
@@ -38,12 +38,12 @@
  *
  *
  *   |   BB 99 FF EE CRC8 |    机械臂的启动指令
- *
+ *   |   BB 98 offsetX offsetY offsetZ FF EE CRC8 |    机械臂的带初始偏移的启动代码，offsetX/Y/Z 为 float32 小端字节序，单位 mm
  *
  * ### 下位机运动完成反馈
  *
  *   |   BB CC FF EE CRC8 |    机械臂完成当前动作的反馈(将该命令表示上一次执行的动作已完成)
- *
+ *   
  * ### RX 状态机
  *
  *   接收端使用逐字节状态机解析帧，流程如下：

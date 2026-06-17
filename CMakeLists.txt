@@ -79,6 +79,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/variables/variables.c
     application/Algorithm/PID.c
     application/Algorithm/user_lib.c
+    hardware_device/voice_module/xiao_R/usart_interface.c
     # Add user sources here
 )
 
@@ -101,6 +102,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     bsp/solenoid
     bsp/virtual_serial_port
     bsp/virtual_serial_port
+    hardware_device/voice_module/xiao_R
     # Add user defined include paths
 )
 
