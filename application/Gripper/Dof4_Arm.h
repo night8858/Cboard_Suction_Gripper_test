@@ -299,11 +299,28 @@ typedef struct {
     Dof4_Status last_status;               /**< 最近一次错误码。 */
 } Dof4_Arm;
 
+/**
+ * @brief 单个飞特舵机通信诊断快照。
+ *
+ * 诊断只发送 ReadPos，不写扭矩或目标位置，因此不会触发机械臂运动。
+ */
+typedef struct {
+    uint8_t servo_id;          /**< 本次检查的舵机 ID。 */
+    int16_t position;          /**< ReadPos 返回位置；通信失败时为 -1。 */
+    uint8_t scs_error;         /**< SCS getLastError()，0=无协议错误。 */
+    uint32_t uart_status;      /**< 检查结束时当前舵机 UART 的 SR 寄存器。 */
+    uint8_t comm_fail_count;   /**< 该 ID 所属机械臂当前连续通信失败次数。 */
+    Dof4_Status status;        /**< 本次诊断结果。 */
+} Dof4_ServoCommDiagnostic;
+
 extern Dof4_Arm g_dof4_arm_left;
 extern Dof4_Arm g_dof4_arm_right;
 
 /** @brief 全局世界坐标系偏移实例，双臂共享，默认 {0,0,0}。 */
 extern Dof4_WorldOffset g_dof4_world_offset;
+
+/** @brief 最近一次单舵机通信诊断结果，启动时默认检查 ID=1。 */
+extern Dof4_ServoCommDiagnostic g_dof4_servo_comm_diagnostic;
 
 /** @brief 双臂启动标志位：false=等待启动指令，true=控制循环放行。 */
 extern bool g_dof4_arm_started;
@@ -479,6 +496,17 @@ Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
  * @retval Dof4_Status 状态码。
  */
 Dof4_Status Dof4_arm_read_servo_pos(Dof4_Arm *arm);
+
+/**
+ * @brief 对一个舵机执行无运动副作用的 ReadPos 通信检查。
+ * @param servo_id 飞特舵机 ID，范围 1~253。
+ * @param diagnostic 输出诊断快照。
+ * @retval DOF4_STATUS_OK 成功读到位置。
+ * @retval DOF4_STATUS_COMM_FAIL 未收到有效应答。
+ * @retval DOF4_STATUS_BAD_CONFIG ID 非法。
+ */
+Dof4_Status Dof4_servo_comm_check(uint8_t servo_id,
+                                  Dof4_ServoCommDiagnostic *diagnostic);
 
 /**
  * @brief 读取双臂舵机反馈。

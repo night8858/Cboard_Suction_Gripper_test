@@ -11,6 +11,7 @@
 #include "Planar_Robot_Arm.h"
 #include "action_scheduler.h"
 #include "action_scheduler_4dof.h"
+#include "pc_action_executor_4dof.h"
 #include "command_decode_4dof.h"
 #include "input_arbiter.h"
 #include "Dof4_Arm.h"
@@ -112,11 +113,17 @@ void arm_control_task(void *argument)
      *   3. 最后初始化输入仲裁器和动作调度器
      * ════════════════════════════════════════════════════════════ */
     osDelay(500);
-    Dof4_double_arm_Desable();                        // 先禁用双臂输出，确保安全
+    /* 必须先初始化并绑定 USART6 舵机总线，再发送禁用扭矩命令。
+     * 否则 SCSerail 尚未绑定物理串口，安全命令不会到达舵机。 */
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
+    Dof4_double_arm_Desable();
+    /* 无运动副作用的启动通信检查。可在调试器中观察
+     * g_dof4_servo_comm_diagnostic.position/scs_error/uart_status。 */
+    (void)Dof4_servo_comm_check(1U, &g_dof4_servo_comm_diagnostic);
     Dof4_set_world_offset(0.0f, 0.0f, 0.0f);  /* 初始清零，后续标定雷达坐标系对齐 */
     input_arbiter_init();
     action_4dof_init();
+    pc_action_4dof_init();
     osDelay(100);
 
 
@@ -133,9 +140,12 @@ void arm_control_task(void *argument)
     {
         /* ── 始终接收 RC 数据，确保启动指令可被检测 ──
          * Dof4_double_arm_start() 由 rc_map_to_targets_4dof() 触发
-         * (遥控器 s[0]==2, s[1]==2)，必须在门控前处理 RC 输入。 */
+         * (遥控器 s[0]==2, s[1]==2)，必须在门控前处理 RC 输入。
+         * 任一动作状态机激活时都跳过 RC 目标映射，防止摇杆覆盖路径点。 */
         input_arbiter_update_rc(get_remote_control_point());
-        input_arbiter_resolve_4dof(false, g_dof4_arm_started);
+        const bool action_active =
+            action_4dof_is_active() || pc_action_4dof_is_active();
+        input_arbiter_resolve_4dof(action_active, g_dof4_arm_started);
 
         /* ── 启动门控：放行前仅处理 RC 输入，不执行任何运动指令 ── */
         if (!g_dof4_arm_started) {
@@ -180,14 +190,15 @@ void arm_control_task(void *argument)
 
         /* 2. 4DOF 动作调度: 若动作激活覆盖 target 数组 */
 
-        /* 3. 4DOF 动作调度（动作激活时覆盖 RC/PC 目标） */
+        /* 3. 分别推进 RC/预设动作与 PC 专用动作；执行权保证两者不会同时激活。 */
         action_4dof_loop();
-        if (action_4dof_is_active()) {
+        pc_action_4dof_loop();
+        if (action_4dof_is_active() || pc_action_4dof_is_active()) {
             cmd4_clear_manual_pose();
         }
 
         /* 4. IDLE 期间：根据物块位置持续设定自适应归位位姿 */
-        if (!action_4dof_is_active()) {
+        if (!action_4dof_is_active() && !pc_action_4dof_is_active()) {
             if (!cmd4_manual_pose_active(CMD4_ARM_LEFT)) {
                 Dof4_Pose idle_left = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
                 Dof4_arm_set_target(&g_dof4_arm_left, idle_left.x, idle_left.y, idle_left.z, idle_left.pitch);

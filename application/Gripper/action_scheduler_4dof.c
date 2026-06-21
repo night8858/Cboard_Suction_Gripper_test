@@ -42,8 +42,11 @@
 #include "action_scheduler_4dof.h"
 #include "Dof4_Arm.h"
 #include "pneumatic_control.h"
+#include "pc_action_executor_4dof.h"
 #include "Trajectory_Planning.h"
 #include "stm32f4xx_hal.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include <string.h>
 #include <math.h>
@@ -59,14 +62,13 @@
 //特殊距离设定
 #define BLOCK_HEIGHT               -0.08f
 //小狗为-0.03f   测试架为
-#define BLOCK_FIRST_LAYER_HEIGHT   -0.215f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
-#define CARRY_POINT_HEIGHT         0.07f                                     /// 携带物块时的吸盘高度，确保不碰撞且稳定携带
-#define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)       /// 实测调整第二层堆叠时的放置高度，同时也是第二层的抓取高度，确保能抓取到物块且不碰撞
-#define BLOCK_CARRY_HEIGHT         (CARRY_POINT_HEIGHT + 0.25f)              /// 背部携带物块时的高度，臂末端的放置点
-//雷达给的是0.3的x
-#define BLOCK_X_DESTANCE_FROM_BASE 0.45f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+#define BLOCK_FIRST_LAYER_HEIGHT  -0.21f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
+#define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)   
 
-#define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.425f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
+//雷达给的是0.3的x
+#define BLOCK_X_DESTANCE_FROM_BASE 0.37f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+
+#define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.32f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
 #define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
 /* ════════════════════════════════════════════════════════════════
  * 外部引用
@@ -103,7 +105,6 @@ BlockPlacementState g_block_state;
 #define ACT4_SUCTION_TIMEOUT_MS        1500U   /**< 吸附等待最大超时（前方抓取用） */
 #define ACT4_PLACE_HOLD_MS              1000U   /**< 背部取回动作：手臂在抓取点等待背部吸盘释放的时间 */
 #define ACT4_BACK_RELEASE_HOLD_MS       500U   /**< 背部吸盘关闭后等待物块交接稳定时间 */
-
 /* ── 放置动作释放时序宏（通过修改宏值即可调试，无需改动逻辑代码）── */
 
 /** @brief 后背放置：到达目标点后、关闭手臂电磁阀前的预释放等待时间
@@ -319,9 +320,9 @@ static const Action4DOF_TargetData s_action_targets[] = {
     {
         /*---------------------------调试完成---------------------------*/
         .left = {
-            .approach = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
+            .approach = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PICK - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.60f},   /* 前侧预就位 */
             .target   = {BLOCK_X_DESTANCE_FROM_BASE, BLOCK_Y_DESTANCE_FROM_BASE_PICK, BLOCK_FIRST_LAYER_HEIGHT + 0.02f, STAY_DOWN}, /* 前侧抓取点 */
-            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE + 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
+            .retreat  = {BLOCK_X_DESTANCE_FROM_BASE - 0.1f, BLOCK_Y_DESTANCE_FROM_BASE_PLACE - 0.15f, BLOCK_FIRST_LAYER_HEIGHT + 0.4f, -0.30f},   /* 抓取后撤退 */
             .complete = {0.06f,  0.00f, 0.30f, STAY_LEVEL},   /* 归位 = startup */
         },
         .right     = ACT4_POSE_ARM_ZERO,   /* 右臂不使用，保持原位 */
@@ -673,14 +674,10 @@ typedef struct {
     uint32_t                enter_tick;     /**< 进入当前子状态的系统 tick */
     uint32_t                timeout_ms;     /**< 当前子状态的超时时间 */
     uint8_t                 waypoint_idx;   /**< 当前途经点索引（DANCE 用） */
-    bool                    active;         /**< 是否有动作正在执行 */
-    bool                    triggered_by_pc;/**< 当前动作是否来自上位机 */
-    bool                    use_runtime_targets; /**< 是否使用动态目标副本 */
-    Action4DOF_TargetData   runtime_targets; /**< 当前动态动作目标 */
+    volatile bool           active;         /**< 是否有动作正在执行（跨任务读取） */
 } Action4DOF_Ctx;
 
 static Action4DOF_Ctx s_ctx;
-static volatile bool s_completion_pending;
 
 /* ════════════════════════════════════════════════════════════════
  * 内部辅助函数
@@ -1240,16 +1237,11 @@ static bool action_4dof_joint_stage_within_blend(const Action4DOF_JointTargetDat
 static void action_4dof_finish_current_action(const Action4DOF_TargetData *td)
 {
     action_4dof_control_arm_suction(td, SUCTION_ON);
-    if (s_ctx.triggered_by_pc) {
-        s_completion_pending = true;
-    }
     s_ctx.active = false;
     s_ctx.action = ACTION_4DOF_IDLE;
     s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
     s_ctx.timeout_ms = 0U;
     s_ctx.waypoint_idx = 0U;
-    s_ctx.triggered_by_pc = false;
-    s_ctx.use_runtime_targets = false;
 }
 
 static void action_4dof_handle_joint(const Action4DOF_TargetData *td,
@@ -1409,9 +1401,7 @@ static void action_4dof_handle(void)
         return;
     }
 
-    const Action4DOF_TargetData *td = s_ctx.use_runtime_targets
-                                      ? &s_ctx.runtime_targets
-                                      : &s_action_targets[s_ctx.action];
+    const Action4DOF_TargetData *td = &s_action_targets[s_ctx.action];
     if (td->exec_mode == ACTION_EXEC_MODE_JOINT) {
         action_4dof_handle_joint(td, &s_back_joint_targets[s_ctx.action]);
         return;
@@ -1774,7 +1764,6 @@ void action_4dof_init(void)
     s_ctx.action   = ACTION_4DOF_IDLE;
     s_ctx.substate = ACTION_4DOF_SUBSTATE_IDLE;
     s_ctx.active   = false;
-    s_completion_pending = false;
 
     /* 复位全局物块位置状态 */
     memset(&g_block_state, 0, sizeof(g_block_state));
@@ -1799,33 +1788,28 @@ void action_4dof_init(void)
  * @retval true  动作被接受，状态机已进入对应起始子状态。
  * @retval false 当前已有动作运行，或 action 非法。
  */
-static bool action_4dof_trigger_internal(action_state_4dof_e action,
-                                         bool triggered_by_pc,
-                                         const Action4DOF_TargetData *runtime_targets)
+static bool action_4dof_trigger_internal(action_state_4dof_e action)
 {
-    /* 检查当前是否有动作正在执行 */
-    if (s_ctx.active) {
-        return false;
-    }
-
     /* 检查 action 是否合法 */
     if (action <= ACTION_4DOF_IDLE || (uint32_t)action >= ACTION_4DOF_COUNT) {
         return false;
     }
 
-    /* 初始化上下文 */
+    /*
+     * PC 接收任务和 RC 控制任务可能在不同 RTOS 任务中同时触发动作。
+     * 在短临界区内同时检查两个状态机并占用 RC 执行权，确保只接受一方。
+     */
+    taskENTER_CRITICAL();
+    if (s_ctx.active || pc_action_4dof_is_active()) {
+        taskEXIT_CRITICAL();
+        return false;
+    }
     s_ctx.action       = action;
     s_ctx.active       = true;
     s_ctx.waypoint_idx = 0U;
-    s_ctx.triggered_by_pc = triggered_by_pc;
-    s_ctx.use_runtime_targets = (runtime_targets != NULL);
-    if (runtime_targets != NULL) {
-        s_ctx.runtime_targets = *runtime_targets;
-    }
+    taskEXIT_CRITICAL();
 
-    const Action4DOF_TargetData *td = s_ctx.use_runtime_targets
-                                      ? &s_ctx.runtime_targets
-                                      : &s_action_targets[action];
+    const Action4DOF_TargetData *td = &s_action_targets[action];
     if (action_4dof_is_get_action(action) || action_4dof_is_place_action(action)) {
         action_4dof_control_arm_suction(td, SUCTION_ON);
     }
@@ -1847,105 +1831,7 @@ static bool action_4dof_trigger_internal(action_state_4dof_e action,
 
 bool action_4dof_trigger(action_state_4dof_e action)
 {
-    return action_4dof_trigger_internal(action, false, NULL);
-}
-
-bool action_4dof_trigger_from_pc(action_state_4dof_e action)
-{
-    return action_4dof_trigger_internal(action, true, NULL);
-}
-
-static bool action_4dof_pose_is_finite(const Dof4_Pose *pose)
-{
-    return pose != NULL &&
-           isfinite(pose->x) &&
-           isfinite(pose->y) &&
-           isfinite(pose->z) &&
-           isfinite(pose->pitch);
-}
-
-static bool action_4dof_pose_is_reachable(Dof4_Arm *arm, const Dof4_Pose *pose)
-{
-    Dof4_JointState joints;
-
-    if (!action_4dof_pose_is_finite(pose)) {
-        return false;
-    }
-    if (Dof4_arm_inverse_kinematics(arm, pose, -1.0f, &joints) != DOF4_STATUS_OK) {
-        return false;
-    }
-
-    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; i++) {
-        if (!isfinite(joints.q[i]) ||
-            joints.q[i] < arm->cfg.joint_min[i] ||
-            joints.q[i] > arm->cfg.joint_max[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void action_4dof_translate_pose(Dof4_Pose *pose,
-                                       float dx,
-                                       float dy,
-                                       float dz)
-{
-    pose->x += dx;
-    pose->y += dy;
-    pose->z += dz;
-}
-
-bool action_4dof_trigger_dynamic_from_pc(Dof4_ArmId arm_id,
-                                         Action4DOF_DynamicOperation operation,
-                                         const Dof4_Pose *target_world)
-{
-    if (s_ctx.active ||
-        (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) ||
-        (operation != ACTION_4DOF_DYNAMIC_PICK &&
-         operation != ACTION_4DOF_DYNAMIC_PLACE) ||
-        !action_4dof_pose_is_finite(target_world)) {
-        return false;
-    }
-
-    action_state_4dof_e action;
-    if (operation == ACTION_4DOF_DYNAMIC_PICK) {
-        action = (arm_id == DOF4_ARM_LEFT)
-                 ? ACTION_BLOCK_GET_FORWARD_LEFT_ARM
-                 : ACTION_BLOCK_GET_FORWARD_RIGHT_ARM;
-    } else {
-        action = (arm_id == DOF4_ARM_LEFT)
-                 ? ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_POINT1_F1
-                 : ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_POINT1_F1;
-    }
-
-    Action4DOF_TargetData runtime_targets = s_action_targets[action];
-    Action4DOF_ArmTargets *arm_targets = (arm_id == DOF4_ARM_LEFT)
-                                         ? &runtime_targets.left
-                                         : &runtime_targets.right;
-    Dof4_Arm *arm = (arm_id == DOF4_ARM_LEFT)
-                    ? &g_dof4_arm_left
-                    : &g_dof4_arm_right;
-
-    const float dx = target_world->x - arm_targets->target.x;
-    const float dy = target_world->y - arm_targets->target.y;
-    const float dz = target_world->z - arm_targets->target.z;
-
-    action_4dof_translate_pose(&arm_targets->approach, dx, dy, dz);
-    if (runtime_targets.use_waypoint) {
-        action_4dof_translate_pose(&arm_targets->waypoint_0, dx, dy, dz);
-    }
-    action_4dof_translate_pose(&arm_targets->target, dx, dy, dz);
-    action_4dof_translate_pose(&arm_targets->retreat, dx, dy, dz);
-
-    if (!action_4dof_pose_is_reachable(arm, &arm_targets->approach) ||
-        (runtime_targets.use_waypoint &&
-         !action_4dof_pose_is_reachable(arm, &arm_targets->waypoint_0)) ||
-        !action_4dof_pose_is_reachable(arm, &arm_targets->target) ||
-        !action_4dof_pose_is_reachable(arm, &arm_targets->retreat)) {
-        return false;
-    }
-
-    return action_4dof_trigger_internal(action, true, &runtime_targets);
+    return action_4dof_trigger_internal(action);
 }
 
 
@@ -1974,8 +1860,6 @@ void action_4dof_abort(void)
     s_ctx.active       = false;
     s_ctx.timeout_ms   = 0U;
     s_ctx.waypoint_idx = 0U;
-    s_ctx.triggered_by_pc = false;
-    s_ctx.use_runtime_targets = false;
 }
 
 /**
@@ -1986,16 +1870,6 @@ void action_4dof_abort(void)
 bool action_4dof_is_active(void)
 {
     return s_ctx.active;
-}
-
-bool action_4dof_completion_pending(void)
-{
-    return s_completion_pending;
-}
-
-void action_4dof_completion_acknowledge(void)
-{
-    s_completion_pending = false;
 }
 
 /**
@@ -2020,4 +1894,19 @@ void action_4dof_loop(void)
 
     /* 推进状态机 */
     action_4dof_handle();
+}
+
+void action_4dof_set_back_occupied(Dof4_ArmId arm_id, bool occupied)
+{
+    if (arm_id == DOF4_ARM_LEFT) {
+        g_block_state.left_back = occupied;
+        if (occupied) {
+            s_current_left_back_avoid_pose = s_default_left_back_avoid_pose;
+        }
+    } else if (arm_id == DOF4_ARM_RIGHT) {
+        g_block_state.right_back = occupied;
+        if (occupied) {
+            s_current_right_back_avoid_pose = s_default_right_back_avoid_pose;
+        }
+    }
 }

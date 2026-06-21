@@ -167,13 +167,13 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 /// ════════════════════════════════════════════════════════════════
 
 /** @brief URDF 左臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_L_BASE_X 0.0f
+#define DOF4_URDF_L_BASE_X -0.083f
 /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
 #define DOF4_URDF_L_BASE_Y 0.13342f
 /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
 #define DOF4_URDF_L_BASE_Z 0.0f
 /** @brief URDF 右臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_R_BASE_X 0.0f
+#define DOF4_URDF_R_BASE_X -0.083f
 /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
 #define DOF4_URDF_R_BASE_Y (-0.13265f)
 /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
@@ -303,6 +303,9 @@ extern Dof4_Arm g_dof4_arm_right;
 
 /** @brief 全局世界坐标系原点偏移实例。 */
 Dof4_WorldOffset g_dof4_world_offset = {0.0f, 0.0f, 0.0f};
+
+/** @brief 最近一次单舵机通信诊断结果。 */
+Dof4_ServoCommDiagnostic g_dof4_servo_comm_diagnostic;
 
 /** @brief 双臂启动标志位：false=等待启动指令，true=控制循环放行。 */
 bool g_dof4_arm_started = false;
@@ -985,8 +988,10 @@ Dof4_Status Dof4_dual_arm_init(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
     }
 
 #ifndef DOF4_HOST_TEST
-    SCS_SetUART(&huart1);
-    SCS_SetHalfDuplex(0);
+    SCS_SetUART(&huart6);
+    /* PG14(TX) 与 PG9(RX) 经外部电路合并到飞特单线 DATA 总线。
+     * 开启回声丢弃，否则 ReadPos 会先解析到本机刚发送的请求帧。 */
+    SCS_SetHalfDuplex(1);
     setEnd(0);
 #endif
 
@@ -1510,6 +1515,55 @@ Dof4_Status Dof4_arm_read_servo_pos(Dof4_Arm *arm)
     }
     arm->comm_fail_count = 0U;
     return Dof4_arm_forward_kinematics(arm, &arm->joint_actual, &arm->current_pose);
+}
+
+#ifndef DOF4_HOST_TEST
+static uint8_t dof4_comm_fail_count_for_servo(uint8_t servo_id)
+{
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        if (g_dof4_arm_left.cfg.servo_id[i] == servo_id) {
+            return g_dof4_arm_left.comm_fail_count;
+        }
+        if (g_dof4_arm_right.cfg.servo_id[i] == servo_id) {
+            return g_dof4_arm_right.comm_fail_count;
+        }
+    }
+    return 0U;
+}
+#endif
+
+Dof4_Status Dof4_servo_comm_check(uint8_t servo_id,
+                                  Dof4_ServoCommDiagnostic *diagnostic)
+{
+    if (diagnostic == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+
+    memset(diagnostic, 0, sizeof(*diagnostic));
+    diagnostic->servo_id = servo_id;
+    diagnostic->position = -1;
+
+    if (servo_id == 0U || servo_id >= 0xFEU) {
+        diagnostic->status = DOF4_STATUS_BAD_CONFIG;
+        return diagnostic->status;
+    }
+
+#ifndef DOF4_HOST_TEST
+    const int position = ReadPos((int)servo_id);
+    UART_HandleTypeDef *const uart = SCS_GetUART();
+
+    diagnostic->position = (position >= 0) ? (int16_t)position : -1;
+    diagnostic->scs_error = (uint8_t)getLastError();
+    diagnostic->uart_status =
+        (uart != NULL && uart->Instance != NULL) ? uart->Instance->SR : 0U;
+    diagnostic->comm_fail_count = dof4_comm_fail_count_for_servo(servo_id);
+    diagnostic->status =
+        (position >= 0) ? DOF4_STATUS_OK : DOF4_STATUS_COMM_FAIL;
+#else
+    diagnostic->status = DOF4_STATUS_NOT_READY;
+#endif
+
+    return diagnostic->status;
 }
 
 /**
@@ -2105,7 +2159,9 @@ void Dof4_double_arm_start(void)
     g_dof4_arm_started = true;
 }
 
-
+/* @brief 关闭双臂吸盘并禁用舵机扭矩，进入安全状态。
+ * 适用于紧急停止或维护模式，确保机械臂无动力输出且末端无吸持力。
+ */
 void Dof4_double_arm_Desable(void)
 {
     relay_control(RELAY_LEFT_ARM,  SUCTION_OFF);
@@ -2119,6 +2175,9 @@ void Dof4_double_arm_Desable(void)
     }
 }
 
+/* @brief 开启双臂吸盘并启用舵机扭矩，准备进入运动状态。
+ * 适用于系统启动完成、环境安全时的准备阶段，确保机械臂具备动力输出且末端有吸持力。
+ */
 void Dof4_double_arm_Enable(void)
 {
     relay_control(RELAY_LEFT_ARM,  SUCTION_ON);

@@ -37,8 +37,8 @@ static volatile uint16_t s_rx_tail = 0;    /* 写指针（中断侧修改） */
 uint8_t  wBuf[128];
 uint8_t  wLen = 0;
 
-/* 当前绑定的 UART 句柄 */
-static UART_HandleTypeDef *s_scs_uart = &huart1;
+/* 当前绑定的 UART 句柄。默认不绑定，禁止初始化前误发到其他串口。 */
+static UART_HandleTypeDef *s_scs_uart = NULL;
 
 /* =====================================================================
  * 公共接口：绑定 / 获取 UART 句柄
@@ -46,6 +46,14 @@ static UART_HandleTypeDef *s_scs_uart = &huart1;
 void SCS_SetUART(UART_HandleTypeDef *huart)
 {
     if (huart == NULL) return;
+
+    if (s_scs_uart != NULL && s_scs_uart != huart) {
+        __HAL_UART_DISABLE_IT(s_scs_uart, UART_IT_RXNE);
+    }
+
+    /* 切换物理串口时丢弃旧总线残留，防止其污染新总线首帧。 */
+    s_rx_head = 0U;
+    s_rx_tail = 0U;
     s_scs_uart = huart;
     /* 绑定新句柄后立刻开启 RXNE 中断，确保接收链路就绪 */
     SCS_UART_RxIRQ_Enable();
@@ -57,8 +65,7 @@ UART_HandleTypeDef *SCS_GetUART(void)
 }
 
 /* =====================================================================
- * 中断使能 / 初始化：在 planar_robot_arm_all_init() 调用 SCS_SetUART 后
- * 自动触发，外部也可显式调用。
+ * 中断使能 / 初始化：调用 SCS_SetUART 后自动触发，外部也可显式调用。
  * ===================================================================== */
 void SCS_UART_RxIRQ_Enable(void)
 {
@@ -72,18 +79,19 @@ void SCS_UART_RxIRQ_Enable(void)
 }
 
 /* =====================================================================
- * UART 接收中断服务（在 stm32f4xx_it.c 中 USART1_IRQHandler 已调用
- * HAL_UART_IRQHandler，HAL 会最终回调此函数）。
+ * UART 接收中断服务。调用者必须传入当前产生中断的 UART 句柄。
  *
- * 注意：本项目 USART1 已配置中断向量，HAL_UART_IRQHandler 内部
- * 处理 RXNE 时若未注册 HAL_UART_Receive_IT 则不会自动消费字节，
+ * 注意：HAL_UART_IRQHandler 内部处理 RXNE 时若未注册
+ * HAL_UART_Receive_IT 则不会自动消费字节，
  * 因此这里直接操作寄存器读取 DR，绕过 HAL 的状态机。
  * ===================================================================== */
-void SCS_UART_IRQHandler(void)
+void SCS_UART_IRQHandler(UART_HandleTypeDef *huart)
 {
-    if (s_scs_uart == NULL) return;
+    if (s_scs_uart == NULL || huart == NULL || huart != s_scs_uart) {
+        return;
+    }
 
-    USART_TypeDef *const inst = s_scs_uart->Instance;
+    USART_TypeDef *const inst = huart->Instance;
 
     /* 只处理 RXNE（Receive Not Empty）标志 */
     if ((inst->SR & USART_SR_RXNE) != 0U) {
@@ -241,4 +249,3 @@ void wFlushSCS(void)
         (void)scs_ringbuf_read(discard_buf, sent_len, 1U);
     }
 }
-

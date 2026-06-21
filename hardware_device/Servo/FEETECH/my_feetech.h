@@ -53,7 +53,7 @@ typedef struct {
 
 /**
  * @brief 初始化帧缓存，清零所有历史应答记录。
- *        在系统上电初始化阶段调用一次，传输层由 SCS_SetUART(&huart1) 负责。
+ *        在系统上电初始化阶段调用一次，传输层由 SCS_SetUART() 负责。
  */
 void FTSTS_init(void);
 

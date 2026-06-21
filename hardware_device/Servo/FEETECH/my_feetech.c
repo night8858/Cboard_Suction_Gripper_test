@@ -14,8 +14,8 @@
  * =========================================================================
  * 重构说明（2026-04-26）：
  *   原实现通过 DMA + 流式中间缓冲区接收数据。
- *   实际硬件使用 USART1，USART1 已由 SCSerail.c 统一管理
- *   （RXNE 中断 + 256 字节环形缓冲区，在 USART1_IRQHandler 中调用
+ *   实际硬件串口由 SCS_SetUART() 绑定，并由 SCSerail.c 统一管理
+ *   （RXNE 中断 + 256 字节环形缓冲区，在绑定 UART 的 IRQ 中调用
  *    SCS_UART_IRQHandler 完成逐字节推入）。
  *   本次重构删除所有自建 DMA/中断基础设施，直接复用 SCSerail 传输层：
  *
@@ -35,7 +35,7 @@
  *   CheckSum = ~(ID + Length + Instr/ERROR + Param0 + ... + ParamN) & 0xFF
  *
  * !! 共用总线注意事项 !!
- *   my_feetech.c 和 SCSLib（ReadPos/WritePosEx 等）共用同一条 USART1 总线
+ *   my_feetech.c 和 SCSLib（ReadPos/WritePosEx 等）共用同一条已绑定舵机总线
  *   及 SCSerail 环形缓冲区。调用方必须串行操作，严禁多 RTOS 任务并发调用，
  *   否则发送的读帧和收到的应答帧会交叉污染。
  * =========================================================================
@@ -240,8 +240,8 @@ static bool ftsts_try_parse_frame(const uint8_t *buf, uint16_t buf_len,
 /**
  * @brief 初始化帧缓存，清零所有历史记录。
  *
- * 传输层（UART + RXNE 中断）由 SCS_SetUART(&huart1) 在
- * planar_robot_arm_all_init() 中初始化，此处不重复绑定。
+ * 传输层（UART + RXNE 中断）由上层通过 SCS_SetUART() 初始化，
+ * 此处不重复绑定。
  * 建议在系统上电初始化阶段调用一次，确保缓存状态干净。
  */
 void FTSTS_init(void)
@@ -518,7 +518,7 @@ void FTSTS_servo_Syncwrite_pos(uint8_t id, float angle, float time, float speed)
  * @brief UART 接收完成/空闲回调（HAL 弱函数覆盖）。
  *
  * 本回调仅处理 USART3（上位机指令接收，DMA + 空闲中断方式）。
- * USART1 舵机总线由 SCSerail.c 的 RXNE 中断环形缓冲区独立管理，
+ * 舵机总线由 SCSerail.c 的 RXNE 中断环形缓冲区独立管理，
  * 不依赖此回调，无需在此处理。
  *
  * @param huart  触发回调的 UART 句柄
@@ -529,5 +529,5 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     /* USART3：转发给上位机指令解析模块 */
     usart_cmd_rx_on_event(huart, Size);
 
-    /* USART1 由 SCS_UART_IRQHandler 管理，无需在此回调中处理 */
+    /* 舵机 UART 由 SCS_UART_IRQHandler 管理，无需在此回调中处理 */
 }

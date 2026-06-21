@@ -28,6 +28,13 @@ static const uint8_t k_answer_cmd_table[4][5] = {
     {0xAA, 0x55, 0x01, 0x13, 0xFB},
 };
 
+/*
+ * @brief 通过小 R 语音模块串口发送“答案为零/一/二/三”命令。
+ *
+ * @param huart 串口句柄，必须已初始化并打开
+ * @param answer 答案编号，0~3 对应“零/一/二/三”
+ * @return HAL_StatusTypeDef HAL_OK 表示发送成功，其他值表示失败
+ */
 HAL_StatusTypeDef xiao_R_usart_send_answer(UART_HandleTypeDef *huart, uint8_t answer)
 {
     if (huart == NULL || answer >= 4U)

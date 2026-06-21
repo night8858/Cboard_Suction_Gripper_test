@@ -22,7 +22,7 @@ void usart_tx_dma_init(UART_HandleTypeDef *huart) {
 }
 
 void usart1_tx_dma_init(void) {
-  usart_tx_dma_init(&huart6);
+  usart_tx_dma_init(&huart1);
 }
 
 void usart1_tx_dma_enable(uint8_t *data, uint16_t len) {
@@ -51,30 +51,30 @@ void usart1_tx_dma_enable(uint8_t *data, uint16_t len) {
   __HAL_DMA_ENABLE(&hdma_usart1_tx);
 }
 
-void usart6_tx_dma_enable(uint8_t *data, uint16_t len) {
+void usart1_tx_dma_send(uint8_t *data, uint16_t len) {
 
   // disable DMA
   // 失效DMA
-  __HAL_DMA_DISABLE(&hdma_usart6_tx);
-  while (hdma_usart6_tx.Instance->CR & DMA_SxCR_EN) {
-    __HAL_DMA_DISABLE(&hdma_usart6_tx);
+  __HAL_DMA_DISABLE(&hdma_usart1_tx);
+  while (hdma_usart1_tx.Instance->CR & DMA_SxCR_EN) {
+    __HAL_DMA_DISABLE(&hdma_usart1_tx);
   }
 
   // clear flag
   // 清除标志位
-  __HAL_DMA_CLEAR_FLAG(&hdma_usart6_tx, DMA_LISR_TCIF1);
-  __HAL_DMA_CLEAR_FLAG(&hdma_usart6_tx, DMA_LISR_HTIF1);
+  __HAL_DMA_CLEAR_FLAG(&hdma_usart1_tx, DMA_HISR_TCIF7);
+  __HAL_DMA_CLEAR_FLAG(&hdma_usart1_tx, DMA_HISR_HTIF7);
 
   // set data address
   // 设置数据地址
-  hdma_usart6_tx.Instance->M0AR = (uint32_t)(data);
+  hdma_usart1_tx.Instance->M0AR = (uint32_t)(data);
   // set data length
   // 设置数据长度
-  hdma_usart6_tx.Instance->NDTR = len;
+  hdma_usart1_tx.Instance->NDTR = len;
 
   // enable DMA
   // 使能DMA
-  __HAL_DMA_ENABLE(&hdma_usart6_tx);
+  __HAL_DMA_ENABLE(&hdma_usart1_tx);
 }
 
 void usart_printf(const char *fmt, ...) {

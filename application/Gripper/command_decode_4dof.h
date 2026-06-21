@@ -18,6 +18,19 @@
 #define CMD4_PUMP_CONTROL       0x06u
 #define CMD4_TARGET_ACTION_CONTROL 0x07u
 #define CMD4_DIAGNOSTIC         0x08u
+
+/* PC 下发的 4DOF 动作命令。
+ * 0x11/0x12:      DATA = arm_id + x/y/z，arm_id=0 左臂、1 右臂，xyz 为 float32 小端，单位 m。
+ * 0x14/0x15:      DATA = arm_id，固定背部动作，关节路径由 PC 专用状态机决定。
+ * 0x21:           DATA = left_x/y/z + right_x/y/z，双臂动态取块，六个坐标均为 float32 小端，单位 m。
+ * 0x22:           无 DATA 段，双臂固定放块到背部。 */
+#define CMD4_PICK_BLOCK         0x11u
+#define CMD4_PLACE_BLOCK        0x12u
+#define CMD4_PUT_BLOCK_BACK     0x14u
+#define CMD4_GET_BLOCK_BACK     0x15u
+#define CMD4_PICK_BLOCK_ALL     0x21u
+#define CMD4_PUT_BLOCK_BACK_ALL 0x22u
+
 #define CMD4_ARM_START          0x99u
 #define CMD4_ACTION_DONE        0xCCu
 
@@ -46,6 +59,16 @@
  *   arm_id/operation + 3 float32 LE requires 19 bytes total.
  */
 #define CMD4_FRAME_TARGET_ACTION_LEN 19u
+
+/* PC 专用 4DOF 动作帧长。
+ * - 单臂可控目标点: BB cmd arm_id x y z FF EE CRC8 = 18B
+ * - 单臂背部固定动作: BB cmd arm_id FF EE CRC8 = 6B
+ * - 双臂可控目标点: BB 21 Lxyz Rxyz FF EE CRC8 = 29B
+ * - 双臂背部固定动作: BB 22 FF EE CRC8 = 5B */
+#define CMD4_FRAME_SINGLE_TARGET_ACTION_LEN 18u
+#define CMD4_FRAME_SINGLE_BACK_ACTION_LEN    6u
+#define CMD4_FRAME_DUAL_TARGET_ACTION_LEN   29u
+#define CMD4_FRAME_DUAL_BACK_ACTION_LEN      5u
 
 /*
  * BB 08 clipping diagnostic (STM32 -> PC only):

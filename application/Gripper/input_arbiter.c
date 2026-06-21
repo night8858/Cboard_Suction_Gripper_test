@@ -635,6 +635,11 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
 
 void input_arbiter_resolve_4dof(bool action_active, bool arm_started)
 {
+    /* 动作调度器正在执行时直接跳过 RC 测试映射。
+     *
+     * 这里的“PC 优先”不是 PC 强制打断 RC；真正的互斥点在 action_4dof_trigger_internal():
+     * 只要 s_ctx.active=true，新 PC 动作和新 RC 动作都会被拒绝。
+     * 本函数只负责在动作执行期间不再把遥控器摇杆持续写入目标位，避免覆盖调度器路径点。 */
     if (action_active) {
         return;
     }
