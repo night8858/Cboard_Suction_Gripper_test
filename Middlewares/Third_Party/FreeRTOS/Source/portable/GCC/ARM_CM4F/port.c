@@ -415,6 +415,7 @@ void vPortEnterCritical( void )
 		configASSERT( ( portNVIC_INT_CTRL_REG & portVECTACTIVE_MASK ) == 0 );
 	}
 }
+
 /*-----------------------------------------------------------*/
 
 void vPortExitCritical( void )
@@ -426,6 +427,7 @@ void vPortExitCritical( void )
 		portENABLE_INTERRUPTS();
 	}
 }
+
 /*-----------------------------------------------------------*/
 
 void xPortPendSVHandler( void )

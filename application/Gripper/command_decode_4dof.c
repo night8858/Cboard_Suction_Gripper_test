@@ -43,8 +43,7 @@
  * ### 特殊命令
  *
  *
- *   |   BB 99 FF EE CRC8 |    机械臂的启动指令
- *   |   BB 98 offsetX offsetY offsetZ FF EE CRC8 |    机械臂的带初始偏移的启动代码，offsetX/Y/Z 为 float32 小端字节序，单位 mm
+ *   |   BB 99 offX offY offZ FF EE CRC8 |    机械臂的启动指令，offX/Y/Z 为 float32 小端字节序，单位 mm
  *
  * ### 下位机运动完成反馈
  *
@@ -486,7 +485,7 @@ static uint8_t cmd4_data_len_by_cmd(uint8_t cmd)
         case CMD4_PUT_BLOCK_BACK_ALL:
             return (uint8_t)(CMD4_FRAME_DUAL_BACK_ACTION_LEN - 5u);  /* DATA 段长度 = 0 */
         case CMD4_ARM_START:
-            return (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);  /* DATA 段长度 = 0 */
+            return (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);  /* DATA 段长度 = 12 (3 floats) */
         default:
             return 0u;
     }
@@ -962,8 +961,15 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
             }
             break;
 
-        case CMD4_ARM_START:          /* 0x99: 启动指令, 帧长 5B */
+        case CMD4_ARM_START:          /* 0x99: 启动指令, 帧长 17B */
             if (len == CMD4_FRAME_ARM_START_LEN) {
+                float off_x = cmd4_get_float_le(&data[0]);
+                float off_y = cmd4_get_float_le(&data[4]);
+                float off_z = cmd4_get_float_le(&data[8]);
+                /* 协议单位 mm → 内部单位 m */
+                Dof4_set_world_offset(off_x * 0.001f,
+                                      off_y * 0.001f,
+                                      off_z * 0.001f);
                 Dof4_double_arm_start();
             }
             break;

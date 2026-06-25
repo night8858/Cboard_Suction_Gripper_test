@@ -261,35 +261,35 @@ static const PcAction4DOF_DynamicTemplate s_place_templates[PC_ACT4_ARM_COUNT] =
 /**
  * @brief 单臂放块到背部路径（0x14）。
  *
- * 以下关节角逐点迁移自原 action_scheduler_4dof 动作表，不在本次软件拆分中
- * 修改实机标定值。pre 段从当前位姿运动至背部吸盘位置；post 段撤离回退。
+ * 以下关节角逐点迁移自原 action_scheduler_4dof 动作表，并按当前左右臂
+ * J1 坐标方向换算。pre 段从当前位姿运动至背部吸盘位置；post 段撤离回退。
  */
 static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
-    /* 左臂：先旋转到 J1=1.57，再展开到 J1=2.80、J3=-1.19，最后调整 J4 对准背部 */
+    /* 左臂：J1 向负方向旋转到左后方。 */
     {
         .pre = {
             PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(2.800f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-2.800f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
-            PC_JOINT_POINT(2.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-2.100f, 1.50f, -1.19f, -1.680f),
             PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
         },
         .pre_count = 4U,
         .post_count = 2U,
     },
-    /* 右臂：与左臂对称，J1 取负值 */
+    /* 右臂：J1 向正方向旋转到右后方。 */
     {
         .pre = {
             PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.00f, -1.680f),
-            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),
+            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
-            PC_JOINT_POINT(-2.000f, 1.50f, -1.80f, -1.680f),
+            PC_JOINT_POINT(2.000f, 1.50f, -1.80f, -1.680f),
             PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
         },
         .pre_count = 4U,
@@ -307,12 +307,12 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-3.040f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
             PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
         },
         .pre_count = 4U,
@@ -322,12 +322,12 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(3.040f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
             PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
         },
         .pre_count = 4U,
@@ -346,10 +346,10 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 左臂 */
     {
         .pre = {
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-3.040f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
             PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
@@ -361,13 +361,13 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 右臂 */
     {
         .pre = {
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-2.000f, 1.50f, -1.00f, -1.463f),
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.00f, -1.680f),
-            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.19f, -1.680f),
+            PC_JOINT_POINT(2.000f, 1.50f, -1.00f, -1.463f),
+            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),
+            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.247f),
         },
         .post = {
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.80f, -1.680f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.80f, -1.680f),
             PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
         },
         .pre_count = 4U,
@@ -397,6 +397,46 @@ static bool pc_action_4dof_arm_used(const PcAction4DOF_Context *ctx,
                                     uint8_t arm_index)
 {
     return (arm_index == 0U) ? ctx->use_left : ctx->use_right;
+}
+
+/**
+ * @brief 校验固定关节路径，避免动作被接受后因限位裁剪而永远无法到位。
+ */
+static bool pc_action_4dof_joint_path_valid(
+    uint8_t arm_index,
+    const PcAction4DOF_JointPath *path)
+{
+    if (arm_index >= PC_ACT4_ARM_COUNT || path == NULL ||
+        path->pre_count == 0U ||
+        path->pre_count > PC_ACT4_MAX_PRE_JOINT_POINTS ||
+        path->post_count > PC_ACT4_MAX_POST_JOINT_POINTS) {
+        return false;
+    }
+
+    const Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
+    for (uint8_t segment = 0U; segment < 2U; ++segment) {
+        const PcAction4DOF_JointPoint *points =
+            (segment == 0U) ? path->pre : path->post;
+        const uint8_t count =
+            (segment == 0U) ? path->pre_count : path->post_count;
+
+        for (uint8_t point_index = 0U; point_index < count; ++point_index) {
+            for (uint8_t joint_index = 0U;
+                 joint_index < DOF4_JOINT_COUNT;
+                 ++joint_index) {
+                const float angle = points[point_index].q[joint_index];
+                int16_t servo_pos;
+                if (!isfinite(angle) ||
+                    angle < arm->cfg.joint_min[joint_index] ||
+                    angle > arm->cfg.joint_max[joint_index] ||
+                    Dof4_angle_to_servo(arm, joint_index, angle, &servo_pos) !=
+                        DOF4_STATUS_OK) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 /**
@@ -901,6 +941,10 @@ bool pc_action_4dof_start_put_back(Dof4_ArmId arm_id)
                                      PC_ACT4_MODE_JOINT,
                                      arm_index == 0U, arm_index == 1U);
     candidate.path.joint[arm_index] = s_put_back_paths[arm_index];
+    if (!pc_action_4dof_joint_path_valid(
+            arm_index, &candidate.path.joint[arm_index])) {
+        return false;
+    }
     return pc_action_4dof_claim(&candidate);
 }
 
@@ -917,6 +961,10 @@ bool pc_action_4dof_start_get_back(Dof4_ArmId arm_id)
                                      PC_ACT4_MODE_JOINT,
                                      arm_index == 0U, arm_index == 1U);
     candidate.path.joint[arm_index] = s_get_back_paths[arm_index];
+    if (!pc_action_4dof_joint_path_valid(
+            arm_index, &candidate.path.joint[arm_index])) {
+        return false;
+    }
     return pc_action_4dof_claim(&candidate);
 }
 
@@ -944,6 +992,10 @@ bool pc_action_4dof_start_dual_put_back(void)
                                      PC_ACT4_MODE_JOINT, true, true);
     candidate.path.joint[0] = s_dual_put_back_paths[0];
     candidate.path.joint[1] = s_dual_put_back_paths[1];
+    if (!pc_action_4dof_joint_path_valid(0U, &candidate.path.joint[0]) ||
+        !pc_action_4dof_joint_path_valid(1U, &candidate.path.joint[1])) {
+        return false;
+    }
     return pc_action_4dof_claim(&candidate);
 }
 

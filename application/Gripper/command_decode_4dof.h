@@ -77,7 +77,7 @@
  *   limited_pose[4] target_servo_pos[4] FF EE CRC8
  */
 #define CMD4_FRAME_DIAGNOSTIC_LEN 81u
-#define CMD4_FRAME_ARM_START_LEN  5u  /* BB 99 FF EE CRC8，无 DATA 段 */
+#define CMD4_FRAME_ARM_START_LEN  17u  /* BB 99 offX offY offZ FF EE CRC8，offset float32 LE 单位 mm */
 #define CMD4_FRAME_ACTION_DONE_LEN 5u  /* BB CC FF EE CRC8，无 DATA 段 */
 
 #define CMD4_FRAME_MAX_LEN       CMD4_FRAME_DIAGNOSTIC_LEN

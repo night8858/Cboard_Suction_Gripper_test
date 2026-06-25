@@ -264,7 +264,7 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  cmd4_rx_feed(Buf, *Len);            /* 4DOF BB protocol, direct parse */
+  vcp_on_receive(Buf, *Len);          /* 写入环形缓冲区，由 update_task 在任务上下文处理 */
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
