@@ -34,7 +34,7 @@ PumpCtrl g_pump = {
 void pump_M3508_init(void)
 {
     s_Dji_motor_config(&DJI_motor_3508, 1, &hcan1);
-    DJI_motor_SPEED_PID_init(&DJI_motor_3508, 14.0f, 1.0f, 1.5f, 1000, 20000);
+    DJI_motor_SPEED_PID_init(&DJI_motor_3508, 14.0f, 1.0f, 1.5f, 1000, 16000);
 }
 
 /**

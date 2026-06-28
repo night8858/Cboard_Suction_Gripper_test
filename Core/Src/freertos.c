@@ -53,6 +53,7 @@ osThreadId LED_TASKHandle;
 osThreadId Pump_controlHandle;
 osThreadId debug_TASKHandle;
 osThreadId data_update_TASHandle;
+osThreadId gimbal_TaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -65,6 +66,7 @@ void led_indicate_task(void const * argument);
 void pump_control_task(void const * argument);
 void usartr_debug_task(void const * argument);
 void update_task(void const * argument);
+void gimbal_control_task(void const * argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -135,6 +137,10 @@ void MX_FREERTOS_Init(void) {
   /* definition and creation of data_update_TAS */
   osThreadDef(data_update_TAS, update_task, osPriorityAboveNormal, 0, 256);
   data_update_TASHandle = osThreadCreate(osThread(data_update_TAS), NULL);
+
+  /* definition and creation of gimbal_Task */
+  osThreadDef(gimbal_Task, gimbal_control_task, osPriorityNormal, 0, 256);
+  gimbal_TaskHandle = osThreadCreate(osThread(gimbal_Task), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -250,6 +256,24 @@ __weak void update_task(void const * argument)
     osDelay(1);
   }
   /* USER CODE END update_task */
+}
+
+/* USER CODE BEGIN Header_gimbal_control_task */
+/**
+* @brief Function implementing the gimbal_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_gimbal_control_task */
+__weak void gimbal_control_task(void const * argument)
+{
+  /* USER CODE BEGIN gimbal_control_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END gimbal_control_task */
 }
 
 /* Private application code --------------------------------------------------*/

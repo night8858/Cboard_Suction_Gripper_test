@@ -989,9 +989,9 @@ Dof4_Status Dof4_dual_arm_init(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
 
 #ifndef DOF4_HOST_TEST
     SCS_SetUART(&huart6);
-    /* PG14(TX) 与 PG9(RX) 经外部电路合并到飞特单线 DATA 总线。
-     * 开启回声丢弃，否则 ReadPos 会先解析到本机刚发送的请求帧。 */
-    SCS_SetHalfDuplex(1);
+    /* USART6 使用独立 TX/RX 连接飞特舵机总线，无本机发送回声。
+     * 不能开启半双工回声丢弃，否则 ReadPos 可能把舵机应答帧头丢掉。 */
+    SCS_SetHalfDuplex(0);
     setEnd(0);
 #endif
 
@@ -1494,19 +1494,29 @@ Dof4_Status Dof4_arm_read_servo_pos(Dof4_Arm *arm)
         return DOF4_STATUS_NULL_PARAM;
     }
 
+    uint8_t fail_count = 0U;
+
 #ifndef DOF4_HOST_TEST
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         const int pos = ReadPos((int)arm->cfg.servo_id[i]);
         if (pos < 0) {
-            if (arm->comm_fail_count < 255U) {
-                arm->comm_fail_count++;
-            }
-            if (arm->comm_fail_count >= DOF4_COMM_FAIL_THRESHOLD) {
-                arm->state = DOF4_ARM_STATE_ERROR;
-            }
-            return DOF4_STATUS_COMM_FAIL;
+            fail_count++;
+            /* 保留上一次有效 servo_pos[i]，避免单舵机间歇失败导致整帧 FK 断裂 */
+        } else {
+            arm->servo_pos[i] = (int16_t)pos;
         }
-        arm->servo_pos[i] = (int16_t)pos;
+    }
+
+    /* 仅当全部 4 路舵机均失败时才累加故障计数并中止 FK，
+     * 单路偶发失败允许用上一个有效位置继续计算正解。 */
+    if (fail_count >= DOF4_JOINT_COUNT) {
+        if (arm->comm_fail_count < 255U) {
+            arm->comm_fail_count++;
+        }
+        if (arm->comm_fail_count >= DOF4_COMM_FAIL_THRESHOLD) {
+            arm->state = DOF4_ARM_STATE_ERROR;
+        }
+        return DOF4_STATUS_COMM_FAIL;
     }
 #endif
 
@@ -1569,24 +1579,24 @@ Dof4_Status Dof4_servo_comm_check(uint8_t servo_id,
 /**
  * @brief 读取左右双臂舵机反馈。
  *
- * @note 当前左臂舵机未接入硬件，跳过其读取以避免通信失败阻塞右臂。
- *       左臂 joint_actual / current_pose 保持初始化零位不变。
- *       恢复左臂硬件后，取消注释左臂读取行即可。
+ * @note 左右臂独立读取；单侧通信失败不会阻塞另一侧刷新
+ *       servo_pos / joint_actual / current_pose。
  *
  * @param arm_left  左臂实例。
  * @param arm_right 右臂实例。
- * @retval Dof4_Status 状态码。
+ * @retval DOF4_STATUS_OK 两臂均成功刷新。
+ * @retval Dof4_Status 任一侧失败时返回第一个非 OK 状态。
  */
 Dof4_Status Dof4_batch_read_all_servo(Dof4_Arm *arm_left, Dof4_Arm *arm_right)
 {
-    /* 读取左臂舵机反馈 */
-    Dof4_Status st = Dof4_arm_read_servo_pos(arm_left);
-    if (st != DOF4_STATUS_OK) {
-        return st;
-    }
+    const Dof4_Status left_st = Dof4_arm_read_servo_pos(arm_left);
+    const Dof4_Status right_st = Dof4_arm_read_servo_pos(arm_right);
 
-    /* 读取右臂舵机反馈 */
-    return Dof4_arm_read_servo_pos(arm_right);
+    /* 双臂均不可读时报告失败；单臂偶发失败不影响另一臂反馈更新 */
+    if (left_st != DOF4_STATUS_OK && right_st != DOF4_STATUS_OK) {
+        return left_st;
+    }
+    return DOF4_STATUS_OK;
 }
 
 /**
@@ -2157,6 +2167,11 @@ Dof4_Status Dof4_get_world_offset(float *dx, float *dy, float *dz)
 void Dof4_double_arm_start(void)
 {
     g_dof4_arm_started = true;
+
+    relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
+    relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
+    relay_control(RELAY_LEFT_BACK,  SUCTION_ON);
+    relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
 }
 
 /* @brief 关闭双臂吸盘并禁用舵机扭矩，进入安全状态。
@@ -2175,16 +2190,11 @@ void Dof4_double_arm_Desable(void)
     }
 }
 
-/* @brief 开启双臂吸盘并启用舵机扭矩，准备进入运动状态。
- * 适用于系统启动完成、环境安全时的准备阶段，确保机械臂具备动力输出且末端有吸持力。
+/* @brief 启用舵机扭矩，准备进入运动状态。
+ * 适用于系统启动完成、环境安全时的准备阶段。吸盘由动作状态机或手动阀门命令独立控制。
  */
 void Dof4_double_arm_Enable(void)
 {
-    relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
-    relay_control(RELAY_RIGHT_ARM, SUCTION_ON);
-    relay_control(RELAY_LEFT_BACK,  SUCTION_ON);
-    relay_control(RELAY_RIGHT_BACK, SUCTION_ON);
-
     /* 右臂 4 路 */
     for (uint8_t i = 0; i < 8; ++i) {
         EnableTorque((int)(i + 1), true);  /* ID 从 1 开始 */

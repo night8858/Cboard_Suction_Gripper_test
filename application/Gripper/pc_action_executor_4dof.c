@@ -2,29 +2,32 @@
  * @file    pc_action_executor_4dof.c
  * @brief   PC 下发动作专用 4DOF 状态机
  *
- * 本模块与 action_scheduler_4dof 的 RC/预设动作状态机相互独立。两者只共享
- * 机械臂底层目标接口、吸盘接口和背部物块占用状态，并通过临界区保证同一时刻
+ * 本模块与 action_scheduler_4dof 的预设动作状态机相互独立。两者只共享
+ * 机械臂底层目标接口、电磁阀接口和背部物块占用状态，并通过临界区保证同一时刻
  * 只有一个状态机取得执行权。
  *
  * 动态取放路径：
- *   相对安全入口 -> 目标正上方 -> 垂直下降到目标
- *   -> 吸取/释放 -> 垂直抬回目标正上方 -> 相对安全出口
- *   -> 自适应 IDLE
+ *   当前 TCP -> 目标正上方悬停点（使用模板 approach pitch）-> 垂直下降至 PC 目标 TCP
+ *   -> 吸取/释放 -> 撤离回悬停点 -> 自适应 IDLE
+ *
+ * 悬停点 xyz 固定在目标正上方，pitch 采用已调模板姿态，避免中间点因
+ * 强制目标俯仰角导致 IK 不可达；下降段仅改变 Z 轴到达目标点。
  *
  * 背部固定路径使用关节角序列。路径数组和有效长度分离，后续实机调试需要增加
  * 中间点时，只需在对应数组中追加关节角并调整 count。
  *
  * 超时原则：
  *   - 运动阶段未到位：立即终止后续吸取/释放操作，尝试回自适应 IDLE。
- *   - 释放前终止：保持手臂吸盘开启，不修改背部占用状态，避免掉块。
+ *   - 释放前终止：保持工作臂电磁阀打开，不修改背部占用状态，避免掉块。
  *   - 释放后终止：保留已经执行的阀门和背部占用结果。
  *   - 成功和超时终止都会产生一次 0xCC 结束事件；0xCC 不区分结果。
- */
+ */ 
 
 #include "pc_action_executor_4dof.h"
 
 #include "FreeRTOS.h"
 #include "action_scheduler_4dof.h"
+#include "command_decode_4dof.h"
 #include "pneumatic_control.h"
 #include "stm32f4xx_hal.h"
 #include "task.h"
@@ -32,30 +35,33 @@
 #include <math.h>
 #include <string.h>
 
-/* ======================== 吸盘继电器映射 ======================== */
+/* ======================== 电磁阀继电器映射 ======================== */
 #define PC_ACT4_RELAY_LEFT_ARM   0U   /**< 左手臂吸盘继电器索引 */
 #define PC_ACT4_RELAY_RIGHT_ARM  1U   /**< 右手臂吸盘继电器索引 */
 #define PC_ACT4_RELAY_LEFT_BACK  2U   /**< 左背部吸盘继电器索引 */
 #define PC_ACT4_RELAY_RIGHT_BACK 3U   /**< 右背部吸盘继电器索引 */
-#define PC_ACT4_SUCTION_ON       1U   /**< 吸盘开启 */
-#define PC_ACT4_SUCTION_OFF      0U   /**< 吸盘关闭 */
+#define PC_ACT4_VALVE_OPEN       1U   /**< 电磁阀打开，系统默认状态 */
+#define PC_ACT4_VALVE_CLOSED     0U   /**< 电磁阀关闭，用于释放/交接节点 */
 
 /* ======================== 运动到位公差 ======================== */
-/** @brief 动态目标正上方点统一比 PC 目标高 0.20 m（定义于头文件）。 */
-/* 到位和超时参数沿用原 4DOF 调度器的量级，便于实机统一调试。 */
+/** 到位和超时参数沿用原 4DOF 调度器的量级，便于实机统一调试。 */
 #define PC_ACT4_MOVE_TIMEOUT_MS              2500U   /**< 单段路径运动超时 (ms) */
 #define PC_ACT4_POSE_POS_TOL_M                0.03f  /**< 位姿位置到位公差 (m) */
 #define PC_ACT4_POSE_PITCH_TOL_RAD            0.05f  /**< 位姿俯仰角到位公差 (rad) */
 #define PC_ACT4_JOINT_TOL_RAD                  0.05f /**< 关节角到位公差 (rad) */
+#define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX         0U    /**< 动态路径到达悬停点后等待（简化后仅一个中间点） */
+#define PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M      0.10f /**< 动态取/放块目标上方悬停高度，需明显大于到位公差 */
 
-/* ======================== 操作保持时间 ======================== */
-#define PC_ACT4_PICK_HOLD_MS                  1500U  /**< 吸取保持时间 (ms) */
-#define PC_ACT4_EXTERNAL_RELEASE_HOLD_MS      2000U  /**< 外部放置释放保持时间 (ms) */
-#define PC_ACT4_BACK_PRE_RELEASE_HOLD_MS      2000U  /**< 背部放置-预吸附保持时间 (ms) */
-#define PC_ACT4_BACK_POST_RELEASE_HOLD_MS     2000U  /**< 背部放置-后释放保持时间 (ms) */
-#define PC_ACT4_BACK_GET_ARM_HOLD_MS          1000U  /**< 背部取块-手臂吸附保持时间 (ms) */
-#define PC_ACT4_BACK_RELEASE_HOLD_MS           500U  /**< 背部取块-背部释放保持时间 (ms) */
-#define PC_ACT4_IDLE_HOLD_MS                   100U  /**< 到达 IDLE 后的保持时间 (ms) */
+/* ======================== PC 动作阀门时序，可按实机效果集中调节 ======================== */
+#define PC_ACT4_DELAY_DYNAMIC_PICK_HOLD_MS       1500U /**< 动态取块：目标点吸附稳定等待 */
+#define PC_ACT4_DELAY_DYNAMIC_PLACE_RELEASE_MS   2000U /**< 动态放块：关闭工作臂阀后的释放等待 */
+#define PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS    500U /**< 动态取/放块：到目标点后的稳定等待 */
+#define PC_ACT4_DELAY_BACK_PRE_RELEASE_MS        2000U /**< 放到背部：打开背部阀后的预吸附等待 */
+#define PC_ACT4_DELAY_BACK_POST_RELEASE_MS       2000U /**< 放到背部：关闭工作臂阀后的交接等待 */
+#define PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS       1000U /**< 从背部取回：工作臂吸附稳定等待 */
+#define PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS      500U /**< 从背部取回：关闭来源背部阀后的释放等待 */
+#define PC_ACT4_DELAY_IDLE_HOLD_MS                100U /**< 到达 IDLE 后的结束保持 */
+#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      300U /**< 动态路径悬停点保持 */
 
 /* ======================== 路径数组容量 ======================== */
 #define PC_ACT4_ARM_COUNT              2U     /**< 机械臂数量（左/右） */
@@ -68,7 +74,7 @@
 /**
  * @brief PC 动作命令枚举。
  *
- * 每个值对应一种由 PC 下发的动作类型，与 0x11/0x12/0x14/0x15/0x21/0x22
+ * 每个值对应一种由 PC 下发的动作类型，与 0x11/0x12/0x14/0x15/0x21/0x22/0x23/0x24
  * 协议命令一一映射。
  */
 typedef enum {
@@ -79,6 +85,8 @@ typedef enum {
     PC_ACT4_COMMAND_GET_BACK,       /**< 0x15: 单臂从背部取块 */
     PC_ACT4_COMMAND_DUAL_PICK,      /**< 0x21: 双臂动态取块 */
     PC_ACT4_COMMAND_DUAL_PUT_BACK,  /**< 0x22: 双臂放块到背部 */
+    PC_ACT4_COMMAND_DUAL_PLACE,     /**< 0x23: 双臂动态放块 */
+    PC_ACT4_COMMAND_DUAL_GET_BACK,  /**< 0x24: 双臂从背部取块 */
 } PcAction4DOF_Command;
 
 /**
@@ -93,25 +101,32 @@ typedef enum {
 } PcAction4DOF_Mode;
 
 /**
- * @brief PC 状态机状态枚举。
- *
- * 状态转换流程：
- *   IDLE -> MOVE_PRE_PATH (接近) -> OPERATION_HOLD (操作保持)
- *   -> [OPERATION_SECOND_HOLD (二次保持，仅背部操作)] -> MOVE_POST_PATH (撤离)
- *   -> RETURN_IDLE -> IDLE_HOLD -> IDLE
- *
- * 任何运动阶段超时都迁入 ABORT_RETURN_IDLE 尝试紧急归位。
+ * @brief PC 状态机状态枚举（仅用于位姿模式 PICK/PLACE）
  */
 typedef enum {
     PC_ACT4_STATE_IDLE = 0,             /**< 空闲态 */
-    PC_ACT4_STATE_MOVE_PRE_PATH,        /**< 接近路径运动 */
-    PC_ACT4_STATE_OPERATION_HOLD,       /**< 操作保持（吸取/释放/背部交接） */
-    PC_ACT4_STATE_OPERATION_SECOND_HOLD,/**< 二次保持（仅背部操作时的第二阶段保持） */
-    PC_ACT4_STATE_MOVE_POST_PATH,       /**< 撤离路径运动 */
-    PC_ACT4_STATE_RETURN_IDLE,          /**< 回归 IDLE 位姿 */
-    PC_ACT4_STATE_ABORT_RETURN_IDLE,    /**< 超时中止后强制归位 */
-    PC_ACT4_STATE_IDLE_HOLD,            /**< 到达 IDLE 后的短暂保持 */
+    PC_ACT4_STATE_MOVE_PRE_PATH,        /**< 位姿: 悬停→目标 */
+    PC_ACT4_STATE_PRE_WAYPOINT_HOLD,    /**< 位姿: 悬停点停留 */
+    PC_ACT4_STATE_TARGET_SETTLE_HOLD,   /**< 位姿: 目标点稳定停留 */
+    PC_ACT4_STATE_OPERATION_HOLD,       /**< 操作保持 */
+    PC_ACT4_STATE_MOVE_POST_PATH,       /**< 位姿: 撤离段 */
+    PC_ACT4_STATE_RETURN_IDLE,          /**< 位姿: 回归 POSE idle */
+    PC_ACT4_STATE_ABORT_RETURN_IDLE,    /**< 超时中止归位 */
+    PC_ACT4_STATE_IDLE_HOLD,            /**< IDLE 保持 */
 } PcAction4DOF_State;
+
+/** @brief 关节模式子状态（完全参照 action_scheduler 的 action_4dof_substate_e） */
+typedef enum {
+    PC_ACT4_JNT_APPROACH = 0,        /**< GET_BACK: 预就位 */
+    PC_ACT4_JNT_PLACE_APPROACH,      /**< PUT_BACK: 放置预就位 */
+    PC_ACT4_JNT_INTERMEDIATE,        /**< 中间途经点 wp1/wp2 */
+    PC_ACT4_JNT_GRAB,                /**< GET_BACK: 操作目标点 */
+    PC_ACT4_JNT_PLACE,               /**< PUT_BACK: 操作目标点 */
+    PC_ACT4_JNT_SUCTION_GRAB,        /**< 吸取控制 */
+    PC_ACT4_JNT_SUCTION_PLACE,       /**< 释放控制 */
+    PC_ACT4_JNT_RETREAT,             /**< 撤离 */
+    PC_ACT4_JNT_COMPLETE,            /**< 归位(关节→POSE idle) */
+} PcAction4DOF_JointSubstate;
 
 /**
  * @brief 关节角路径点，包含 4 个关节的目标角度。
@@ -149,20 +164,22 @@ typedef struct {
  * @brief 动态动作模板。
  *
  * entry/exit_offset 是当前已调模板中 approach/retreat 相对 target 的偏移。
- * PC 只提供最终 xyz；安全入口和出口通过 target + offset 生成。
+ * PC 只提供最终 xyz；当前动态路径保留 target 正上方中间点，
+ * 其中 entry_offset.pitch 作为中间点的绝对俯仰角使用。
  * 每个手臂（左/右）各有一个独立模板，以适应双侧不同的工作空间约束。
  */
 typedef struct {
-    Dof4_Pose entry_offset;  /**< 入口偏移量（相对 target 的 dx, dy, dz, dpitch） */
-    Dof4_Pose exit_offset;   /**< 出口偏移量（相对 target 的 dx, dy, dz, dpitch） */
+    Dof4_Pose entry_offset;  /**< 入口偏移量；pitch 为中间点绝对俯仰角 */
+    Dof4_Pose exit_offset;   /**< 出口偏移量；pitch 保留给后续撤离路径调参 */
     float target_pitch;      /**< 操作目标点的俯仰角，单位 rad */
+    float vertical_clearance_m; /**< 中间点相对 target 的 z 向上偏移量，单位 m */
 } PcAction4DOF_DynamicTemplate;
 
 /**
  * @brief PC 动作状态机运行时上下文。
  *
  * 所有字段在 claim 时一次写入，运行期间由 pc_action_4dof_loop 维护。
- * 临界区保护保证与 RC 状态机互斥访问。
+ * 临界区保护保证与预设动作状态机互斥访问。
  */
 typedef struct {
     PcAction4DOF_Command command;       /**< 当前执行的动作命令类型 */
@@ -175,12 +192,29 @@ typedef struct {
     bool use_left;                      /**< 本次动作是否使用左臂 */
     bool use_right;                     /**< 本次动作是否使用右臂 */
     bool release_committed;             /**< 是否已经执行了物块释放操作 */
-    bool operation_first_step_done;     /**< OPERATION_HOLD 首次周期是否已完成 */
+    bool operation_phase_started;       /**< 位姿模式操作保持阶段是否已开始 */
+    bool joint_phase_started;           /**< 关节模式当前阀门保持阶段是否已开始 */
+    PcAction4DOF_JointSubstate jnt_substate; /**< 关节模式子状态 */
     union {
         PcAction4DOF_PosePath pose[PC_ACT4_ARM_COUNT];   /**< 位姿路径（双臂各一份） */
         PcAction4DOF_JointPath joint[PC_ACT4_ARM_COUNT]; /**< 关节角路径（双臂各一份） */
     } path;                             /**< 路径数据，根据 mode 选择访问 pose 或 joint */
 } PcAction4DOF_Context;
+
+/**
+ * @brief PC 动作待启动请求。
+ *
+ * USB/update 任务只负责写入这一条请求；真正的路径构建与 IK 校验在
+ * pc_action_4dof_loop() 所在的 4DOF 控制任务中完成，避免启动位姿尚未完成时
+ * 使用过期或未初始化的 current_pose。
+ */
+typedef struct {
+    bool valid;                         /**< 是否有待处理请求 */
+    PcAction4DOF_Command command;       /**< 请求动作类型 */
+    bool use_left;                      /**< 请求是否使用左臂 */
+    bool use_right;                     /**< 请求是否使用右臂 */
+    Dof4_Pose target[PC_ACT4_ARM_COUNT];/**< 动态动作目标；背部动作忽略 */
+} PcAction4DOF_PendingRequest;
 
 /* ======================== 外部全局变量引用 ======================== */
 extern Dof4_Arm g_dof4_arm_left;   /**< 左机械臂实例（定义于 Dof4_Arm.c） */
@@ -189,6 +223,7 @@ extern Dof4_Arm g_dof4_arm_right;  /**< 右机械臂实例（定义于 Dof4_Arm.
 /* ======================== 模块内部静态变量 ======================== */
 static PcAction4DOF_Context s_pc_ctx;            /**< PC 状态机运行时上下文 */
 static volatile bool s_pc_completion_pending;    /**< 是否有待发送的 0xCC 结束事件 */
+static PcAction4DOF_PendingRequest s_pc_pending; /**< 待启动 PC 动作请求 */
 
 /* ======================== 单臂动态动作模板 ======================== */
 /**
@@ -203,12 +238,14 @@ static const PcAction4DOF_DynamicTemplate s_pick_templates[PC_ACT4_ARM_COUNT] = 
         .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
         .exit_offset  = {-0.10f, -0.07f, 0.38f, -0.30f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
         .exit_offset  = {0.10f, 0.07f, 0.40f, -0.30f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
 
@@ -224,12 +261,14 @@ static const PcAction4DOF_DynamicTemplate s_dual_pick_templates[PC_ACT4_ARM_COUN
         .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
         .exit_offset  = {0.10f, -0.07f, 0.365f, -0.30f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
         .exit_offset  = {0.10f, 0.07f, 0.385f, -0.30f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
 
@@ -245,12 +284,14 @@ static const PcAction4DOF_DynamicTemplate s_place_templates[PC_ACT4_ARM_COUNT] =
         .entry_offset = {-0.075f, -0.20f, 0.49f, -0.30f},
         .exit_offset  = {-0.175f, -0.24f, 0.44f, -0.50f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
         .exit_offset  = {-0.175f, 0.15f, 0.43f, -0.50f},
         .target_pitch = -1.50f,
+        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
 
@@ -261,36 +302,38 @@ static const PcAction4DOF_DynamicTemplate s_place_templates[PC_ACT4_ARM_COUNT] =
 /**
  * @brief 单臂放块到背部路径（0x14）。
  *
- * 以下关节角逐点迁移自原 action_scheduler_4dof 动作表，并按当前左右臂
- * J1 坐标方向换算。pre 段从当前位姿运动至背部吸盘位置；post 段撤离回退。
+ * 关节角逐点与 action_scheduler_4dof 的 s_back_joint_targets 完全一致。
+ * 左臂 J1 向正方向旋转至左后方，右臂 J1 向负方向旋转至右后方。
+ * pre[0]=approach, pre[1]=waypoint_1, pre[2]=waypoint_2, pre[3]=target
+ * post[0]=retreat, post[1]=complete（关节归位点，之后切 POSE 回 IDLE）
  */
 static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
-    /* 左臂：J1 向负方向旋转到左后方。 */
+    /* 左臂：J1 向正方向旋转到左后方（匹配 ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK） */
     {
         .pre = {
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),   /* approach */
+            PC_JOINT_POINT( 1.570f, 1.50f, -1.70f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT( 2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(-2.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT( 2.100f, 1.50f, -1.20f, -1.463f),   /* retreat */
+            PC_JOINT_POINT( 1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
     },
-    /* 右臂：J1 向正方向旋转到右后方。 */
+    /* 右臂：J1 向负方向旋转到右后方（匹配 ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK） */
     {
         .pre = {
-            PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),
-            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT( 0.042f, 1.50f, -1.70f, -1.463f),   /* approach */
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(2.000f, 1.50f, -1.80f, -1.680f),
-            PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
+            PC_JOINT_POINT( -1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
@@ -300,20 +343,22 @@ static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
 /**
  * @brief 双臂同时放块到背部路径（0x22）。
  *
- * 与单臂路径相比，双臂模式下展开角度更大（J1=±3.10），为对侧手臂留出空间。
+ * 匹配 ACTION_BLOCK_PLACE_BACK，双臂模式下展开角度更大（J1=±3.10）。
+ * pre[0]=approach, pre[1]=waypoint_1, pre[2]=waypoint_2, pre[3]=target
+ * post[0]=retreat, post[1]=complete
  */
 static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 左臂 */
     {
         .pre = {
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),   /* approach */
+            PC_JOINT_POINT( 1.570f, 1.50f, -1.70f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT( 2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT( 2.100f, 1.50f, -1.20f, -1.463f),   /* retreat */
+            PC_JOINT_POINT( 1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
@@ -321,14 +366,14 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 右臂 */
     {
         .pre = {
-            PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT( 0.042f, 1.50f, -1.70f, -1.463f),   /* approach */
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
+            PC_JOINT_POINT( -1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
@@ -338,22 +383,23 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
 /**
  * @brief 单臂从背部取块路径（0x15）。
  *
- * 与 put_back 反向：先从当前位姿运动到背部吸盘位置吸取物块，
- * 然后撤离回到安全位姿。pre 段最后一个点对准背部，post 段撤回。
- * 注意左臂 pre[0] 和 pre[1] 重复（两点相同以实现停留）。
+ * 匹配 ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM（左）和
+ * ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM（右）。
+ * pre[0]=approach, pre[1]=waypoint_1, pre[2]=waypoint_2, pre[3]=target
+ * post[0]=retreat, post[1]=complete
  */
 static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 左臂 */
     {
         .pre = {
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-3.100f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-3.040f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.19f, -1.680f),   /* approach */
+            PC_JOINT_POINT(2.000f, 1.50f, -1.00f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
-            PC_JOINT_POINT(-0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(1.570f, 1.50f, -1.50f, -1.463f),   /* retreat */
+            PC_JOINT_POINT(1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
@@ -361,14 +407,14 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     /* 右臂 */
     {
         .pre = {
-            PC_JOINT_POINT(1.570f, 1.50f, -1.19f, -1.680f),
-            PC_JOINT_POINT(2.000f, 1.50f, -1.00f, -1.463f),
-            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),
-            PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.247f),
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.19f, -1.680f),   /* approach */
+            PC_JOINT_POINT(-2.000f, 1.50f, -1.00f, -1.463f),   /* waypoint_1 */
+            PC_JOINT_POINT(-2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
+            PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(1.570f, 1.50f, -1.80f, -1.680f),
-            PC_JOINT_POINT(0.042f, 1.50f, -1.70f, -1.463f),
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.50f, -1.463f),   /* retreat */
+            PC_JOINT_POINT(-1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
         .post_count = 2U,
@@ -400,7 +446,11 @@ static bool pc_action_4dof_arm_used(const PcAction4DOF_Context *ctx,
 }
 
 /**
- * @brief 校验固定关节路径，避免动作被接受后因限位裁剪而永远无法到位。
+ * @brief 校验固定关节路径是否可转换为舵机可执行目标。
+ *
+ * J1 允许 Dof4_angle_to_servo() 选择等效角；J2/J3/J4 由底层转换函数
+ * 统一处理关节限位和舵机限位。这里不再提前用 joint_min/max 拒绝，
+ * 避免背部固定动作的大角度 J1 被误判为非法。
  */
 static bool pc_action_4dof_joint_path_valid(
     uint8_t arm_index,
@@ -427,8 +477,6 @@ static bool pc_action_4dof_joint_path_valid(
                 const float angle = points[point_index].q[joint_index];
                 int16_t servo_pos;
                 if (!isfinite(angle) ||
-                    angle < arm->cfg.joint_min[joint_index] ||
-                    angle > arm->cfg.joint_max[joint_index] ||
                     Dof4_angle_to_servo(arm, joint_index, angle, &servo_pos) !=
                         DOF4_STATUS_OK) {
                     return false;
@@ -436,6 +484,53 @@ static bool pc_action_4dof_joint_path_valid(
             }
         }
     }
+    return true;
+}
+
+/**
+ * @brief 将固定关节路径归一化为实际舵机可执行角度。
+ *
+ * 背部固定路径来自实机调参，可能包含 J1 等效大角度或略超关节软限位的
+ * 角度。先转换为舵机步进，再从步进反算实际关节角，确保后续到位判断
+ * 与真正下发给舵机的目标一致。
+ */
+static bool pc_action_4dof_normalize_joint_path(
+    uint8_t arm_index,
+    PcAction4DOF_JointPath *path)
+{
+    if (!pc_action_4dof_joint_path_valid(arm_index, path)) {
+        return false;
+    }
+
+    const Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
+    for (uint8_t segment = 0U; segment < 2U; ++segment) {
+        PcAction4DOF_JointPoint *points =
+            (segment == 0U) ? path->pre : path->post;
+        const uint8_t count =
+            (segment == 0U) ? path->pre_count : path->post_count;
+
+        for (uint8_t point_index = 0U; point_index < count; ++point_index) {
+            for (uint8_t joint_index = 0U;
+                 joint_index < DOF4_JOINT_COUNT;
+                 ++joint_index) {
+                int16_t servo_pos = 0;
+                float executable_angle = points[point_index].q[joint_index];
+                if (Dof4_angle_to_servo(arm,
+                                        joint_index,
+                                        points[point_index].q[joint_index],
+                                        &servo_pos) != DOF4_STATUS_OK ||
+                    Dof4_servo_to_angle(arm,
+                                        joint_index,
+                                        servo_pos,
+                                        &executable_angle) != DOF4_STATUS_OK ||
+                    !isfinite(executable_angle)) {
+                    return false;
+                }
+                points[point_index].q[joint_index] = executable_angle;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -558,38 +653,94 @@ static bool pc_action_4dof_timed_out(void)
            (HAL_GetTick() - s_pc_ctx.enter_tick) >= s_pc_ctx.timeout_ms;
 }
 
+static bool pc_action_4dof_is_dynamic_pick_command(PcAction4DOF_Command command)
+{
+    return command == PC_ACT4_COMMAND_PICK ||
+           command == PC_ACT4_COMMAND_DUAL_PICK;
+}
+
+static bool pc_action_4dof_is_dynamic_place_command(PcAction4DOF_Command command)
+{
+    return command == PC_ACT4_COMMAND_PLACE ||
+           command == PC_ACT4_COMMAND_DUAL_PLACE;
+}
+
+static bool pc_action_4dof_is_back_put_command(PcAction4DOF_Command command)
+{
+    return command == PC_ACT4_COMMAND_PUT_BACK ||
+           command == PC_ACT4_COMMAND_DUAL_PUT_BACK;
+}
+
+static bool pc_action_4dof_is_back_get_command(PcAction4DOF_Command command)
+{
+    return command == PC_ACT4_COMMAND_GET_BACK ||
+           command == PC_ACT4_COMMAND_DUAL_GET_BACK;
+}
+
 /**
- * @brief 设置工作臂的吸盘状态（开启/关闭）。
+ * @brief 设置参与动作的工作臂电磁阀状态，并同步反馈镜像。
  *
- * 根据 use_left/use_right 决定控制哪一侧的手臂吸盘继电器。
- *
- * @param state PC_ACT4_SUCTION_ON 或 PC_ACT4_SUCTION_OFF
+ * @param state PC_ACT4_VALVE_OPEN 或 PC_ACT4_VALVE_CLOSED
  */
-static void pc_action_4dof_set_arm_suction(uint8_t state)
+static void pc_action_4dof_set_working_arm_valves(uint8_t state)
 {
     if (s_pc_ctx.use_left) {
         relay_control(PC_ACT4_RELAY_LEFT_ARM, state);
+        cmd4_update_valve_shadow(PC_ACT4_RELAY_LEFT_ARM, state);
     }
     if (s_pc_ctx.use_right) {
         relay_control(PC_ACT4_RELAY_RIGHT_ARM, state);
+        cmd4_update_valve_shadow(PC_ACT4_RELAY_RIGHT_ARM, state);
     }
 }
 
 /**
- * @brief 设置目标背部吸盘状态（开启/关闭）。
- *
- * 用于背部存放/取回操作时控制背部吸盘继电器。
- *
- * @param state PC_ACT4_SUCTION_ON 或 PC_ACT4_SUCTION_OFF
+ * @brief 打开参与动作的工作臂阀。
  */
-static void pc_action_4dof_set_target_back_suction(uint8_t state)
+static void pc_action_4dof_open_working_arm_valves(void)
+{
+    pc_action_4dof_set_working_arm_valves(PC_ACT4_VALVE_OPEN);
+}
+
+/**
+ * @brief 关闭参与动作的工作臂阀。
+ */
+static void pc_action_4dof_close_working_arm_valves(void)
+{
+    pc_action_4dof_set_working_arm_valves(PC_ACT4_VALVE_CLOSED);
+}
+
+/**
+ * @brief 设置参与动作的背部电磁阀状态，并同步反馈镜像。
+ *
+ * @param state PC_ACT4_VALVE_OPEN 或 PC_ACT4_VALVE_CLOSED
+ */
+static void pc_action_4dof_set_selected_back_valves(uint8_t state)
 {
     if (s_pc_ctx.use_left) {
         relay_control(PC_ACT4_RELAY_LEFT_BACK, state);
+        cmd4_update_valve_shadow(PC_ACT4_RELAY_LEFT_BACK, state);
     }
     if (s_pc_ctx.use_right) {
         relay_control(PC_ACT4_RELAY_RIGHT_BACK, state);
+        cmd4_update_valve_shadow(PC_ACT4_RELAY_RIGHT_BACK, state);
     }
+}
+
+/**
+ * @brief 放到背部时打开目标背部阀。
+ */
+static void pc_action_4dof_open_target_back_valves(void)
+{
+    pc_action_4dof_set_selected_back_valves(PC_ACT4_VALVE_OPEN);
+}
+
+/**
+ * @brief 从背部取回时关闭来源背部阀。
+ */
+static void pc_action_4dof_close_source_back_valves(void)
+{
+    pc_action_4dof_set_selected_back_valves(PC_ACT4_VALVE_CLOSED);
 }
 
 /**
@@ -697,13 +848,34 @@ static bool pc_action_4dof_idle_reached(void)
 }
 
 /**
+ * @brief 根据当前动作是否存在撤离段，进入撤离段或直接回 IDLE。
+ */
+static void pc_action_4dof_begin_post_or_idle(void)
+{
+    s_pc_ctx.path_index = 0U;
+    if (pc_action_4dof_current_path_count(false) == 0U) {
+        pc_action_4dof_set_state(PC_ACT4_STATE_RETURN_IDLE,
+                                 PC_ACT4_MOVE_TIMEOUT_MS);
+    } else {
+        pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_POST_PATH,
+                                 PC_ACT4_MOVE_TIMEOUT_MS);
+    }
+}
+
+/**
  * @brief 正常完成动作，释放执行权并标记结束事件待发送。
+ *
+ * 阀门处理遵循遥控任务模式：
+ * - 参与动作的工作臂在完成后恢复电磁阀打开；
+ * - 放置类动作的释放等待仍在运动状态机中完成，回到 idle 后再恢复默认打开。
  *
  * 在临界区内清除活跃标志、重置上下文，设置 completion_pending 以通知
  * 上层发送 0xCC 结束事件。
  */
 static void pc_action_4dof_finish(void)
 {
+    pc_action_4dof_open_working_arm_valves();
+
     taskENTER_CRITICAL();
     s_pc_ctx.active = false;
     s_pc_ctx.command = PC_ACT4_COMMAND_NONE;
@@ -718,7 +890,7 @@ static void pc_action_4dof_finish(void)
  * @brief 异常中止时启动强制归位流程。
  *
  * 此处不统一改阀门：
- * - release_committed=false 时，手臂吸盘仍保持开启，继续保载；
+ * - release_committed=false 时，工作臂电磁阀仍保持打开，继续保载；
  * - release_committed=true 时，保留已经完成的释放和背部占用结果。
  *
  * 状态机进入 ABORT_RETURN_IDLE 后尝试一个超时周期归位。
@@ -729,112 +901,346 @@ static void pc_action_4dof_begin_abort_return(void)
                              PC_ACT4_MOVE_TIMEOUT_MS);
 }
 
+/* ════════════════════════════════════════════════════════════════
+ * 关节模式独立状态机 —— 完全参照 action_scheduler_4dof 的 action_4dof_handle_joint
+ * ════════════════════════════════════════════════════════════════ */
+#define PC_ACT4_JOINT_BLEND_TOL_RAD (PC_ACT4_JOINT_TOL_RAD * 3.0f)
+
+static void pc_action_4dof_jnt_drive_pre(uint8_t pre_idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        const PcAction4DOF_JointPoint *wp = &s_pc_ctx.path.joint[ai].pre[pre_idx];
+        Dof4_JointState js;
+        memcpy(js.q, wp->q, sizeof(js.q));
+        (void)Dof4_arm_set_joint_target(pc_action_4dof_arm(ai), &js);
+    }
+}
+static void pc_action_4dof_jnt_drive_post(uint8_t post_idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        const PcAction4DOF_JointPoint *wp = &s_pc_ctx.path.joint[ai].post[post_idx];
+        Dof4_JointState js;
+        memcpy(js.q, wp->q, sizeof(js.q));
+        (void)Dof4_arm_set_joint_target(pc_action_4dof_arm(ai), &js);
+    }
+}
+static bool pc_action_4dof_jnt_pre_blend(uint8_t idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        const float *tgt = s_pc_ctx.path.joint[ai].pre[idx].q;
+        const Dof4_Arm *arm = pc_action_4dof_arm(ai);
+        for (uint8_t j = 0U; j < DOF4_JOINT_COUNT; ++j)
+            if (fabsf(Dof4_normalize_angle(arm->joint_actual.q[j] - tgt[j])) > PC_ACT4_JOINT_BLEND_TOL_RAD) return false;
+    }
+    return true;
+}
+static bool pc_action_4dof_jnt_pre_reach(uint8_t idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        if (!pc_action_4dof_joint_reached(pc_action_4dof_arm(ai), &s_pc_ctx.path.joint[ai].pre[idx])) return false;
+    }
+    return true;
+}
+static bool pc_action_4dof_jnt_post_blend(uint8_t idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        const float *tgt = s_pc_ctx.path.joint[ai].post[idx].q;
+        const Dof4_Arm *arm = pc_action_4dof_arm(ai);
+        for (uint8_t j = 0U; j < DOF4_JOINT_COUNT; ++j)
+            if (fabsf(Dof4_normalize_angle(arm->joint_actual.q[j] - tgt[j])) > PC_ACT4_JOINT_BLEND_TOL_RAD) return false;
+    }
+    return true;
+}
+static bool pc_action_4dof_jnt_post_reach(uint8_t idx)
+{
+    for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
+        if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
+        if (!pc_action_4dof_joint_reached(pc_action_4dof_arm(ai), &s_pc_ctx.path.joint[ai].post[idx])) return false;
+    }
+    return true;
+}
+static void pc_action_4dof_jnt_set_tmo(uint32_t ms) { s_pc_ctx.enter_tick = HAL_GetTick(); s_pc_ctx.timeout_ms = ms; }
+
+static void pc_action_4dof_handle_joint(void)
+{
+    const uint8_t last_pre = pc_action_4dof_current_path_count(true) - 1U;
+
+    switch (s_pc_ctx.jnt_substate) {
+    case PC_ACT4_JNT_APPROACH:
+    case PC_ACT4_JNT_PLACE_APPROACH:
+        pc_action_4dof_jnt_drive_pre(0U);
+        if (pc_action_4dof_jnt_pre_blend(0U) || pc_action_4dof_timed_out()) {
+            s_pc_ctx.path_index = 0U;
+            s_pc_ctx.jnt_substate = PC_ACT4_JNT_INTERMEDIATE;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case PC_ACT4_JNT_INTERMEDIATE: {
+        uint8_t wp_i = s_pc_ctx.path_index;
+        uint8_t pre_i = wp_i + 1U;
+        pc_action_4dof_jnt_drive_pre(pre_i);
+        if (pc_action_4dof_jnt_pre_blend(pre_i) || pc_action_4dof_timed_out()) {
+            s_pc_ctx.path_index = wp_i + 1U;
+            if (s_pc_ctx.path_index < last_pre) {
+                s_pc_ctx.jnt_substate = PC_ACT4_JNT_INTERMEDIATE;
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+            } else {
+                bool is_place = pc_action_4dof_is_back_put_command(s_pc_ctx.command);
+                s_pc_ctx.jnt_substate = is_place ? PC_ACT4_JNT_PLACE : PC_ACT4_JNT_GRAB;
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+            }
+        }
+        break;
+    }
+
+    case PC_ACT4_JNT_GRAB:
+        pc_action_4dof_jnt_drive_pre(last_pre);
+        if (pc_action_4dof_jnt_pre_reach(last_pre) || pc_action_4dof_timed_out()) {
+            s_pc_ctx.joint_phase_started = false;
+            s_pc_ctx.jnt_substate = PC_ACT4_JNT_SUCTION_GRAB;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS);
+        }
+        break;
+
+    case PC_ACT4_JNT_SUCTION_GRAB:
+        pc_action_4dof_jnt_drive_pre(last_pre);
+        if (pc_action_4dof_timed_out()) {
+            if (!pc_action_4dof_is_back_get_command(s_pc_ctx.command)) {
+                s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+            } else if (!s_pc_ctx.joint_phase_started) {
+                /* 背部取回：手臂已吸附稳定，关闭来源背部阀并清空背部占用。 */
+                s_pc_ctx.joint_phase_started = true;
+                pc_action_4dof_close_source_back_valves();
+                pc_action_4dof_apply_back_state(false);
+                s_pc_ctx.release_committed = true;
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS);
+            } else {
+                s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+            }
+        }
+        break;
+
+    case PC_ACT4_JNT_PLACE:
+        pc_action_4dof_jnt_drive_pre(last_pre);
+        if (pc_action_4dof_jnt_pre_reach(last_pre)) {
+            if (!s_pc_ctx.joint_phase_started) {
+                /* 背部放置：到达后打开目标背部阀，先等待背部吸附稳定。 */
+                s_pc_ctx.joint_phase_started = true;
+                pc_action_4dof_open_target_back_valves();
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_PRE_RELEASE_MS);
+            } else if (pc_action_4dof_timed_out()) {
+                s_pc_ctx.joint_phase_started = false;
+                s_pc_ctx.jnt_substate = PC_ACT4_JNT_SUCTION_PLACE;
+                pc_action_4dof_jnt_set_tmo(0U);
+            }
+        } else if (pc_action_4dof_timed_out()) {
+            s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case PC_ACT4_JNT_SUCTION_PLACE:
+        pc_action_4dof_jnt_drive_pre(last_pre);
+        if (!s_pc_ctx.joint_phase_started) {
+            /* 背部放置：背部已吸附稳定，关闭工作臂阀完成交接。 */
+            s_pc_ctx.joint_phase_started = true;
+            pc_action_4dof_close_working_arm_valves();
+            pc_action_4dof_apply_back_state(true);
+            s_pc_ctx.release_committed = true;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_POST_RELEASE_MS);
+        } else if (pc_action_4dof_timed_out()) {
+            s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case PC_ACT4_JNT_RETREAT:
+        pc_action_4dof_jnt_drive_post(0U);
+        if (pc_action_4dof_jnt_post_blend(0U) || pc_action_4dof_timed_out()) {
+            s_pc_ctx.jnt_substate = PC_ACT4_JNT_COMPLETE;
+            pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
+
+    case PC_ACT4_JNT_COMPLETE:
+        if (s_pc_ctx.timeout_ms == PC_ACT4_MOVE_TIMEOUT_MS) {
+            pc_action_4dof_jnt_drive_post(1U);
+            if (pc_action_4dof_jnt_post_reach(1U) || pc_action_4dof_timed_out()) {
+                pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_IDLE_HOLD_MS);
+            }
+        } else {
+            if (pc_action_4dof_idle_reached() || pc_action_4dof_timed_out()) {
+                pc_action_4dof_finish();
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
+                                  PcAction4DOF_RejectReason reason,
+                                  const Dof4_Pose *target_world)
+{
+    Dof4_Arm *arm = (arm_id == DOF4_ARM_RIGHT)
+        ? &g_dof4_arm_right
+        : &g_dof4_arm_left;
+
+    Dof4_ClipDiagnostic *diagnostic = &arm->clip_diagnostic;
+    memset(diagnostic, 0, sizeof(*diagnostic));
+    if (target_world != NULL) {
+        diagnostic->requested_pose = *target_world;
+        diagnostic->limited_pose = *target_world;
+    }
+    diagnostic->control_mode = DOF4_CONTROL_MODE_POSE;
+    diagnostic->reason = DOF4_CLIP_REASON_PC_ACTION_REJECT;
+    diagnostic->joint_mask = (uint8_t)reason;
+    arm->clip_event_counter++;
+    diagnostic->event_id = arm->clip_event_counter;
+    diagnostic->pending = true;
+}
+
 /**
- * @brief 构造动态取放路径（位姿模式）。
+ * @brief 构造简化动态取放路径（中间点悬停后垂直下降）。
  *
- * 根据 PC 下发的目标世界坐标和模板偏移量，自动生成三段式接近路径：
- *   1. 相对安全入口（target + entry_offset）
- *   2. 目标正上方（target.x, target.y, target.z + 垂直净空）
- *   3. 目标点（target）
- * 和两段式撤离路径：
- *   1. 目标正上方
- *   2. 相对安全出口（target + exit_offset）
+ * 路径结构（单臂）：
+ *   pre[0] = 悬停点（target 正上方，俯仰角 = 模板 entry_offset.pitch）
+ *   pre[1] = 目标点（PC 下发的 x, y, z，俯仰角由模板指定）
+ *   post[0]= 悬停点（撤离时回到正上方）
  *
- * 生成后对所有路径点进行可达性校验。
+ * 悬停点 xyz 保持在 target 正上方，pitch 使用实机已调的 approach 姿态，
+ * 避免正上方中间点因强制目标俯仰角导致 IK 不可达。
  *
  * @param candidate     待填充的上下文（输出参数）
  * @param arm_index     手臂索引 (0=左, 1=右)
  * @param target_world  PC 下发的目标世界坐标
- * @param template_data 动态动作模板（包含偏移量和俯仰角）
+ * @param template_data 动态动作模板
+ * @param reject_reason 拒绝原因（输出参数）
  * @return true 表示路径构造成功且所有点可达
  */
 static bool pc_action_4dof_build_dynamic_arm_path(
     PcAction4DOF_Context *candidate,
     uint8_t arm_index,
     const Dof4_Pose *target_world,
-    const PcAction4DOF_DynamicTemplate *template_data)
+    const PcAction4DOF_DynamicTemplate *template_data,
+    PcAction4DOF_RejectReason *reject_reason)
 {
+    if (reject_reason != NULL) {
+        *reject_reason = PC_ACTION_4DOF_REJECT_NONE;
+    }
+
     if (candidate == NULL || arm_index >= PC_ACT4_ARM_COUNT ||
-        !pc_action_4dof_pose_finite(target_world) || template_data == NULL) {
+        template_data == NULL) {
+        if (reject_reason != NULL) {
+            *reject_reason = PC_ACTION_4DOF_REJECT_BAD_TARGET;
+        }
+        return false;
+    }
+
+    if (!pc_action_4dof_pose_finite(target_world)) {
+        if (reject_reason != NULL) {
+            *reject_reason = PC_ACTION_4DOF_REJECT_BAD_TARGET;
+        }
         return false;
     }
 
     PcAction4DOF_PosePath *path = &candidate->path.pose[arm_index];
+    Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
+
+    /* ── 构造目标点位姿 ──────────────────────────────────────────── */
     const Dof4_Pose target = {
         .x = target_world->x,
         .y = target_world->y,
         .z = target_world->z,
         .pitch = template_data->target_pitch,
     };
-    const Dof4_Pose overhead = {
-        .x = target.x,
-        .y = target.y,
-        .z = target.z + PC_ACTION_4DOF_VERTICAL_CLEARANCE_M,
-        .pitch = template_data->target_pitch,
-    };
+    if (!pc_action_4dof_pose_reachable(arm, &target)) {
+        if (reject_reason != NULL) {
+            *reject_reason = PC_ACTION_4DOF_REJECT_TARGET_UNREACHABLE;
+        }
+        return false;
+    }
 
-    /* 接近段：安全入口 -> 目标正上方 -> 目标 */
-    path->pre[0] = (Dof4_Pose){
-        target.x + template_data->entry_offset.x,
-        target.y + template_data->entry_offset.y,
-        target.z + template_data->entry_offset.z,
-        template_data->entry_offset.pitch,
-    };
-    path->pre[1] = overhead;
-    path->pre[2] = target;
-    path->pre_count = 3U;
+    /* ── 构造悬停点：目标正上方，末端优先垂直向下 ─────────── */
+    Dof4_Pose hover = target;
+    hover.z += template_data->vertical_clearance_m;
+    (void)Dof4_clamp_to_workspace(arm, &hover);
 
-    /* 撤离段：目标正上方 -> 安全出口 */
-    path->post[0] = overhead;
-    path->post[1] = (Dof4_Pose){
-        target.x + template_data->exit_offset.x,
-        target.y + template_data->exit_offset.y,
-        target.z + template_data->exit_offset.z,
-        template_data->exit_offset.pitch,
-    };
-    path->post_count = 2U;
-
-    /* 校验所有路径点的可达性 */
-    Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
-    for (uint8_t i = 0U; i < path->pre_count; ++i) {
-        if (!pc_action_4dof_pose_reachable(arm, &path->pre[i])) {
-            return false;
+    /* 逐级降级俯仰角：优先 target_pitch（末端垂直向下），
+     * 不可达则降级到模板 approach 姿态，再不可达则用钳位 pitch */
+    hover.pitch = template_data->target_pitch;
+    if (!pc_action_4dof_pose_reachable(arm, &hover)) {
+        hover.pitch = template_data->entry_offset.pitch;
+        if (!pc_action_4dof_pose_reachable(arm, &hover)) {
+            Dof4_Pose clamped2 = target;
+            clamped2.z += template_data->vertical_clearance_m;
+            (void)Dof4_clamp_to_workspace(arm, &clamped2);
+            if (!pc_action_4dof_pose_reachable(arm, &clamped2)) {
+                if (reject_reason != NULL) {
+                    *reject_reason = PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE;
+                }
+                return false;
+            }
+            hover = clamped2;
         }
     }
-    for (uint8_t i = 0U; i < path->post_count; ++i) {
-        if (!pc_action_4dof_pose_reachable(arm, &path->post[i])) {
-            return false;
-        }
-    }
+
+    /* ── 简化路径：悬停点 → 目标点（无中间插值） ────────────────── */
+    path->pre[0] = hover;
+    path->pre[1] = target;
+    path->pre_count = 2U;
+    path->post[0] = hover;   /* 撤离时回到悬停点 */
+    path->post_count = 1U;
+
     return true;
 }
 
 /**
- * @brief 原子取得 PC/RC 共用执行权。
+ * @brief 原子取得 PC 动作执行权。
  *
  * 路径在临界区外构造和校验，最终只在短临界区内检查两个状态机并复制上下文。
- * 因此 PC 接收任务与 RC 控制任务即使同时触发，也只会有一方成功。
+ * 因此 PC 动作与预设动作即使同时触发，也只会有一方成功。
  *
  * 执行条件：
  * - PC 状态机不在活跃状态
  * - 无待发送的结束事件
- * - RC 状态机不在活跃状态
+ * - 预设动作状态机不在活跃状态
  *
  * @param candidate 已构造好的候选上下文
  * @return true 表示成功取得执行权，动作已启动
  */
-static bool pc_action_4dof_claim(const PcAction4DOF_Context *candidate)
+static bool pc_action_4dof_claim(const PcAction4DOF_Context *candidate,
+                                 Dof4_ArmId reject_arm_id,
+                                 const Dof4_Pose *target_world)
 {
     bool accepted = false;
+    PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
 
     if (candidate == NULL) {
+        pc_action_4dof_record_reject(reject_arm_id,
+                                     PC_ACTION_4DOF_REJECT_BAD_TARGET,
+                                     target_world);
         return false;
     }
 
     taskENTER_CRITICAL();
-    if (!s_pc_ctx.active &&
-        !s_pc_completion_pending &&
-        !action_4dof_is_active()) {
+    if (s_pc_ctx.active) {
+        reject_reason = PC_ACTION_4DOF_REJECT_BUSY;
+    } else if (s_pc_completion_pending) {
+        reject_reason = PC_ACTION_4DOF_REJECT_COMPLETION_PENDING;
+    } else if (action_4dof_is_active()) {
+        reject_reason = PC_ACTION_4DOF_REJECT_ACTION_ACTIVE;
+    } else {
         s_pc_ctx = *candidate;
         s_pc_ctx.active = true;
         accepted = true;
@@ -842,8 +1248,10 @@ static bool pc_action_4dof_claim(const PcAction4DOF_Context *candidate)
     taskEXIT_CRITICAL();
 
     if (accepted) {
-        /* 所有取放动作启动时先打开工作臂吸盘，确保接近过程中保持负压。 */
-        pc_action_4dof_set_arm_suction(PC_ACT4_SUCTION_ON);
+        /* 所有取放动作启动时先打开工作臂电磁阀，确保接近过程中保持默认阀态。 */
+        pc_action_4dof_open_working_arm_valves();
+    } else {
+        pc_action_4dof_record_reject(reject_arm_id, reject_reason, target_world);
     }
     return accepted;
 }
@@ -869,11 +1277,267 @@ static void pc_action_4dof_prepare_candidate(PcAction4DOF_Context *candidate,
     memset(candidate, 0, sizeof(*candidate));
     candidate->command = command;
     candidate->mode = mode;
-    candidate->state = PC_ACT4_STATE_MOVE_PRE_PATH;
-    candidate->enter_tick = HAL_GetTick();
-    candidate->timeout_ms = PC_ACT4_MOVE_TIMEOUT_MS;
     candidate->use_left = use_left;
     candidate->use_right = use_right;
+    candidate->enter_tick = HAL_GetTick();
+    candidate->timeout_ms = PC_ACT4_MOVE_TIMEOUT_MS;
+    if (mode == PC_ACT4_MODE_JOINT) {
+        candidate->state = PC_ACT4_STATE_IDLE;
+        candidate->jnt_substate = pc_action_4dof_is_back_put_command(command)
+                                  ? PC_ACT4_JNT_PLACE_APPROACH
+                                  : PC_ACT4_JNT_APPROACH;
+    } else {
+        candidate->state = PC_ACT4_STATE_MOVE_PRE_PATH;
+    }
+}
+
+static bool pc_action_4dof_command_uses_pose(PcAction4DOF_Command command)
+{
+    return pc_action_4dof_is_dynamic_pick_command(command) ||
+           pc_action_4dof_is_dynamic_place_command(command);
+}
+
+static bool pc_action_4dof_should_hold_pre_waypoint(void)
+{
+    return s_pc_ctx.mode == PC_ACT4_MODE_POSE &&
+           pc_action_4dof_command_uses_pose(s_pc_ctx.command) &&
+           s_pc_ctx.path_index == PC_ACT4_DYNAMIC_HOLD_PRE_INDEX;
+}
+
+static void pc_action_4dof_clear_pending(void)
+{
+    taskENTER_CRITICAL();
+    memset(&s_pc_pending, 0, sizeof(s_pc_pending));
+    taskEXIT_CRITICAL();
+}
+
+static bool pc_action_4dof_submit_pending(PcAction4DOF_Command command,
+                                          bool use_left,
+                                          bool use_right,
+                                          const Dof4_Pose *left_target_world,
+                                          const Dof4_Pose *right_target_world,
+                                          Dof4_ArmId reject_arm_id,
+                                          const Dof4_Pose *reject_target_world)
+{
+    PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
+    bool accepted = false;
+
+    if (pc_action_4dof_command_uses_pose(command)) {
+        if ((use_left && !pc_action_4dof_pose_finite(left_target_world)) ||
+            (use_right && !pc_action_4dof_pose_finite(right_target_world))) {
+            pc_action_4dof_record_reject(reject_arm_id,
+                                         PC_ACTION_4DOF_REJECT_BAD_TARGET,
+                                         reject_target_world);
+            return false;
+        }
+    }
+
+    taskENTER_CRITICAL();
+    if (s_pc_pending.valid) {
+        reject_reason = PC_ACTION_4DOF_REJECT_PENDING_FULL;
+    } else if (s_pc_ctx.active) {
+        reject_reason = PC_ACTION_4DOF_REJECT_BUSY;
+    } else if (s_pc_completion_pending) {
+        reject_reason = PC_ACTION_4DOF_REJECT_COMPLETION_PENDING;
+    } else if (action_4dof_is_active()) {
+        reject_reason = PC_ACTION_4DOF_REJECT_ACTION_ACTIVE;
+    } else {
+        memset(&s_pc_pending, 0, sizeof(s_pc_pending));
+        s_pc_pending.valid = true;
+        s_pc_pending.command = command;
+        s_pc_pending.use_left = use_left;
+        s_pc_pending.use_right = use_right;
+        if (use_left && left_target_world != NULL) {
+            s_pc_pending.target[0] = *left_target_world;
+        }
+        if (use_right && right_target_world != NULL) {
+            s_pc_pending.target[1] = *right_target_world;
+        }
+        accepted = true;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!accepted) {
+        pc_action_4dof_record_reject(reject_arm_id,
+                                     reject_reason,
+                                     reject_target_world);
+    }
+    return accepted;
+}
+
+/* @brief 从待处理请求构建候选动作上下文。
+ *
+ * 根据待处理请求的命令类型和手臂选择，构造对应的路径数据并填充到候选上下文中。
+ * 如果路径构造失败，则返回 false 并设置 reject_arm_id 和 reject_target_world 以记录拒绝原因。
+ *
+ * @param request 待处理请求
+ * @param candidate 待填充的候选上下文（输出参数）
+ * @param reject_arm_id 拒绝的手臂 ID（输出参数）
+ * @param reject_target_world 拒绝的目标位姿（输出参数）
+ * @return true 表示成功构建候选上下文，false 表示构建失败
+ */
+static bool pc_action_4dof_build_candidate_from_pending(
+    const PcAction4DOF_PendingRequest *request,
+    PcAction4DOF_Context *candidate,
+    Dof4_ArmId *reject_arm_id,
+    const Dof4_Pose **reject_target_world)
+{
+    if (request == NULL || candidate == NULL ||
+        reject_arm_id == NULL || reject_target_world == NULL) {
+        return false;
+    }
+
+    *reject_arm_id = request->use_right ? DOF4_ARM_RIGHT : DOF4_ARM_LEFT;
+    *reject_target_world = NULL;
+
+    switch (request->command) {
+    case PC_ACT4_COMMAND_PICK:
+    case PC_ACT4_COMMAND_PLACE: {
+        const bool use_left = request->use_left;
+        const uint8_t arm_index = use_left ? 0U : 1U;
+        const Dof4_ArmId arm_id = use_left ? DOF4_ARM_LEFT : DOF4_ARM_RIGHT;
+        const PcAction4DOF_DynamicTemplate *template_data =
+            (request->command == PC_ACT4_COMMAND_PICK)
+                ? &s_pick_templates[arm_index]
+                : &s_place_templates[arm_index];
+        PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
+
+        *reject_arm_id = arm_id;
+        *reject_target_world = &request->target[arm_index];
+        pc_action_4dof_prepare_candidate(
+            candidate,
+            request->command,
+            PC_ACT4_MODE_POSE,
+            arm_index == 0U,
+            arm_index == 1U);
+        if (!pc_action_4dof_build_dynamic_arm_path(
+                candidate,
+                arm_index,
+                &request->target[arm_index],
+                template_data,
+                &reject_reason)) {
+            pc_action_4dof_record_reject(
+                arm_id, reject_reason, &request->target[arm_index]);
+            return false;
+        }
+        return true;
+    }
+
+    case PC_ACT4_COMMAND_DUAL_PICK:
+    case PC_ACT4_COMMAND_DUAL_PLACE: {
+        const PcAction4DOF_DynamicTemplate *left_template =
+            (request->command == PC_ACT4_COMMAND_DUAL_PICK)
+                ? &s_dual_pick_templates[0]
+                : &s_place_templates[0];
+        const PcAction4DOF_DynamicTemplate *right_template =
+            (request->command == PC_ACT4_COMMAND_DUAL_PICK)
+                ? &s_dual_pick_templates[1]
+                : &s_place_templates[1];
+        PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
+
+        *reject_arm_id = DOF4_ARM_LEFT;
+        *reject_target_world = &request->target[0];
+        pc_action_4dof_prepare_candidate(
+            candidate, request->command, PC_ACT4_MODE_POSE, true, true);
+        if (!pc_action_4dof_build_dynamic_arm_path(
+                candidate, 0U, &request->target[0],
+                left_template, &reject_reason)) {
+            pc_action_4dof_record_reject(
+                DOF4_ARM_LEFT, reject_reason, &request->target[0]);
+            return false;
+        }
+        if (!pc_action_4dof_build_dynamic_arm_path(
+                candidate, 1U, &request->target[1],
+                right_template, &reject_reason)) {
+            *reject_arm_id = DOF4_ARM_RIGHT;
+            *reject_target_world = &request->target[1];
+            pc_action_4dof_record_reject(
+                DOF4_ARM_RIGHT, reject_reason, &request->target[1]);
+            return false;
+        }
+        return true;
+    }
+
+    case PC_ACT4_COMMAND_PUT_BACK:
+    case PC_ACT4_COMMAND_GET_BACK: {
+        const bool use_left = request->use_left;
+        const uint8_t arm_index = use_left ? 0U : 1U;
+        const Dof4_ArmId arm_id = use_left ? DOF4_ARM_LEFT : DOF4_ARM_RIGHT;
+        *reject_arm_id = arm_id;
+        pc_action_4dof_prepare_candidate(
+            candidate,
+            request->command,
+            PC_ACT4_MODE_JOINT,
+            arm_index == 0U,
+            arm_index == 1U);
+        candidate->path.joint[arm_index] =
+            (request->command == PC_ACT4_COMMAND_PUT_BACK)
+                ? s_put_back_paths[arm_index]
+                : s_get_back_paths[arm_index];
+        if (!pc_action_4dof_normalize_joint_path(
+                arm_index, &candidate->path.joint[arm_index])) {
+            pc_action_4dof_record_reject(
+                arm_id, PC_ACTION_4DOF_REJECT_JOINT_PATH_INVALID, NULL);
+            return false;
+        }
+        return true;
+    }
+
+    case PC_ACT4_COMMAND_DUAL_PUT_BACK:
+    case PC_ACT4_COMMAND_DUAL_GET_BACK:
+        *reject_arm_id = DOF4_ARM_LEFT;
+        pc_action_4dof_prepare_candidate(
+            candidate, request->command, PC_ACT4_MODE_JOINT, true, true);
+        if (request->command == PC_ACT4_COMMAND_DUAL_PUT_BACK) {
+            candidate->path.joint[0] = s_dual_put_back_paths[0];
+            candidate->path.joint[1] = s_dual_put_back_paths[1];
+        } else {
+            candidate->path.joint[0] = s_get_back_paths[0];
+            candidate->path.joint[1] = s_get_back_paths[1];
+        }
+        if (!pc_action_4dof_normalize_joint_path(0U, &candidate->path.joint[0]) ||
+            !pc_action_4dof_normalize_joint_path(1U, &candidate->path.joint[1])) {
+            pc_action_4dof_record_reject(
+                DOF4_ARM_LEFT, PC_ACTION_4DOF_REJECT_JOINT_PATH_INVALID, NULL);
+            return false;
+        }
+        return true;
+
+    case PC_ACT4_COMMAND_NONE:
+    default:
+        pc_action_4dof_record_reject(
+            DOF4_ARM_LEFT, PC_ACTION_4DOF_REJECT_BAD_TARGET, NULL);
+        return false;
+    }
+}
+
+static void pc_action_4dof_try_start_pending(void)
+{
+    PcAction4DOF_PendingRequest request;
+    bool has_request = false;
+
+    taskENTER_CRITICAL();
+    if (s_pc_pending.valid && !s_pc_ctx.active) {
+        request = s_pc_pending;
+        has_request = true;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!has_request) {
+        return;
+    }
+
+    PcAction4DOF_Context candidate;
+    Dof4_ArmId reject_arm_id = DOF4_ARM_LEFT;
+    const Dof4_Pose *reject_target_world = NULL;
+
+    if (pc_action_4dof_build_candidate_from_pending(
+            &request, &candidate, &reject_arm_id, &reject_target_world)) {
+        (void)pc_action_4dof_claim(
+            &candidate, reject_arm_id, reject_target_world);
+    }
+
+    pc_action_4dof_clear_pending();
 }
 
 /* ======================== 公有 API 实现 ======================== */
@@ -882,6 +1546,7 @@ void pc_action_4dof_init(void)
 {
     taskENTER_CRITICAL();
     memset(&s_pc_ctx, 0, sizeof(s_pc_ctx));
+    memset(&s_pc_pending, 0, sizeof(s_pc_pending));
     s_pc_ctx.command = PC_ACT4_COMMAND_NONE;
     s_pc_ctx.state = PC_ACT4_STATE_IDLE;
     s_pc_completion_pending = false;
@@ -893,19 +1558,21 @@ bool pc_action_4dof_start_pick(Dof4_ArmId arm_id,
 {
     /* 校验手臂 ID 合法性 */
     if (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     target_world);
         return false;
     }
 
-    PcAction4DOF_Context candidate;
     const uint8_t arm_index = (arm_id == DOF4_ARM_LEFT) ? 0U : 1U;
-    pc_action_4dof_prepare_candidate(&candidate, PC_ACT4_COMMAND_PICK,
-                                     PC_ACT4_MODE_POSE,
-                                     arm_index == 0U, arm_index == 1U);
-    if (!pc_action_4dof_build_dynamic_arm_path(
-            &candidate, arm_index, target_world, &s_pick_templates[arm_index])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_PICK,
+        arm_index == 0U,
+        arm_index == 1U,
+        arm_index == 0U ? target_world : NULL,
+        arm_index == 1U ? target_world : NULL,
+        arm_id,
+        target_world);
 }
 
 bool pc_action_4dof_start_place(Dof4_ArmId arm_id,
@@ -913,95 +1580,146 @@ bool pc_action_4dof_start_place(Dof4_ArmId arm_id,
 {
     /* 校验手臂 ID 合法性 */
     if (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     target_world);
         return false;
     }
 
-    PcAction4DOF_Context candidate;
     const uint8_t arm_index = (arm_id == DOF4_ARM_LEFT) ? 0U : 1U;
-    pc_action_4dof_prepare_candidate(&candidate, PC_ACT4_COMMAND_PLACE,
-                                     PC_ACT4_MODE_POSE,
-                                     arm_index == 0U, arm_index == 1U);
-    if (!pc_action_4dof_build_dynamic_arm_path(
-            &candidate, arm_index, target_world, &s_place_templates[arm_index])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_PLACE,
+        arm_index == 0U,
+        arm_index == 1U,
+        arm_index == 0U ? target_world : NULL,
+        arm_index == 1U ? target_world : NULL,
+        arm_id,
+        target_world);
 }
 
 bool pc_action_4dof_start_put_back(Dof4_ArmId arm_id)
 {
     /* 校验手臂 ID 合法性 */
     if (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     NULL);
         return false;
     }
 
-    PcAction4DOF_Context candidate;
     const uint8_t arm_index = (arm_id == DOF4_ARM_LEFT) ? 0U : 1U;
-    pc_action_4dof_prepare_candidate(&candidate, PC_ACT4_COMMAND_PUT_BACK,
-                                     PC_ACT4_MODE_JOINT,
-                                     arm_index == 0U, arm_index == 1U);
-    candidate.path.joint[arm_index] = s_put_back_paths[arm_index];
-    if (!pc_action_4dof_joint_path_valid(
-            arm_index, &candidate.path.joint[arm_index])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_PUT_BACK,
+        arm_index == 0U,
+        arm_index == 1U,
+        NULL,
+        NULL,
+        arm_id,
+        NULL);
 }
 
 bool pc_action_4dof_start_get_back(Dof4_ArmId arm_id)
 {
     /* 校验手臂 ID 合法性 */
     if (arm_id != DOF4_ARM_LEFT && arm_id != DOF4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     NULL);
         return false;
     }
 
-    PcAction4DOF_Context candidate;
     const uint8_t arm_index = (arm_id == DOF4_ARM_LEFT) ? 0U : 1U;
-    pc_action_4dof_prepare_candidate(&candidate, PC_ACT4_COMMAND_GET_BACK,
-                                     PC_ACT4_MODE_JOINT,
-                                     arm_index == 0U, arm_index == 1U);
-    candidate.path.joint[arm_index] = s_get_back_paths[arm_index];
-    if (!pc_action_4dof_joint_path_valid(
-            arm_index, &candidate.path.joint[arm_index])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_GET_BACK,
+        arm_index == 0U,
+        arm_index == 1U,
+        NULL,
+        NULL,
+        arm_id,
+        NULL);
 }
 
 bool pc_action_4dof_start_dual_pick(const Dof4_Pose *left_target_world,
                                     const Dof4_Pose *right_target_world)
 {
-    PcAction4DOF_Context candidate;
-    pc_action_4dof_prepare_candidate(&candidate, PC_ACT4_COMMAND_DUAL_PICK,
-                                     PC_ACT4_MODE_POSE, true, true);
-    /* 分别为左右臂构造动态路径，任一失败则整体拒绝 */
-    if (!pc_action_4dof_build_dynamic_arm_path(
-            &candidate, 0U, left_target_world, &s_dual_pick_templates[0]) ||
-        !pc_action_4dof_build_dynamic_arm_path(
-            &candidate, 1U, right_target_world, &s_dual_pick_templates[1])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_DUAL_PICK,
+        true,
+        true,
+        left_target_world,
+        right_target_world,
+        DOF4_ARM_LEFT,
+        left_target_world);
+}
+
+bool pc_action_4dof_start_dual_place(const Dof4_Pose *left_target_world,
+                                     const Dof4_Pose *right_target_world)
+{
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_DUAL_PLACE,
+        true,
+        true,
+        left_target_world,
+        right_target_world,
+        DOF4_ARM_LEFT,
+        left_target_world);
 }
 
 bool pc_action_4dof_start_dual_put_back(void)
 {
-    PcAction4DOF_Context candidate;
-    pc_action_4dof_prepare_candidate(&candidate,
-                                     PC_ACT4_COMMAND_DUAL_PUT_BACK,
-                                     PC_ACT4_MODE_JOINT, true, true);
-    candidate.path.joint[0] = s_dual_put_back_paths[0];
-    candidate.path.joint[1] = s_dual_put_back_paths[1];
-    if (!pc_action_4dof_joint_path_valid(0U, &candidate.path.joint[0]) ||
-        !pc_action_4dof_joint_path_valid(1U, &candidate.path.joint[1])) {
-        return false;
-    }
-    return pc_action_4dof_claim(&candidate);
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_DUAL_PUT_BACK,
+        true,
+        true,
+        NULL,
+        NULL,
+        DOF4_ARM_LEFT,
+        NULL);
+}
+
+bool pc_action_4dof_start_dual_get_back(void)
+{
+    return pc_action_4dof_submit_pending(
+        PC_ACT4_COMMAND_DUAL_GET_BACK,
+        true,
+        true,
+        NULL,
+        NULL,
+        DOF4_ARM_LEFT,
+        NULL);
 }
 
 bool pc_action_4dof_is_active(void)
 {
-    return s_pc_ctx.active;
+    bool active;
+    taskENTER_CRITICAL();
+    active = s_pc_ctx.active || s_pc_pending.valid;
+    taskEXIT_CRITICAL();
+    return active;
+}
+
+void pc_action_4dof_get_debug_snapshot(PcAction4DOF_DebugSnapshot *snapshot)
+{
+    if (snapshot == NULL) {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    snapshot->active = s_pc_ctx.active;
+    snapshot->pending = s_pc_pending.valid;
+    snapshot->use_left = s_pc_ctx.use_left;
+    snapshot->use_right = s_pc_ctx.use_right;
+    snapshot->release_committed = s_pc_ctx.release_committed;
+    snapshot->operation_phase_started = s_pc_ctx.operation_phase_started;
+    snapshot->joint_phase_started = s_pc_ctx.joint_phase_started;
+    snapshot->command = (uint8_t)s_pc_ctx.command;
+    snapshot->mode = (uint8_t)s_pc_ctx.mode;
+    snapshot->state = (uint8_t)s_pc_ctx.state;
+    snapshot->joint_substate = (uint8_t)s_pc_ctx.jnt_substate;
+    snapshot->path_index = s_pc_ctx.path_index;
+    snapshot->timeout_ms = s_pc_ctx.timeout_ms;
+    snapshot->elapsed_ms = HAL_GetTick() - s_pc_ctx.enter_tick;
+    taskEXIT_CRITICAL();
 }
 
 bool pc_action_4dof_completion_pending(void)
@@ -1052,201 +1770,111 @@ void pc_action_4dof_completion_acknowledge(void)
  */
 void pc_action_4dof_loop(void)
 {
-    /* 状态机未激活时直接返回 */
+    pc_action_4dof_try_start_pending();
+
     if (!s_pc_ctx.active) {
         return;
     }
 
+    /* ── 关节模式：独立状态机，完全参照 action_scheduler_4dof ── */
+    if (s_pc_ctx.mode == PC_ACT4_MODE_JOINT) {
+        pc_action_4dof_handle_joint();
+        return;
+    }
+
+    /* ── 位姿模式：纯 POSE 状态机（PICK/PLACE） ── */
     switch (s_pc_ctx.state) {
-    /* ================================================================
-     * 接近段路径运动
-     *
-     * 沿 pre 路径逐点运动，每到达一个路点后推进 path_index。
-     * 最后一个路点到达后进入 OPERATION_HOLD 执行阀门操作。
-     * 接近阶段持续确保手臂吸盘开启，即使启动和控制任务并发也不会漏开。
-     * ================================================================ */
+
     case PC_ACT4_STATE_MOVE_PRE_PATH:
-        pc_action_4dof_set_arm_suction(PC_ACT4_SUCTION_ON);
         if (pc_action_4dof_drive_current_path_point(true)) {
+            if (pc_action_4dof_should_hold_pre_waypoint()) {
+                ++s_pc_ctx.path_index;
+                pc_action_4dof_set_state(PC_ACT4_STATE_PRE_WAYPOINT_HOLD,
+                                         PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS);
+                break;
+            }
             ++s_pc_ctx.path_index;
             if (s_pc_ctx.path_index >= pc_action_4dof_current_path_count(true)) {
-                /* 所有接近段路点运动完毕，切换到操作保持阶段 */
                 s_pc_ctx.path_index = 0U;
-                s_pc_ctx.operation_first_step_done = false;
-                pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD, 0U);
+                pc_action_4dof_set_state(PC_ACT4_STATE_TARGET_SETTLE_HOLD,
+                                         PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS);
             } else {
-                /* 继续下一路点，重置超时 */
-                pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_PRE_PATH,
-                                         PC_ACT4_MOVE_TIMEOUT_MS);
+                pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_PRE_PATH, PC_ACT4_MOVE_TIMEOUT_MS);
             }
         } else if (pc_action_4dof_timed_out()) {
             pc_action_4dof_begin_abort_return();
         }
         break;
 
-    /* ================================================================
-     * 操作保持
-     *
-     * 该状态分为两个阶段：
-     *   第一阶段（首次进入）：根据命令类型执行对应的阀门操作并设置等待时间。
-     *   第二阶段（超时后）：根据命令类型决定后续流程。
-     *
-     * 保持期间机械臂保持末端目标不动（路径最后一点即为操作目标），
-     * 等待吸附/释放稳定。
-     *
-     * 命令分支说明：
-     *   PICK/DUAL_PICK      → 保持当前姿态，等待吸取稳定
-     *   PLACE               → 关闭手臂吸盘（释放），等待释放完成
-     *   PUT_BACK/DUAL_PUT_BACK → 先开背部吸盘，等待背部吸附稳定后
-     *                            再关手臂吸盘 + 提交背部占用
-     *   GET_BACK            → 先等手臂吸稳，再关背部吸盘 + 清除背部占用
-     * ================================================================ */
-    case PC_ACT4_STATE_OPERATION_HOLD:
-        if (!s_pc_ctx.operation_first_step_done) {
-            /* ---- 第一阶段：执行阀门操作 ---- */
-            s_pc_ctx.operation_first_step_done = true;
+    case PC_ACT4_STATE_PRE_WAYPOINT_HOLD:
+        if (pc_action_4dof_timed_out()) {
+            pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_PRE_PATH, PC_ACT4_MOVE_TIMEOUT_MS);
+        }
+        break;
 
-            if (s_pc_ctx.command == PC_ACT4_COMMAND_PICK ||
-                s_pc_ctx.command == PC_ACT4_COMMAND_DUAL_PICK) {
-                /* 取块：吸盘已开启（启动时已打开），只需等待稳定吸附 */
+    case PC_ACT4_STATE_TARGET_SETTLE_HOLD:
+        if (pc_action_4dof_timed_out()) {
+            s_pc_ctx.operation_phase_started = false;
+            pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD, 0U);
+        }
+        break;
+
+    case PC_ACT4_STATE_OPERATION_HOLD:
+        if (!s_pc_ctx.operation_phase_started) {
+            s_pc_ctx.operation_phase_started = true;
+            if (pc_action_4dof_is_dynamic_pick_command(s_pc_ctx.command)) {
                 pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD,
-                                         PC_ACT4_PICK_HOLD_MS);
-            } else if (s_pc_ctx.command == PC_ACT4_COMMAND_PLACE) {
-                /* 放块：关闭手臂吸盘释放物块 */
-                pc_action_4dof_set_arm_suction(PC_ACT4_SUCTION_OFF);
+                                         PC_ACT4_DELAY_DYNAMIC_PICK_HOLD_MS);
+            } else if (pc_action_4dof_is_dynamic_place_command(s_pc_ctx.command)) {
+                /* 外部动态放置：到目标点后关闭工作臂阀释放，背部阀不参与。 */
+                pc_action_4dof_close_working_arm_valves();
                 s_pc_ctx.release_committed = true;
                 pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD,
-                                         PC_ACT4_EXTERNAL_RELEASE_HOLD_MS);
-            } else if (s_pc_ctx.command == PC_ACT4_COMMAND_PUT_BACK ||
-                       s_pc_ctx.command == PC_ACT4_COMMAND_DUAL_PUT_BACK) {
-                /* 放块到背部：先开启背部吸盘准备接收 */
-                pc_action_4dof_set_target_back_suction(PC_ACT4_SUCTION_ON);
-                pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD,
-                                         PC_ACT4_BACK_PRE_RELEASE_HOLD_MS);
-            } else if (s_pc_ctx.command == PC_ACT4_COMMAND_GET_BACK) {
-                /* 从背部取块：等待手臂吸盘完全吸附物块 */
-                pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_HOLD,
-                                         PC_ACT4_BACK_GET_ARM_HOLD_MS);
+                                         PC_ACT4_DELAY_DYNAMIC_PLACE_RELEASE_MS);
             } else {
-                /* 未知命令 → 异常中止 */
                 pc_action_4dof_begin_abort_return();
             }
         } else if (pc_action_4dof_timed_out()) {
-            /* ---- 第二阶段：保持时间到，执行后续动作 ---- */
-            if (s_pc_ctx.command == PC_ACT4_COMMAND_PUT_BACK ||
-                s_pc_ctx.command == PC_ACT4_COMMAND_DUAL_PUT_BACK) {
-                /*
-                 * 背部放置：背部已吸附稳定，手臂释放物块并提交背部占用。
-                 * 按顺序：关手臂吸盘 → 标记背部占用 → 标记 release_committed
-                 */
-                pc_action_4dof_set_arm_suction(PC_ACT4_SUCTION_OFF);
-                pc_action_4dof_apply_back_state(true);
-                s_pc_ctx.release_committed = true;
-                pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_SECOND_HOLD,
-                                         PC_ACT4_BACK_POST_RELEASE_HOLD_MS);
-            } else if (s_pc_ctx.command == PC_ACT4_COMMAND_GET_BACK) {
-                /*
-                 * 背部取块：手臂已吸稳，关闭来源背部吸盘并清除占用标记。
-                 * 按顺序：关背部吸盘 → 清除背部占用 → 标记 release_committed
-                 * 先吸后放的顺序确保交接瞬间不掉块。
-                 */
-                pc_action_4dof_set_target_back_suction(PC_ACT4_SUCTION_OFF);
-                pc_action_4dof_apply_back_state(false);
-                s_pc_ctx.release_committed = true;
-                pc_action_4dof_set_state(PC_ACT4_STATE_OPERATION_SECOND_HOLD,
-                                         PC_ACT4_BACK_RELEASE_HOLD_MS);
-            } else {
-                /* 取块/放块：无需二次保持，直接进入撤离段 */
-                s_pc_ctx.path_index = 0U;
-                pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_POST_PATH,
-                                         PC_ACT4_MOVE_TIMEOUT_MS);
-            }
+            pc_action_4dof_begin_post_or_idle();
         }
         break;
 
-    /* ================================================================
-     * 二次保持（仅背部操作使用）
-     *
-     * PUT_BACK/DUAL_PUT_BACK：等待手臂释放后残留物块稳定。
-     * GET_BACK：等待背部吸盘关闭后完全脱离。
-     * ================================================================ */
-    case PC_ACT4_STATE_OPERATION_SECOND_HOLD:
-        if (pc_action_4dof_timed_out()) {
-            s_pc_ctx.path_index = 0U;
-            pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_POST_PATH,
-                                     PC_ACT4_MOVE_TIMEOUT_MS);
-        }
-        break;
-
-    /* ================================================================
-     * 撤离段路径运动
-     *
-     * 沿 post 路径逐点运动，逻辑与 MOVE_PRE_PATH 相同但方向相反。
-     * 全部路点到达后进入 RETURN_IDLE 回归空闲位姿。
-     * ================================================================ */
     case PC_ACT4_STATE_MOVE_POST_PATH:
         if (pc_action_4dof_drive_current_path_point(false)) {
             ++s_pc_ctx.path_index;
             if (s_pc_ctx.path_index >= pc_action_4dof_current_path_count(false)) {
-                /* 所有撤离段路点运动完毕，回归空闲位姿 */
                 s_pc_ctx.path_index = 0U;
-                pc_action_4dof_set_state(PC_ACT4_STATE_RETURN_IDLE,
-                                         PC_ACT4_MOVE_TIMEOUT_MS);
+                pc_action_4dof_set_state(PC_ACT4_STATE_RETURN_IDLE, PC_ACT4_MOVE_TIMEOUT_MS);
             } else {
-                /* 继续下一路点 */
-                pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_POST_PATH,
-                                         PC_ACT4_MOVE_TIMEOUT_MS);
+                pc_action_4dof_set_state(PC_ACT4_STATE_MOVE_POST_PATH, PC_ACT4_MOVE_TIMEOUT_MS);
             }
         } else if (pc_action_4dof_timed_out()) {
             pc_action_4dof_begin_abort_return();
         }
         break;
 
-    /* ================================================================
-     * 回归 IDLE 空闲位姿
-     *
-     * 将各工作臂引导至系统预设的空闲位姿，到位后短暂保持即可完成动作。
-     * ================================================================ */
     case PC_ACT4_STATE_RETURN_IDLE:
         if (pc_action_4dof_idle_reached()) {
             pc_action_4dof_set_state(PC_ACT4_STATE_IDLE_HOLD,
-                                     PC_ACT4_IDLE_HOLD_MS);
+                                     PC_ACT4_DELAY_IDLE_HOLD_MS);
         } else if (pc_action_4dof_timed_out()) {
             pc_action_4dof_begin_abort_return();
         }
         break;
 
-    /* ================================================================
-     * 异常中止 - 强制归位
-     *
-     * 当任何运动阶段超时时进入此状态。只尝试一个超时周期归位到 IDLE，
-     * 无论是否最终到位（超时或到位），都必须释放执行权。
-     * ================================================================ */
     case PC_ACT4_STATE_ABORT_RETURN_IDLE:
         if (pc_action_4dof_idle_reached() || pc_action_4dof_timed_out()) {
             pc_action_4dof_set_state(PC_ACT4_STATE_IDLE_HOLD,
-                                     PC_ACT4_IDLE_HOLD_MS);
+                                     PC_ACT4_DELAY_IDLE_HOLD_MS);
         }
         break;
 
-    /* ================================================================
-     * IDLE 保持 & 结束
-     *
-     * IDLE_HOLD：到达空闲位姿后短暂保持，确保机械臂稳定后释放执行权。
-     * 保持时间到后调用 pc_action_4dof_finish 清除活跃标志并标记结束事件。
-     * ================================================================ */
     case PC_ACT4_STATE_IDLE_HOLD:
         if (pc_action_4dof_timed_out()) {
             pc_action_4dof_finish();
         }
         break;
 
-    /* ================================================================
-     * 异常状态处理
-     *
-     * IDLE 状态不应在此处到达（正常情况下不会被调度），
-     * 若因逻辑错误进入此分支则执行异常中止。
-     * ================================================================ */
     case PC_ACT4_STATE_IDLE:
     default:
         pc_action_4dof_begin_abort_return();

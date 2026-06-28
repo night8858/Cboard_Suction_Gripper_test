@@ -17,6 +17,7 @@
 #include "Dof4_Arm.h"
 #include "pneumatic_control.h"
 #include "action_scheduler.h"
+#include "pc_action_executor_4dof.h"
 #include "DT7.h"
 #include "stm32f4xx_hal.h"
 #include "variables.h"
@@ -458,8 +459,10 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
     static uint32_t s_last_step_ms = 0U;
 
     /* ── 继电器手动控制 (s[1]==3, s[0]==1)：与 arm_started 无关，
-     *   始终允许遥控器独立控制电磁阀，不受启动门控限制 ── */
-    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1) 
+     *   始终允许遥控器独立控制电磁阀，不受启动门控限制。
+     *   PC 动作执行期间跳过 RC 阀门映射，避免覆盖 PC 动作状态机的阀门时序。 ── */
+    if (rc->rc.s[1] == 3 && rc->rc.s[0] == 1
+        && !pc_action_4dof_is_active())
     {
             if (rc->rc.ch[0] < -RC_CH_THRESHOLD)
             {
@@ -624,7 +627,9 @@ static void rc_map_to_targets_4dof(uint32_t now_ms, bool arm_started)
             s_ch3_was_high = ch3_high;
         }
 
-            Dof4_double_arm_start();
+        /* arm_started==true 时不重复调用 Dof4_double_arm_start()，
+         * 避免每周期覆盖 PC 动作状态机的阀门控制。
+         * 首次启动已在 !arm_started 分支中处理。 */
     }
 
 
@@ -706,7 +711,7 @@ void input_arbiter_resolve(bool action_active)
         pc_map_to_targets();
     } else if (rc_fresh) {
         /* RC 模式: 遥控器数据映射到 target 数组 (保留原有 DT7 控制逻辑) */
-        rc_map_to_targets();
+        //rc_map_to_targets();
     }
     /* 两者都过期已在上面 return, 此处不会到达 else 分支 */
 

@@ -135,39 +135,16 @@ static char s_cmd_line_buf[USART_CMD_LINE_BUF_SIZE];
 static uint16_t s_cmd_line_len = 0U;
 
 static void usart_cmd_handle_line(const char *line) {
-  float x = 0.0f;
-  float y = 0.0f;
-
   if (line == NULL) {
     return;
   }
 
-  // 指令格式: RB,10,10\n 或 RB,10,10/n
-  if (strncmp(line, "RB,", 3) == 0) {
-    if (sscanf(&line[3], "%f,%f", &x, &y) == 2) {
-      Arm_RB.end_aim_x = x;
-      Arm_RB.end_aim_y = y;
-      Arm_RB.state = ARM_STATE_MOVING;
-    }
-  } else if (strncmp(line, "RF,", 3) == 0) {
-    if (sscanf(&line[3], "%f,%f", &x, &y) == 2) {
-      Arm_RF.end_aim_x = x;
-      Arm_RF.end_aim_y = y;
-      Arm_RF.state = ARM_STATE_MOVING;
-    }
-  } else if (strncmp(line, "LB,", 3) == 0) {
-    if (sscanf(&line[3], "%f,%f", &x, &y) == 2) {
-      Arm_LB.end_aim_x = x;
-      Arm_LB.end_aim_y = y;
-      Arm_LB.state = ARM_STATE_MOVING;
-    }
-  } else if (strncmp(line, "RB,", 3) == 0) {
-    if (sscanf(&line[3], "%f,%f", &x, &y) == 2) {
-      Arm_RB.end_aim_x = x;
-      Arm_RB.end_aim_y = y;
-      Arm_RB.state = ARM_STATE_MOVING;
-    }
-  }
+  /*
+   * Legacy planar four-arm text commands (LF/RF/LB/RB,x,y) are intentionally
+   * ignored. Active PC control is the binary 4DOF protocol in
+   * command_decode_4dof.c.
+   */
+  (void)line;
 }
 
 static void usart_cmd_parse_bytes(const uint8_t *data, uint16_t size) {

@@ -2,6 +2,7 @@
 #define PC_ACTION_EXECUTOR_4DOF_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "Dof4_Arm.h"
 
@@ -9,21 +10,58 @@
 extern "C" {
 #endif
 
-/** @brief PC 动态取放目标正上方点的统一垂直净空，单位 m。 */
-#define PC_ACTION_4DOF_VERTICAL_CLEARANCE_M 0.20f
+/** @brief PC 动态取放悬停高度和俯仰角由各模板独立控制，不再使用全局宏。 */
+
+typedef enum {
+    PC_ACTION_4DOF_REJECT_NONE = 0,
+    PC_ACTION_4DOF_REJECT_INVALID_ARM = 1,
+    PC_ACTION_4DOF_REJECT_BAD_TARGET = 2,
+    PC_ACTION_4DOF_REJECT_TARGET_UNREACHABLE = 3,
+    PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE = 4,
+    PC_ACTION_4DOF_REJECT_JOINT_PATH_INVALID = 5,
+    PC_ACTION_4DOF_REJECT_BUSY = 6,
+    PC_ACTION_4DOF_REJECT_COMPLETION_PENDING = 7,
+    PC_ACTION_4DOF_REJECT_ACTION_ACTIVE = 8,
+    PC_ACTION_4DOF_REJECT_PENDING_FULL = 9,
+    PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE = 10,
+} PcAction4DOF_RejectReason;
+
+typedef struct {
+    bool active;
+    bool pending;
+    bool use_left;
+    bool use_right;
+    bool release_committed;
+    bool operation_phase_started;
+    bool joint_phase_started;
+    uint8_t command;
+    uint8_t mode;
+    uint8_t state;
+    uint8_t joint_substate;
+    uint8_t path_index;
+    uint32_t timeout_ms;
+    uint32_t elapsed_ms;
+} PcAction4DOF_DebugSnapshot;
 
 /**
  * @brief 初始化 PC 专用 4DOF 动作状态机。
  *
- * 该状态机只处理 0x11/0x12/0x14/0x15/0x21/0x22，不执行 RC 预设动作。
+ * 该状态机只处理 0x11/0x12/0x14/0x15/0x21/0x22/0x23/0x24，遥控器调试入口暂不接入。
  */
 void pc_action_4dof_init(void);
 
 /** @brief 周期推进 PC 动作状态机，应在 4DOF 控制任务中每周期调用一次。 */
 void pc_action_4dof_loop(void);
 
-/** @brief 查询 PC 动作是否正在执行，用于 RC/IDLE 目标仲裁。 */
+/** @brief 查询 PC 动作是否正在执行，用于控制任务选择 PC 动作或 IDLE 目标。 */
 bool pc_action_4dof_is_active(void);
+
+/** @brief 读取 PC 动作状态机调试快照，可用于 IDE watch 或临时上位机调试。 */
+void pc_action_4dof_get_debug_snapshot(PcAction4DOF_DebugSnapshot *snapshot);
+
+void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
+                                  PcAction4DOF_RejectReason reason,
+                                  const Dof4_Pose *target_world);
 
 /** @brief 启动单臂动态取块动作（0x11）。 */
 bool pc_action_4dof_start_pick(Dof4_ArmId arm_id,
@@ -43,8 +81,15 @@ bool pc_action_4dof_start_get_back(Dof4_ArmId arm_id);
 bool pc_action_4dof_start_dual_pick(const Dof4_Pose *left_target_world,
                                     const Dof4_Pose *right_target_world);
 
+/** @brief 启动双臂动态放块动作（0x23）。 */
+bool pc_action_4dof_start_dual_place(const Dof4_Pose *left_target_world,
+                                     const Dof4_Pose *right_target_world);
+
 /** @brief 启动双臂同时放块到对应背部动作（0x22）。 */
 bool pc_action_4dof_start_dual_put_back(void);
+
+/** @brief 启动双臂同时从对应背部取块动作（0x24）。 */
+bool pc_action_4dof_start_dual_get_back(void);
 
 /** @brief 查询是否有一条待发送的 PC 动作结束事件。 */
 bool pc_action_4dof_completion_pending(void);

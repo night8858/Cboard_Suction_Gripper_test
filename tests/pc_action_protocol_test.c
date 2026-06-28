@@ -21,6 +21,8 @@ int main(void)
     require_true(CMD4_GET_BLOCK_BACK == 0x15U, "single get-back command");
     require_true(CMD4_PICK_BLOCK_ALL == 0x21U, "dual pick command");
     require_true(CMD4_PUT_BLOCK_BACK_ALL == 0x22U, "dual put-back command");
+    require_true(CMD4_PLACE_BLOCK_ALL == 0x23U, "dual place command");
+    require_true(CMD4_GET_BLOCK_BACK_ALL == 0x24U, "dual get-back command");
 
     require_true(CMD4_FRAME_SINGLE_TARGET_ACTION_LEN == 18U,
                  "single target frame length");
@@ -30,9 +32,8 @@ int main(void)
                  "dual target frame length");
     require_true(CMD4_FRAME_DUAL_BACK_ACTION_LEN == 5U,
                  "dual back frame length");
-    require_true(fabsf(PC_ACTION_4DOF_VERTICAL_CLEARANCE_M - 0.20f) < 1.0e-6f,
+    require_true(fabsf(PC_ACTION_4DOF_VERTICAL_CLEARANCE_M - 0.05f) < 1.0e-6f,
                  "dynamic vertical clearance");
-
     printf("pc action protocol test passed\n");
     return 0;
 }

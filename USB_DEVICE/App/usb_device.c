@@ -27,6 +27,7 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN Includes */
+#include "virtual_serial_port.h"
 
 /* USER CODE END Includes */
 
@@ -86,6 +87,7 @@ void MX_USB_DEVICE_Init(void)
   }
 
   /* USER CODE BEGIN USB_DEVICE_Init_PostTreatment */
+  vcp_init();
 
   /* USER CODE END USB_DEVICE_Init_PostTreatment */
 }

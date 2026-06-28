@@ -4,11 +4,22 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef CMD4_HOST_TEST
+#include <Dof4_Arm.h>
+#else
 #include "Dof4_Arm.h"
+#endif
 
 #define CMD4_FRAME_HEADER_BYTE  0xBBu
 #define CMD4_FRAME_TAIL_BYTE1   0xFFu
 #define CMD4_FRAME_TAIL_BYTE2   0xEEu
+
+/* ── CC 协议帧头（独立于 BB 协议，专用于云台控制）── */
+#define CC_FRAME_HEADER_BYTE    0xCCu
+#define CC_CMD_GIMBAL_START     0x99u  /**< CC 99：启动相机云台 */
+#define CC_CMD_GIMBAL_MOVE      0x01u  /**< CC 01：运动相机云台到目标位置 */
+#define CC_FRAME_GIMBAL_START_LEN  5u  /**< CC 99 FF EE CRC8 */
+#define CC_FRAME_GIMBAL_MOVE_LEN  17u  /**< CC 01 J1(4B) PITCH(4B) YAW(4B) FF EE CRC8 */
 
 #define CMD4_FEEDBACK           0x01u
 #define CMD4_POSE_CONTROL       0x02u
@@ -16,20 +27,21 @@
 #define CMD4_VALVE_CONTROL      0x04u
 #define CMD4_ANSWER_CONTROL     0x05u
 #define CMD4_PUMP_CONTROL       0x06u
-#define CMD4_TARGET_ACTION_CONTROL 0x07u
 #define CMD4_DIAGNOSTIC         0x08u
 
 /* PC 下发的 4DOF 动作命令。
  * 0x11/0x12:      DATA = arm_id + x/y/z，arm_id=0 左臂、1 右臂，xyz 为 float32 小端，单位 m。
  * 0x14/0x15:      DATA = arm_id，固定背部动作，关节路径由 PC 专用状态机决定。
- * 0x21:           DATA = left_x/y/z + right_x/y/z，双臂动态取块，六个坐标均为 float32 小端，单位 m。
- * 0x22:           无 DATA 段，双臂固定放块到背部。 */
+ * 0x21/0x23:      DATA = left_x/y/z + right_x/y/z，双臂动态取/放块，六个坐标均为 float32 小端，单位 m。
+ * 0x22/0x24:      无 DATA 段，双臂固定放块到背部 / 从背部取块。 */
 #define CMD4_PICK_BLOCK         0x11u
 #define CMD4_PLACE_BLOCK        0x12u
 #define CMD4_PUT_BLOCK_BACK     0x14u
 #define CMD4_GET_BLOCK_BACK     0x15u
 #define CMD4_PICK_BLOCK_ALL     0x21u
 #define CMD4_PUT_BLOCK_BACK_ALL 0x22u
+#define CMD4_PLACE_BLOCK_ALL    0x23u
+#define CMD4_GET_BLOCK_BACK_ALL 0x24u
 
 #define CMD4_ARM_START          0x99u
 #define CMD4_ACTION_DONE        0xCCu
@@ -53,18 +65,11 @@
 #define CMD4_FRAME_ANSWER_LEN     8u
 #define CMD4_FRAME_PUMP_LEN      10u
 
-/*
- * BB 07 dynamic target action:
- *   BB 07 arm_id operation x y z FF EE CRC8
- *   arm_id/operation + 3 float32 LE requires 19 bytes total.
- */
-#define CMD4_FRAME_TARGET_ACTION_LEN 19u
-
 /* PC 专用 4DOF 动作帧长。
  * - 单臂可控目标点: BB cmd arm_id x y z FF EE CRC8 = 18B
  * - 单臂背部固定动作: BB cmd arm_id FF EE CRC8 = 6B
- * - 双臂可控目标点: BB 21 Lxyz Rxyz FF EE CRC8 = 29B
- * - 双臂背部固定动作: BB 22 FF EE CRC8 = 5B */
+ * - 双臂可控目标点: BB 21/23 Lxyz Rxyz FF EE CRC8 = 29B
+ * - 双臂背部固定动作: BB 22/24 FF EE CRC8 = 5B */
 #define CMD4_FRAME_SINGLE_TARGET_ACTION_LEN 18u
 #define CMD4_FRAME_SINGLE_BACK_ACTION_LEN    6u
 #define CMD4_FRAME_DUAL_TARGET_ACTION_LEN   29u
@@ -96,6 +101,11 @@ void cmd4_send_diagnostic(void);
 void cmd4_send_action_done(void);
 void cmd4_rx_process(void);
 void cmd4_rx_feed(const uint8_t *buf, uint32_t len);
+
+/** @brief 由外部模块（如 PC 动作执行器）更新阀门状态镜像，确保反馈帧准确。
+ *  @param valve_id 阀门编号 0=左臂 1=右臂 2=左背 3=右背
+ *  @param state    0=关闭 非0=开启（仅低 1 位有效） */
+void cmd4_update_valve_shadow(uint8_t valve_id, uint8_t state);
 
 bool cmd4_manual_pose_active(uint8_t arm_id);
 void cmd4_clear_manual_pose(void);

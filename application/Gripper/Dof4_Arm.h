@@ -180,7 +180,8 @@ typedef enum {
 typedef enum {
     DOF4_CLIP_REASON_NONE = 0,
     DOF4_CLIP_REASON_JOINT_LIMIT = (1U << 0),
-    DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1)
+    DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1),
+    DOF4_CLIP_REASON_PC_ACTION_REJECT = (1U << 2)
 } Dof4_ClipReason;
 
 /**

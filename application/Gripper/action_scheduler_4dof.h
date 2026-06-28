@@ -1,34 +1,32 @@
 /**
  * @file    action_scheduler_4dof.h
- * @brief   4DOF 双臂动作调度器 —— 基于状态机的抓取/放置/舞蹈动作管理
+ * @brief   4DOF 双臂动作调度器 —— 基于状态机的抓取/放置动作管理
  *
  * ## 设计原则
  *
- * - **与 planar 臂完全解耦**：本模块仅操作 g_dof4_arm_left / g_dof4_arm_right，
- *   不涉及 target_x_test[] / planar_arm_control_loop()
+ * - **仅面向 4DOF 双臂**：本模块只操作 g_dof4_arm_left / g_dof4_arm_right，
+ *   不依赖旧平面四臂、遥控器输入或输入仲裁模块。
  * - **状态机驱动**：每个动作拆分为多个子状态（预就位→抓取/放置→撤退→完成），
- *   按固定周期推进，含超时保护
- * - **目标位置预留**：所有坐标均为占位值（TODO），后续调试后替换
- * - **中间路径点**：以注释方式预留在各动作的目标数组中，需要时取消注释即可
+ *   按固定周期推进，含超时保护。
+ * - **目标位置预留**：所有坐标均为占位值（TODO），后续调试后替换。
+ * - **中间路径点**：以注释方式预留在各动作的目标数组中，需要时取消注释即可。
  *
  * ## 集成方式
  *
- * 在 arm_control_task (DOF4_ARM 分支) 的 for(;;) 循环中，按以下顺序调用：
+ * 在 arm_control_task 的 for(;;) 循环中，START 放行后按以下顺序调用：
  *
  * ```
- * input_arbiter_update_rc(get_remote_control_point());
- * input_arbiter_resolve_4dof(action_4dof_is_active(), g_dof4_arm_started);
- *                                           // RC 测试控制；动作执行中跳过，避免覆盖调度器目标
- * action_4dof_loop();                       // ★ 动作调度（动作激活时覆盖目标）
- * Dof4_dual_arm_control_loop(...);         // IK + 轨迹 + 舵机输出
+ * action_4dof_loop();              // 预设动作调度（动作激活时覆盖目标）
+ * pc_action_4dof_loop();           // PC/VCP 动作调度
+ * Dof4_dual_arm_control_loop(...); // IK + 轨迹 + 舵机输出
  * ```
  *
  * ## 扩展新动作的步骤
  *
- * 1. 在 action_scheduler.h 的 action_state_4dof_e 中新增动作枚举值
- * 2. 在 action_scheduler_4dof.c 的 s_action_targets[] 中添加目标数据
- * 3. 在 action_4dof_handle() 中增加 case 分支
- * 4. 若需要外部触发，声明对应的 trigger 函数
+ * 1. 在本文件的 action_state_4dof_e 中新增动作枚举值。
+ * 2. 在 action_scheduler_4dof.c 的 s_action_targets[] 中添加目标数据。
+ * 3. 在 action_4dof_handle() 中增加 case 分支。
+ * 4. 若需要外部触发，声明对应的 trigger 函数。
  */
 
 #ifndef ACTION_SCHEDULER_4DOF_H
@@ -36,7 +34,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "action_scheduler.h"   /* 使用其中定义的 action_state_4dof_e */
 #include "Dof4_Arm.h"           /* Dof4_Pose, Dof4_ArmId */
 
 #ifdef __cplusplus
@@ -83,11 +80,10 @@ typedef enum {
  *   例如要增加"舞蹈动作":
  *     ACTION_STATE_DANCE = 2,
  *
- *   然后在 action_scheduler.c 中:
- *     1. 实现 dance_state_machine() 处理函数.
- *     2. 在 ACTION_loop() 末尾增加:
- *        case ACTION_STATE_DANCE: dance_state_machine(); break;
- *     3. 如需外部触发, 声明 dance_trigger() 并在 cmd_dispatch_frame 中增加命令字.
+ *   然后在 action_scheduler_4dof.c 中:
+ *     1. 实现对应的状态机处理函数.
+ *     2. 在 action_4dof_handle() 中增加 case 分支.
+ *     3. 如需外部触发, 声明 trigger 函数并在 4DOF 协议分发中接入命令字.
  */
 typedef enum {
     ACTION_4DOF_IDLE      = 0,                                    /**< 空闲, 等待动作指令 */
@@ -160,7 +156,7 @@ bool action_4dof_trigger(action_state_4dof_e action);
  * @brief 更新指定背部储物区的占用状态。
  *
  * PC 专用状态机在物块交接真正完成后调用该接口，使自适应 IDLE 位姿与
- * RC/预设动作共享同一份背部状态。occupied=true 时恢复该侧默认高位避让点。
+ * 预设动作共享同一份背部状态。occupied=true 时恢复该侧默认高位避让点。
  */
 void action_4dof_set_back_occupied(Dof4_ArmId arm_id, bool occupied);
 

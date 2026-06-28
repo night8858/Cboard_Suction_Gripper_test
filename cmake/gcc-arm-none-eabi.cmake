@@ -4,9 +4,22 @@ set(CMAKE_SYSTEM_PROCESSOR          arm)
 set(CMAKE_C_COMPILER_ID GNU)
 set(CMAKE_CXX_COMPILER_ID GNU)
 
-# Some default GCC settings
-# arm-none-eabi- must be part of path environment
-set(TOOLCHAIN_PREFIX                arm-none-eabi-)
+# Some default GCC settings. Prefer an explicit STM32 toolchain path so a fresh
+# CubeMX/CMake configure does not depend on the user's shell PATH.
+set(STM32_TOOLCHAIN_PATH "" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory")
+if(NOT STM32_TOOLCHAIN_PATH AND DEFINED ENV{STM32_TOOLCHAIN_PATH})
+    set(STM32_TOOLCHAIN_PATH "$ENV{STM32_TOOLCHAIN_PATH}" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory" FORCE)
+endif()
+if(NOT STM32_TOOLCHAIN_PATH AND EXISTS "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc")
+    set(STM32_TOOLCHAIN_PATH "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory" FORCE)
+endif()
+
+if(STM32_TOOLCHAIN_PATH)
+    set(TOOLCHAIN_PREFIX "${STM32_TOOLCHAIN_PATH}/arm-none-eabi-")
+else()
+    # Fallback: arm-none-eabi-* must be part of PATH.
+    set(TOOLCHAIN_PREFIX arm-none-eabi-)
+endif()
 
 set(CMAKE_C_COMPILER                ${TOOLCHAIN_PREFIX}gcc)
 set(CMAKE_ASM_COMPILER              ${CMAKE_C_COMPILER})

@@ -30,7 +30,6 @@
  *   | 0x04   | CMD4_VALVE_CONTROL| PC→STM32   | 手动控制单个电磁阀开关          |
  *   | 0x05   | CMD4_ANSWER_CONTROL| PC→STM32  | 语音应答控制 (预留)            |
  *   | 0x06   | CMD4_PUMP_CONTROL | PC→STM32   | 气泵启停 + 转速设置            |
- *   | 0x07   | CMD4_TARGET_ACTION_CONTROL     | PC→STM32 | 单臂动态目标取放    |
  *   | 0x08   | CMD4_DIAGNOSTIC   | STM32→PC   | 关节目标裁剪事件诊断            |
  *   | 0x11   | CMD4_PICK_BLOCK   | PC→STM32   | 单臂按 PC xyz 取块            |
  *   | 0x12   | CMD4_PLACE_BLOCK  | PC→STM32   | 单臂按 PC xyz 放块            |
@@ -38,6 +37,8 @@
  *   | 0x15   | CMD4_GET_BLOCK_BACK| PC→STM32  | 单臂从背部取块固定轨迹          |
  *   | 0x21   | CMD4_PICK_BLOCK_ALL| PC→STM32  | 双臂按 PC xyz 同时取块         |
  *   | 0x22   | CMD4_PUT_BLOCK_BACK_ALL| PC→STM32 | 双臂放块到背部固定轨迹       |
+ *   | 0x23   | CMD4_PLACE_BLOCK_ALL| PC→STM32 | 双臂按 PC xyz 同时放块         |
+ *   | 0x24   | CMD4_GET_BLOCK_BACK_ALL| PC→STM32 | 双臂从背部取块固定轨迹       |
  *   | 0xCC   | CMD4_ACTION_DONE  | STM32→PC   | 上位机动作执行完成             |
  *
  * ### 特殊命令
@@ -74,8 +75,8 @@
  * ### 手动控制与动作调度的互斥
  *
  *   - 当动作调度器 (action_4dof) 激活时，拒绝手动位姿指令
- *   - 0x11..0x22 由 pc_action_executor_4dof 独立执行
- *   - PC 与 RC/预设动作共享执行权；任一状态机忙时静默拒绝新动作，不强制打断
+ *   - 0x11..0x24 由 pc_action_executor_4dof 独立执行
+ *   - PC/VCP 是当前唯一调试入口；任一动作状态机忙时拒绝新动作，并通过 BB 08 上报原因
  *   - 触发动作时，自动清除手动位姿标记
  *   - 阀门/气泵控制不受动作调度影响，始终可独立操作
  */
@@ -83,6 +84,16 @@
 /* ── 头文件包含 ── */
 #include "command_decode_4dof.h"
 
+#ifdef CMD4_HOST_TEST
+#include <action_scheduler_4dof.h>
+#include <pc_action_executor_4dof.h>
+#include <pneumatic_control.h>
+#include <stm32f4xx_hal.h>
+#include <usart.h>
+#include <usart_interface.h>
+#include <virtual_serial_port.h>
+#include <gimbal.h>
+#else
 #include "Dof4_Arm.h"           /* 4DOF 机械臂运动学模型 */
 #include "action_scheduler_4dof.h" /* 4DOF 动作调度器接口 */
 #include "pc_action_executor_4dof.h" /* PC 下发动作专用状态机 */
@@ -91,6 +102,10 @@
 #include "virtual_serial_port.h" /* 虚拟串口 (VCP) 收发接口 */
 #include "usart_interface.h"         /* 小 R 语音模块串口接口 */
 #include "stm32f4xx_hal.h"
+#include "gimbal.h"                 /* 相机云台控制接口 */
+#endif
+
+#include <stddef.h>
 
 _Static_assert(CMD4_FRAME_DIAGNOSTIC_LEN ==
                    (2U + 4U + 4U * 4U + 4U * 4U + 4U * 4U +
@@ -110,6 +125,7 @@ typedef union {
 
 /* ── 外部引用 ── */
 extern PumpCtrl g_pump;  /**< 全局气泵控制实例，管理启停与目标转速 */
+extern Gimbal_s Gimbal;  /**< 全局云台实例，管理云台状态与目标角度 */
 
 /* ════════════════════════════════════════════════════════════════
  * 模块内部状态
@@ -130,6 +146,21 @@ static uint8_t s_valve_shadow[4] = {0u, 0u, 0u, 0u};
  * [0]=左臂, [1]=右臂
  */
 static bool s_manual_pose_active[2] = {false, false};
+
+static void cmd4_mark_all_valves_open(void)
+{
+    for (uint8_t valve_id = 0U; valve_id < 4U; ++valve_id) {
+        s_valve_shadow[valve_id] = 1U;
+    }
+}
+
+static void cmd4_start_arm_if_needed(void)
+{
+    if (!g_dof4_arm_started) {
+        Dof4_double_arm_start();
+        cmd4_mark_all_valves_open();
+    }
+}
 
 /* ════════════════════════════════════════════════════════════════
  * CRC-8 查表 (多项式 0x07, 初始值 0x00)
@@ -447,6 +478,8 @@ static uint8_t s_frame_buf[CMD4_FRAME_MAX_LEN];
 static uint8_t s_frame_idx = 0u;
 /** @brief DATA 段剩余待接收字节数 (由命令字决定) */
 static uint8_t s_data_remain = 0u;
+/** @brief 当前解析的协议类型：false=BB 协议, true=CC 协议 */
+static bool s_cc_protocol = false;
 
 /**
  * @brief 根据命令字返回 DATA 段长度 (不含帧头/命令字/帧尾/CRC)
@@ -454,40 +487,71 @@ static uint8_t s_data_remain = 0u;
  * 帧总长 = 5 (HDR+CMD+TAIL1+TAIL2+CRC) + DATA_len
  * 所以 DATA_len = FRAME_LEN - 5
  *
- * 未知命令字返回 0，导致状态机立即复位。
+ * 未知命令字返回 false，合法无 DATA 命令通过 data_len=0 表示。
  *
  * @param cmd 命令字
- * @retval uint8_t DATA 段字节数; 0 表示非法命令
+ * @retval true 命令合法，data_len 已写入; false 表示非法命令
  */
-static uint8_t cmd4_data_len_by_cmd(uint8_t cmd)
+static bool cmd4_data_len_by_cmd(uint8_t cmd, uint8_t *data_len)
 {
+    if (data_len == NULL) {
+        return false;
+    }
+
+    /* ── CC 协议命令表 ── */
+    if (s_cc_protocol) {
+        switch (cmd) {
+            case CC_CMD_GIMBAL_START:  /* 0x99: CC 99 FF EE CRC8，无 DATA 段 */
+                *data_len = 0u;
+                return true;
+            case CC_CMD_GIMBAL_MOVE:   /* 0x01: 3×float32 LE = 12B DATA */
+                *data_len = (uint8_t)(CC_FRAME_GIMBAL_MOVE_LEN - 5u);
+                return true;
+            default:
+                *data_len = 0u;
+                return false;
+        }
+    }
+
+    /* ── BB 协议命令表 ── */
     switch (cmd) {
         case CMD4_POSE_CONTROL:
-            return (uint8_t)(CMD4_FRAME_POSE_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_POSE_LEN - 5u);
+            return true;
         case CMD4_ACTION_CONTROL:
-            return (uint8_t)(CMD4_FRAME_ACTION_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_ACTION_LEN - 5u);
+            return true;
         case CMD4_VALVE_CONTROL:
-            return (uint8_t)(CMD4_FRAME_VALVE_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_VALVE_LEN - 5u);
+            return true;
         case CMD4_ANSWER_CONTROL:
-            return (uint8_t)(CMD4_FRAME_ANSWER_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_ANSWER_LEN - 5u);
+            return true;
         case CMD4_PUMP_CONTROL:
-            return (uint8_t)(CMD4_FRAME_PUMP_LEN - 5u);
-        case CMD4_TARGET_ACTION_CONTROL:
-            return (uint8_t)(CMD4_FRAME_TARGET_ACTION_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_PUMP_LEN - 5u);
+            return true;
         case CMD4_PICK_BLOCK:
         case CMD4_PLACE_BLOCK:
-            return (uint8_t)(CMD4_FRAME_SINGLE_TARGET_ACTION_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_SINGLE_TARGET_ACTION_LEN - 5u);
+            return true;
         case CMD4_PUT_BLOCK_BACK:
         case CMD4_GET_BLOCK_BACK:
-            return (uint8_t)(CMD4_FRAME_SINGLE_BACK_ACTION_LEN - 5u);
+            *data_len = (uint8_t)(CMD4_FRAME_SINGLE_BACK_ACTION_LEN - 5u);
+            return true;
         case CMD4_PICK_BLOCK_ALL:
-            return (uint8_t)(CMD4_FRAME_DUAL_TARGET_ACTION_LEN - 5u);
+        case CMD4_PLACE_BLOCK_ALL:
+            *data_len = (uint8_t)(CMD4_FRAME_DUAL_TARGET_ACTION_LEN - 5u);
+            return true;
         case CMD4_PUT_BLOCK_BACK_ALL:
-            return (uint8_t)(CMD4_FRAME_DUAL_BACK_ACTION_LEN - 5u);  /* DATA 段长度 = 0 */
+        case CMD4_GET_BLOCK_BACK_ALL:
+            *data_len = (uint8_t)(CMD4_FRAME_DUAL_BACK_ACTION_LEN - 5u);
+            return true;
         case CMD4_ARM_START:
-            return (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);  /* DATA 段长度 = 12 (3 floats) */
+            *data_len = (uint8_t)(CMD4_FRAME_ARM_START_LEN - 5u);
+            return true;
         default:
-            return 0u;
+            *data_len = 0u;
+            return false;
     }
 }
 
@@ -505,6 +569,7 @@ static void cmd4_rx_reset(void)
     s_rx_state = CMD4_RX_WAIT_H1;
     s_frame_idx = 0u;
     s_data_remain = 0u;
+    s_cc_protocol = false;
 }
 
 /**
@@ -525,8 +590,14 @@ static void cmd4_rx_state_machine(uint8_t byte)
 {
     switch (s_rx_state) {
         case CMD4_RX_WAIT_H1:
-            /* 等待帧头 0xBB — 在此之前的所有字节均丢弃 */
+            /* 等待帧头 0xBB 或 0xCC — 在此之前的所有字节均丢弃 */
             if (byte == CMD4_FRAME_HEADER_BYTE) {
+                s_cc_protocol = false;
+                s_frame_idx = 0u;
+                s_frame_buf[s_frame_idx++] = byte;
+                s_rx_state = CMD4_RX_WAIT_CMD;
+            } else if (byte == CC_FRAME_HEADER_BYTE) {
+                s_cc_protocol = true;
                 s_frame_idx = 0u;
                 s_frame_buf[s_frame_idx++] = byte;
                 s_rx_state = CMD4_RX_WAIT_CMD;
@@ -535,10 +606,14 @@ static void cmd4_rx_state_machine(uint8_t byte)
 
         case CMD4_RX_WAIT_CMD: {
             /* 接收命令字，查表获取 DATA 段长度 */
-            uint8_t data_len = cmd4_data_len_by_cmd(byte);
+            uint8_t data_len = 0u;
             s_frame_buf[s_frame_idx++] = byte;
+            if (!cmd4_data_len_by_cmd(byte, &data_len)) {
+                cmd4_rx_reset();
+                break;
+            }
             if (data_len == 0u) {
-                /* 无 DATA 段的命令（如 0x99 启动指令）→ 直接等帧尾 */
+                /* 无 DATA 段的合法命令直接等帧尾。 */
                 s_rx_state = CMD4_RX_WAIT_T1;
             } else {
                 s_data_remain = data_len;
@@ -643,6 +718,7 @@ static void cmd4_handle_pose_control(const uint8_t *data)
     Dof4_Arm *arm = (arm_id == CMD4_ARM_LEFT) ? &g_dof4_arm_left : &g_dof4_arm_right;
     Dof4_Status st = Dof4_arm_set_target(arm, x, y, z, pitch);
     if (st == DOF4_STATUS_OK) {
+        cmd4_start_arm_if_needed();
         s_manual_pose_active[arm_id] = true;
     }
 }
@@ -673,41 +749,8 @@ static void cmd4_handle_action_control(const uint8_t *data)
         return;
     }
 
-    (void)action_4dof_trigger((action_state_4dof_e)action_id);
-}
-
-/**
- * @brief 处理 CMD4_TARGET_ACTION_CONTROL (0x07) —— 动态目标取放
- *
- * DATA 段格式 (14 字节):
- *   [0]      arm_id     0=左臂, 1=右臂
- *   [1]      operation  0=取块, 1=外部放块
- *   [2..5]   x          世界坐标 X (float32 LE, 米)
- *   [6..9]   y          世界坐标 Y (float32 LE, 米)
- *   [10..13] z          世界坐标 Z (float32 LE, 米)
- *
- * 该旧命令作为 0x11/0x12 的兼容入口，实际执行仍交给 PC 专用状态机。
- */
-static void cmd4_handle_target_action_control(const uint8_t *data)
-{
-    uint8_t arm_id = data[0];
-    uint8_t operation = data[1];
-    Dof4_Pose target = {
-        .x = cmd4_get_float_le(&data[2]),
-        .y = cmd4_get_float_le(&data[6]),
-        .z = cmd4_get_float_le(&data[10]),
-        .pitch = 0.0f,
-    };
-
-    if (arm_id > CMD4_ARM_RIGHT || operation > 1U) {
-        return;
-    }
-
-    const bool accepted = (operation == 0U)
-        ? pc_action_4dof_start_pick((Dof4_ArmId)arm_id, &target)
-        : pc_action_4dof_start_place((Dof4_ArmId)arm_id, &target);
-    if (accepted) {
-        cmd4_clear_manual_pose();
+    if (action_4dof_trigger((action_state_4dof_e)action_id)) {
+        cmd4_start_arm_if_needed();
     }
 }
 
@@ -720,10 +763,9 @@ static void cmd4_handle_target_action_control(const uint8_t *data)
  *   [5..8]   y       世界坐标 Y (float32 LE, 单位 m)
  *   [9..12]  z       世界坐标 Z (float32 LE, 单位 m)
  *
- * PC 专用状态机根据最终 target 生成：
- *   相对安全入口 → target 正上方 0.20m → 垂直下降 → 操作 → 垂直抬升
- *   → 相对安全出口 → 自适应 IDLE。
- * 任一 PC/RC 状态机忙时，该命令被静默拒绝。
+ * PC 专用状态机根据当前 TCP 与最终 target 生成：
+ *   可选中间点 → 目标正上方 → target → 操作 → 目标正上方 → 自适应 IDLE。
+ * 任一 PC/预设动作状态机忙时拒绝新命令，并通过 BB 08 诊断帧上报拒绝原因。
  */
 static void cmd4_handle_single_target_action(uint8_t cmd, const uint8_t *data)
 {
@@ -736,9 +778,13 @@ static void cmd4_handle_single_target_action(uint8_t cmd, const uint8_t *data)
     };
 
     if (arm_id > CMD4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     &target);
         return;
     }
 
+    cmd4_start_arm_if_needed();
     const bool accepted = (cmd == CMD4_PICK_BLOCK)
         ? pc_action_4dof_start_pick((Dof4_ArmId)arm_id, &target)
         : pc_action_4dof_start_place((Dof4_ArmId)arm_id, &target);
@@ -759,13 +805,18 @@ static void cmd4_handle_single_back_action(uint8_t cmd, const uint8_t *data)
 {
     const uint8_t arm_id = data[0];
     if (arm_id > CMD4_ARM_RIGHT) {
+        pc_action_4dof_record_reject(DOF4_ARM_LEFT,
+                                     PC_ACTION_4DOF_REJECT_INVALID_ARM,
+                                     NULL);
         return;
     }
 
     bool accepted;
     if (cmd == CMD4_PUT_BLOCK_BACK) {
+        cmd4_start_arm_if_needed();
         accepted = pc_action_4dof_start_put_back((Dof4_ArmId)arm_id);
     } else {
+        cmd4_start_arm_if_needed();
         accepted = pc_action_4dof_start_get_back((Dof4_ArmId)arm_id);
     }
 
@@ -775,7 +826,7 @@ static void cmd4_handle_single_back_action(uint8_t cmd, const uint8_t *data)
 }
 
 /**
- * @brief 处理 0x21 —— 双臂动态目标取块。
+ * @brief 处理 0x21/0x23 —— 双臂动态目标取/放块。
  *
  * DATA 段格式 (24 字节):
  *   [0..3]    left_x   左臂目标 X (float32 LE, 单位 m)
@@ -785,9 +836,9 @@ static void cmd4_handle_single_back_action(uint8_t cmd, const uint8_t *data)
  *   [16..19]  right_y  右臂目标 Y
  *   [20..23]  right_z  右臂目标 Z
  *
- * 左右臂各自生成安全入口、目标正上方和目标点，并在每个路径点设置同步屏障。
+ * 左右臂按相同路点索引同步推进，任一侧未到位都不会进入下一阶段。
  */
-static void cmd4_handle_dual_pick_action(const uint8_t *data)
+static void cmd4_handle_dual_target_action(uint8_t cmd, const uint8_t *data)
 {
     Dof4_Pose left_target = {
         .x = cmd4_get_float_le(&data[0]),
@@ -802,19 +853,27 @@ static void cmd4_handle_dual_pick_action(const uint8_t *data)
         .pitch = 0.0f,
     };
 
-    if (pc_action_4dof_start_dual_pick(&left_target, &right_target)) {
+    cmd4_start_arm_if_needed();
+    const bool accepted = (cmd == CMD4_PICK_BLOCK_ALL)
+        ? pc_action_4dof_start_dual_pick(&left_target, &right_target)
+        : pc_action_4dof_start_dual_place(&left_target, &right_target);
+    if (accepted) {
         cmd4_clear_manual_pose();
     }
 }
 
 /**
- * @brief 处理 0x22 —— 双臂放块到背部固定动作。
+ * @brief 处理 0x22/0x24 —— 双臂背部固定动作。
  *
  * DATA 段为空。PC 专用状态机同时执行左右臂背部固定关节轨迹。
  */
-static void cmd4_handle_dual_put_back_action(void)
+static void cmd4_handle_dual_back_action(uint8_t cmd)
 {
-    if (pc_action_4dof_start_dual_put_back()) {
+    cmd4_start_arm_if_needed();
+    const bool accepted = (cmd == CMD4_PUT_BLOCK_BACK_ALL)
+        ? pc_action_4dof_start_dual_put_back()
+        : pc_action_4dof_start_dual_get_back();
+    if (accepted) {
         cmd4_clear_manual_pose();
     }
 }
@@ -826,7 +885,9 @@ static void cmd4_handle_dual_put_back_action(void)
  *   [0]  valve_id  电磁阀编号 (0=左臂吸盘, 1=右臂吸盘, 2=左背吸盘, 3=右背吸盘)
  *   [1]  state     0=关闭/释放, 1=开启/吸附 (仅低 1 位有效)
  *
- * 操作后同步更新 s_valve_shadow 以保持反馈帧准确。
+ * 上位机阀门帧为一次性强制设置：帧到达即刻写入硬件并同步影子寄存器，
+ * 不占用后续动作状态机的阀门控制权。动作状态机在下一次状态推进时
+ * 可继续按自身时序覆盖阀门。
  */
 static void cmd4_handle_valve_control(const uint8_t *data)
 {
@@ -839,6 +900,14 @@ static void cmd4_handle_valve_control(const uint8_t *data)
 
     relay_control(valve_id, state);
     s_valve_shadow[valve_id] = state;
+}
+
+/** @brief 外部模块更新阀门状态镜像（与 cmd4_handle_valve_control 遵循相同规则） */
+void cmd4_update_valve_shadow(uint8_t valve_id, uint8_t state)
+{
+    if (valve_id < 4u) {
+        s_valve_shadow[valve_id] = (uint8_t)(state & 0x01u);
+    }
 }
 
 /**
@@ -878,6 +947,39 @@ static void cmd4_handle_pump_control(const uint8_t *data)
     }
 }
 
+/* ════════════════════════════════════════════════════════════════
+ * CC 协议命令处理函数
+ * ════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief 处理 CC_CMD_GIMBAL_START (0x99) —— 启动相机云台
+ *
+ * 帧格式: CC 99 FF EE CRC8 (5B)，无 DATA 段。
+ * 执行云台初始化和使能，将云台移动到初始位置。
+ */
+static void cmd4_handle_cc_gimbal_start(void)
+{
+    gimbal_init();
+    gimbal_start();
+}
+
+/**
+ * @brief 处理 CC_CMD_GIMBAL_MOVE (0x01) —— 运动相机云台到目标位置
+ *
+ * DATA 段格式 (12 字节):
+ *   [0..3]   J1     目标关节1角度 (float32 LE, 单位：度)
+ *   [4..7]   PITCH  目标俯仰角   (float32 LE, 单位：度)
+ *   [8..11]  YAW    目标偏航角   (float32 LE, 单位：度)
+ */
+static void cmd4_handle_cc_gimbal_move(const uint8_t *data)
+{
+    float j1    = cmd4_get_float_le(&data[0]);
+    float pitch = cmd4_get_float_le(&data[4]);
+    float yaw   = cmd4_get_float_le(&data[8]);
+
+    gimbal_set_target_position(&Gimbal, j1, pitch, yaw);
+}
+
 /**
  * @brief 帧派发 —— 校验通过后根据命令字路由到对应 handler
  *
@@ -897,6 +999,26 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
     uint8_t cmd = buf[1];            /* 命令字在帧的第 2 字节 */
     const uint8_t *data = &buf[2];   /* DATA 段从第 3 字节开始 */
 
+    /* ── CC 协议帧分发 ── */
+    if (buf[0] == CC_FRAME_HEADER_BYTE) {
+        switch (cmd) {
+            case CC_CMD_GIMBAL_START:
+                if (len == CC_FRAME_GIMBAL_START_LEN) {
+                    cmd4_handle_cc_gimbal_start();
+                }
+                break;
+            case CC_CMD_GIMBAL_MOVE:
+                if (len == CC_FRAME_GIMBAL_MOVE_LEN) {
+                    cmd4_handle_cc_gimbal_move(data);
+                }
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    /* ── BB 协议帧分发 ── */
     /* 根据命令字分发，同时对帧长做二次校验 */
     switch (cmd) {
         case CMD4_POSE_CONTROL:       /* 0x02: 位姿控制, 帧长 22B */
@@ -929,12 +1051,6 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
             }
             break;
 
-        case CMD4_TARGET_ACTION_CONTROL: /* 0x07: 动态目标取放, 帧长 19B */
-            if (len == CMD4_FRAME_TARGET_ACTION_LEN) {
-                cmd4_handle_target_action_control(data);
-            }
-            break;
-
         case CMD4_PICK_BLOCK:          /* 0x11: 单臂动态取块, 帧长 18B */
         case CMD4_PLACE_BLOCK:         /* 0x12: 单臂动态放块, 帧长 18B */
             if (len == CMD4_FRAME_SINGLE_TARGET_ACTION_LEN) {
@@ -950,14 +1066,16 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
             break;
 
         case CMD4_PICK_BLOCK_ALL:      /* 0x21: 双臂动态取块, 帧长 29B */
+        case CMD4_PLACE_BLOCK_ALL:     /* 0x23: 双臂动态放块, 帧长 29B */
             if (len == CMD4_FRAME_DUAL_TARGET_ACTION_LEN) {
-                cmd4_handle_dual_pick_action(data);
+                cmd4_handle_dual_target_action(cmd, data);
             }
             break;
 
         case CMD4_PUT_BLOCK_BACK_ALL:  /* 0x22: 双臂放块到背部固定动作, 帧长 5B */
+        case CMD4_GET_BLOCK_BACK_ALL:  /* 0x24: 双臂从背部取块固定动作, 帧长 5B */
             if (len == CMD4_FRAME_DUAL_BACK_ACTION_LEN) {
-                cmd4_handle_dual_put_back_action();
+                cmd4_handle_dual_back_action(cmd);
             }
             break;
 
@@ -971,6 +1089,7 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
                                       off_y * 0.001f,
                                       off_z * 0.001f);
                 Dof4_double_arm_start();
+                cmd4_mark_all_valves_open();
             }
             break;
 

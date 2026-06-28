@@ -53,7 +53,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     hardware_device/Servo/FEETECH/SCSLib/SCSCL.c
     hardware_device/Servo/FEETECH/SCSLib/SCSerail.c
     hardware_device/Servo/FEETECH/SCSLib/SMS_STS.c
-    hardware_device/remote_control/DT7.c
     bsp/can/bsp_can.c
     bsp/usart/bsp_usart.c
     bsp/led/bsp_led.c
@@ -61,17 +60,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     bsp/virtual_serial_port/virtual_serial_port.c   
     application/RTOS_TASK/arm_control_task.c
     application/RTOS_TASK/pump_control_task.c
-    application/RTOS_TASK/usart_debug_task.c
     application/RTOS_TASK/led_indicate_task.c
     application/RTOS_TASK/update_task.c
-    application/Gripper/arm_control.c
-    application/Gripper/Planar_Robot_Arm.c
+    application/RTOS_TASK/gimbal_task.c
     application/Gripper/pneumatic_control.c
-    application/Gripper/gimbal.c
     application/Gripper/command_decode_4dof.c
+    application/Gripper/gimbal.c
     application/Gripper/block_inspect.c
-    application/Gripper/input_arbiter.c
-    application/Gripper/action_scheduler.c
     application/Gripper/action_scheduler_4dof.c
     application/Gripper/pc_action_executor_4dof.c
     application/Gripper/Dof4_Arm.c
@@ -92,7 +87,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     hardware_device/Servo
     hardware_device/Servo/FEETECH
     hardware_device/Servo/FEETECH/SCSLib
-    hardware_device/remote_control
     application/RTOS_TASK
     application/Gripper
     application/variables
