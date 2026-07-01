@@ -13,17 +13,17 @@ extern "C" {
 /** @brief PC 动态取放悬停高度和俯仰角由各模板独立控制，不再使用全局宏。 */
 
 typedef enum {
-    PC_ACTION_4DOF_REJECT_NONE = 0,
-    PC_ACTION_4DOF_REJECT_INVALID_ARM = 1,
-    PC_ACTION_4DOF_REJECT_BAD_TARGET = 2,
-    PC_ACTION_4DOF_REJECT_TARGET_UNREACHABLE = 3,
-    PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE = 4,
-    PC_ACTION_4DOF_REJECT_JOINT_PATH_INVALID = 5,
-    PC_ACTION_4DOF_REJECT_BUSY = 6,
-    PC_ACTION_4DOF_REJECT_COMPLETION_PENDING = 7,
-    PC_ACTION_4DOF_REJECT_ACTION_ACTIVE = 8,
-    PC_ACTION_4DOF_REJECT_PENDING_FULL = 9,
-    PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE = 10,
+    PC_ACTION_4DOF_REJECT_NONE = 0,                     /**< 无拒绝 */
+    PC_ACTION_4DOF_REJECT_INVALID_ARM = 1,              /**< 非法手臂 ID */
+    PC_ACTION_4DOF_REJECT_BAD_TARGET = 2,               /**< 非法目标位姿（非有限值） */
+    PC_ACTION_4DOF_REJECT_TARGET_UNREACHABLE = 3,       /**< 目标位姿不可达 */
+    PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE = 4, /**< 目标正上方悬停点不可达 */
+    PC_ACTION_4DOF_REJECT_JOINT_PATH_INVALID = 5,       /**< 关节路径点不可达或非法 */
+    PC_ACTION_4DOF_REJECT_BUSY = 6,                     /**< PC 动作状态机正忙，无法接受新请求 */
+    PC_ACTION_4DOF_REJECT_COMPLETION_PENDING = 7,       /**< 上一次动作的结束事件尚未发送，无法接受新请求 */
+    PC_ACTION_4DOF_REJECT_ACTION_ACTIVE = 8,            /**< 预设动作状态机正忙，无法接受新请求 */
+    PC_ACTION_4DOF_REJECT_PENDING_FULL = 9,             /**< 待处理请求队列已满，无法接受新请求 */
+    PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE = 10,  /**< 路径中间点不可达 */
 } PcAction4DOF_RejectReason;
 
 typedef struct {

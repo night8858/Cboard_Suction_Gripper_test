@@ -31,6 +31,7 @@
 #include "pneumatic_control.h"
 #include "stm32f4xx_hal.h"
 #include "task.h"
+#include "variables.h"
 
 #include <math.h>
 #include <string.h>
@@ -50,18 +51,18 @@
 #define PC_ACT4_POSE_PITCH_TOL_RAD            0.05f  /**< 位姿俯仰角到位公差 (rad) */
 #define PC_ACT4_JOINT_TOL_RAD                  0.05f /**< 关节角到位公差 (rad) */
 #define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX         0U    /**< 动态路径到达悬停点后等待（简化后仅一个中间点） */
-#define PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M      0.10f /**< 动态取/放块目标上方悬停高度，需明显大于到位公差 */
+#define PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M      0.06f /**< 动态取/放块目标上方悬停高度，需明显大于到位公差 */
 
 /* ======================== PC 动作阀门时序，可按实机效果集中调节 ======================== */
 #define PC_ACT4_DELAY_DYNAMIC_PICK_HOLD_MS       1500U /**< 动态取块：目标点吸附稳定等待 */
 #define PC_ACT4_DELAY_DYNAMIC_PLACE_RELEASE_MS   2000U /**< 动态放块：关闭工作臂阀后的释放等待 */
-#define PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS    500U /**< 动态取/放块：到目标点后的稳定等待 */
+#define PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS    400U /**< 动态取/放块：到目标点后的稳定等待 */
 #define PC_ACT4_DELAY_BACK_PRE_RELEASE_MS        2000U /**< 放到背部：打开背部阀后的预吸附等待 */
 #define PC_ACT4_DELAY_BACK_POST_RELEASE_MS       2000U /**< 放到背部：关闭工作臂阀后的交接等待 */
 #define PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS       1000U /**< 从背部取回：工作臂吸附稳定等待 */
 #define PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS      500U /**< 从背部取回：关闭来源背部阀后的释放等待 */
 #define PC_ACT4_DELAY_IDLE_HOLD_MS                100U /**< 到达 IDLE 后的结束保持 */
-#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      300U /**< 动态路径悬停点保持 */
+#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      100U /**< 动态路径悬停点保持 */
 
 /* ======================== 路径数组容量 ======================== */
 #define PC_ACT4_ARM_COUNT              2U     /**< 机械臂数量（左/右） */
@@ -194,6 +195,7 @@ typedef struct {
     bool release_committed;             /**< 是否已经执行了物块释放操作 */
     bool operation_phase_started;       /**< 位姿模式操作保持阶段是否已开始 */
     bool joint_phase_started;           /**< 关节模式当前阀门保持阶段是否已开始 */
+    bool error_reported;                /**< 本次动作失败事件是否已上报给 LED。 */
     PcAction4DOF_JointSubstate jnt_substate; /**< 关节模式子状态 */
     union {
         PcAction4DOF_PosePath pose[PC_ACT4_ARM_COUNT];   /**< 位姿路径（双臂各一份） */
@@ -224,6 +226,13 @@ extern Dof4_Arm g_dof4_arm_right;  /**< 右机械臂实例（定义于 Dof4_Arm.
 static PcAction4DOF_Context s_pc_ctx;            /**< PC 状态机运行时上下文 */
 static volatile bool s_pc_completion_pending;    /**< 是否有待发送的 0xCC 结束事件 */
 static PcAction4DOF_PendingRequest s_pc_pending; /**< 待启动 PC 动作请求 */
+
+static void pc_action_4dof_report_error_event(void)
+{
+    taskENTER_CRITICAL();
+    g_pc_action_error_event_count++;
+    taskEXIT_CRITICAL();
+}
 
 /* ======================== 单臂动态动作模板 ======================== */
 /**
@@ -744,6 +753,14 @@ static void pc_action_4dof_close_source_back_valves(void)
 }
 
 /**
+ * @brief 从背部取回动作完成后恢复来源背部阀打开。
+ */
+static void pc_action_4dof_open_source_back_valves(void)
+{
+    pc_action_4dof_set_selected_back_valves(PC_ACT4_VALVE_OPEN);
+}
+
+/**
  * @brief 更新背部物块占用状态。
  *
  * @param occupied true=标记为占用（放块完成），false=标记为空闲（取块完成）
@@ -875,6 +892,9 @@ static void pc_action_4dof_begin_post_or_idle(void)
 static void pc_action_4dof_finish(void)
 {
     pc_action_4dof_open_working_arm_valves();
+    if (pc_action_4dof_is_back_get_command(s_pc_ctx.command)) {
+        pc_action_4dof_open_source_back_valves();
+    }
 
     taskENTER_CRITICAL();
     s_pc_ctx.active = false;
@@ -897,6 +917,10 @@ static void pc_action_4dof_finish(void)
  */
 static void pc_action_4dof_begin_abort_return(void)
 {
+    if (!s_pc_ctx.error_reported) {
+        s_pc_ctx.error_reported = true;
+        pc_action_4dof_report_error_event();
+    }
     pc_action_4dof_set_state(PC_ACT4_STATE_ABORT_RETURN_IDLE,
                              PC_ACT4_MOVE_TIMEOUT_MS);
 }
@@ -1092,6 +1116,8 @@ void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
                                   PcAction4DOF_RejectReason reason,
                                   const Dof4_Pose *target_world)
 {
+    pc_action_4dof_report_error_event();
+
     Dof4_Arm *arm = (arm_id == DOF4_ARM_RIGHT)
         ? &g_dof4_arm_right
         : &g_dof4_arm_left;

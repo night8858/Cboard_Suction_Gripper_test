@@ -11,6 +11,7 @@ ramp_function_source_t pump_ramp;
 
 volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 volatile uint8_t g_system_alarm_active = 0;
+volatile uint32_t g_pc_action_error_event_count;
 
 Solenoid_state_s solenoid_state;
 SwitchInput g_switch_input;

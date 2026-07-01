@@ -160,13 +160,13 @@ typedef enum {
 #define ACT4_JOINT_TODO {0.0f, 0.0f, 0.0f, 0.0f}
 
 /** @brief 左背占用时的默认左臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_left_back_avoid_pose  = {0.24f,  0.13f, 0.16f, -0.30f};
+static const Dof4_Pose s_default_left_back_avoid_pose  = {0.20f,  0.23f, 0.22f, 0.40f};
 /** @brief 右背占用时的默认右臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_right_back_avoid_pose = {0.24f, -0.13f, 0.16f, -0.30f};
+static const Dof4_Pose s_default_right_back_avoid_pose = {0.20f, -0.23f, 0.22f, 0.40f};
 /** @brief 当前生效的左背占用避让位，放置到左背动作完成后更新。 */
-static Dof4_Pose s_current_left_back_avoid_pose  = {0.24f,  0.13f, 0.22f, 0.20f};
+static Dof4_Pose s_current_left_back_avoid_pose  = {0.20f,  0.23f, 0.22f, 0.40f};
 /** @brief 当前生效的右背占用避让位，放置到右背动作完成后更新。 */
-static Dof4_Pose s_current_right_back_avoid_pose = {0.24f, -0.13f, 0.22f, 0.20f};
+static Dof4_Pose s_current_right_back_avoid_pose = {0.20f, -0.23f, 0.22f, 0.40f};
 
 /* ════════════════════════════════════════════════════════════════
  * 目标位姿数据结构

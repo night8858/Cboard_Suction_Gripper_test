@@ -1,10 +1,10 @@
 {
     
-    "cortex-debug.gdbPath": "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-gdb-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb",
-    "cortex-debug.armToolchainPath": "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
-    "cmake.cmakePath": "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/cmake/4.3.1+st.1/bin/cmake",
+    "cortex-debug.gdbPath": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-gdb-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb",
+    "cortex-debug.armToolchainPath": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
+    "cmake.cmakePath": "/usr/bin/cmake",
     "cmake.environment": {
-        "PATH": "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin:${env:PATH}"
+        "PATH": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin:${env:PATH}"
     },
     "cmake.preferredGenerators": [
         "Ninja"
@@ -12,7 +12,7 @@
     "stm32cube-ide-clangd.path": "cube",
     "stm32cube-ide-clangd.arguments": [
         "starm-clangd",
-        "--query-driver=/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc",
-        "--query-driver=/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++"
+        "--query-driver=${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc",
+        "--query-driver=${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++"
     ]
 }

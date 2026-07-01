@@ -7,19 +7,48 @@ set(CMAKE_CXX_COMPILER_ID GNU)
 # Some default GCC settings. Prefer an explicit STM32 toolchain path so a fresh
 # CubeMX/CMake configure does not depend on the user's shell PATH.
 set(STM32_TOOLCHAIN_PATH "" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory")
-if(NOT STM32_TOOLCHAIN_PATH AND DEFINED ENV{STM32_TOOLCHAIN_PATH})
-    set(STM32_TOOLCHAIN_PATH "$ENV{STM32_TOOLCHAIN_PATH}" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory" FORCE)
+
+set(_STM32_TOOLCHAIN_CANDIDATES)
+if(DEFINED ENV{STM32_TOOLCHAIN_PATH} AND NOT "$ENV{STM32_TOOLCHAIN_PATH}" STREQUAL "")
+    list(APPEND _STM32_TOOLCHAIN_CANDIDATES "$ENV{STM32_TOOLCHAIN_PATH}")
 endif()
-if(NOT STM32_TOOLCHAIN_PATH AND EXISTS "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc")
-    set(STM32_TOOLCHAIN_PATH "/home/waterking/snap/code/247/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory" FORCE)
+if(STM32_TOOLCHAIN_PATH)
+    list(APPEND _STM32_TOOLCHAIN_CANDIDATES "${STM32_TOOLCHAIN_PATH}")
 endif()
 
-if(STM32_TOOLCHAIN_PATH)
-    set(TOOLCHAIN_PREFIX "${STM32_TOOLCHAIN_PATH}/arm-none-eabi-")
-else()
-    # Fallback: arm-none-eabi-* must be part of PATH.
-    set(TOOLCHAIN_PREFIX arm-none-eabi-)
+file(GLOB _STM32_SNAP_TOOLCHAIN_BINS
+    "$ENV{HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/*/bin"
+)
+if(_STM32_SNAP_TOOLCHAIN_BINS)
+    list(SORT _STM32_SNAP_TOOLCHAIN_BINS COMPARE NATURAL ORDER DESCENDING)
+    list(APPEND _STM32_TOOLCHAIN_CANDIDATES ${_STM32_SNAP_TOOLCHAIN_BINS})
 endif()
+
+set(_STM32_SELECTED_TOOLCHAIN_PATH "")
+foreach(_STM32_TOOLCHAIN_CANDIDATE IN LISTS _STM32_TOOLCHAIN_CANDIDATES)
+    if(EXISTS "${_STM32_TOOLCHAIN_CANDIDATE}/arm-none-eabi-gcc")
+        set(_STM32_SELECTED_TOOLCHAIN_PATH "${_STM32_TOOLCHAIN_CANDIDATE}")
+        break()
+    endif()
+endforeach()
+
+if(NOT _STM32_SELECTED_TOOLCHAIN_PATH)
+    find_program(_STM32_SYSTEM_ARM_NONE_EABI_GCC arm-none-eabi-gcc)
+    if(_STM32_SYSTEM_ARM_NONE_EABI_GCC)
+        get_filename_component(_STM32_SELECTED_TOOLCHAIN_PATH "${_STM32_SYSTEM_ARM_NONE_EABI_GCC}" DIRECTORY)
+    endif()
+endif()
+
+if(NOT _STM32_SELECTED_TOOLCHAIN_PATH)
+    message(FATAL_ERROR
+        "Could not find arm-none-eabi-gcc. Set STM32_TOOLCHAIN_PATH to the "
+        "directory containing arm-none-eabi-gcc, or install GNU Arm Embedded "
+        "Toolchain so arm-none-eabi-gcc is available on PATH."
+    )
+endif()
+
+set(STM32_TOOLCHAIN_PATH "${_STM32_SELECTED_TOOLCHAIN_PATH}" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory" FORCE)
+set(TOOLCHAIN_PREFIX "${STM32_TOOLCHAIN_PATH}/arm-none-eabi-")
 
 set(CMAKE_C_COMPILER                ${TOOLCHAIN_PREFIX}gcc)
 set(CMAKE_ASM_COMPILER              ${CMAKE_C_COMPILER})

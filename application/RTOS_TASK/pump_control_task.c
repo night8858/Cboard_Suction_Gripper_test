@@ -26,7 +26,7 @@ void pump_control_task(void const * argument)
     {
         pump_control_loop(&g_pump);
         // heartbeat_kick(HB_TASK_PUMP, HAL_GetTick());
-        osDelay(4); /* 控制周期 4ms, 250Hz */
+        osDelay(2); /* 控制周期 2ms, 500Hz */
     }
     /* USER CODE END pump_control_task */
 }

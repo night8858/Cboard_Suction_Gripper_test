@@ -39,6 +39,7 @@ extern action_state_4dof_e RIGHT_state;
 
 extern volatile uint32_t g_task_heartbeat_ms[HB_TASK_COUNT];
 extern volatile uint8_t g_system_alarm_active;
+extern volatile uint32_t g_pc_action_error_event_count;
 
 extern float g_motor_target_speed;
 

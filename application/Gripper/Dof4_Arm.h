@@ -178,10 +178,10 @@ typedef enum {
 
 /** @brief 目标关节在锁存阶段发生裁剪的原因位。 */
 typedef enum {
-    DOF4_CLIP_REASON_NONE = 0,
-    DOF4_CLIP_REASON_JOINT_LIMIT = (1U << 0),
-    DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1),
-    DOF4_CLIP_REASON_PC_ACTION_REJECT = (1U << 2)
+    DOF4_CLIP_REASON_NONE = 0,                             ///< 无裁剪
+    DOF4_CLIP_REASON_JOINT_LIMIT = (1U << 0),              ///< 关节角超出配置上下限
+    DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1),              ///< 舵机步进超出配置上下限
+    DOF4_CLIP_REASON_PC_ACTION_REJECT = (1U << 2)          ///< PC 动作拒绝（路径构造失败）
 } Dof4_ClipReason;
 
 /**
