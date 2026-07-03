@@ -162,35 +162,22 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 
 /// ════════════════════════════════════════════════════════════════
 
-//两个后侧吸盘的间距是265mm，两个基座的距离是266
+// 固件不再内置左右臂安装偏置；上位机下发坐标时负责补偿实际安装位置。
 
 /// ════════════════════════════════════════════════════════════════
 
-/** @brief URDF 左臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_L_BASE_X -0.083f
-/** @brief URDF 左臂 J1 位置 Y，单位 m。 */
-#define DOF4_URDF_L_BASE_Y 0.13342f
-/** @brief URDF 左臂 J1 位置 Z，单位 m。 */
+/** @brief 左臂 J1 位置 X，单位 m。默认归零，安装偏置由上位机补偿。 */
+#define DOF4_URDF_L_BASE_X 0.0f
+/** @brief 左臂 J1 位置 Y，单位 m。默认归零，安装偏置由上位机补偿。 */
+#define DOF4_URDF_L_BASE_Y 0.0f
+/** @brief 左臂 J1 位置 Z，单位 m。默认归零，安装偏置由上位机补偿。 */
 #define DOF4_URDF_L_BASE_Z 0.0f
-/** @brief URDF 右臂 J1 位置 X，单位 m。 */
-#define DOF4_URDF_R_BASE_X -0.083f
-/** @brief URDF 右臂 J1 位置 Y，单位 m。 */
-#define DOF4_URDF_R_BASE_Y (-0.13265f)
-/** @brief URDF 右臂 J1 位置 Z，单位 m。 */
+/** @brief 右臂 J1 位置 X，单位 m。默认归零，安装偏置由上位机补偿。 */
+#define DOF4_URDF_R_BASE_X 0.0f
+/** @brief 右臂 J1 位置 Y，单位 m。默认归零，安装偏置由上位机补偿。 */
+#define DOF4_URDF_R_BASE_Y 0.0f
+/** @brief 右臂 J1 位置 Z，单位 m。默认归零，安装偏置由上位机补偿。 */
 #define DOF4_URDF_R_BASE_Z 0.0f
-
-// /** @brief URDF 左臂 J1 位置 X，单位 m。 */
-// #define DOF4_URDF_L_BASE_X 0
-// /** @brief URDF 左臂 J1 位置 Y，单位 m。 */
-// #define DOF4_URDF_L_BASE_Y 0
-// /** @brief URDF 左臂 J1 位置 Z，单位 m。 */
-// #define DOF4_URDF_L_BASE_Z 0
-// /** @brief URDF 右臂 J1 位置 X，单位 m。 */
-// #define DOF4_URDF_R_BASE_X 0
-// /** @brief URDF 右臂 J1 位置 Y，单位 m。 */
-// #define DOF4_URDF_R_BASE_Y 
-// /** @brief URDF 右臂 J1 位置 Z，单位 m。 */
-// #define DOF4_URDF_R_BASE_Z 0
 
 /** @brief URDF J1 到 J2 水平等效偏移，单位 m。 */
 #define DOF4_URDF_SHOULDER_R 0.02716f
@@ -207,21 +194,21 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 
 /** @brief 左臂 J1 下限，单位 rad。 */
 #define DOF4_L_J1_MIN (-3.75f)  /* -215°, 下限较 URDF 原值扩展 15° */
-/** @brief 左臂 J1 上限，单位 rad。+10° 扩展 (原 55° → 65°) */
-#define DOF4_L_J1_MAX 1.135f
-/** @brief 右臂 J1 下限，单位 rad。+10° 扩展 (原 -55° → -65°) */
-#define DOF4_R_J1_MIN (-1.135f)
+/** @brief 左臂 J1 上限，单位 rad。放宽到约 +100°，覆盖左侧更外侧目标点。 */
+#define DOF4_L_J1_MAX 1.75f
+/** @brief 右臂 J1 下限，单位 rad。放宽到约 -100°，覆盖右侧更外侧目标点。 */
+#define DOF4_R_J1_MIN (-1.75f)
 /** @brief 右臂 J1 上限，单位 rad。 */
 #define DOF4_R_J1_MAX 3.49f
 /** @brief J2 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
-#define DOF4_J2_SERVO_REL_MIN (-2.70f)
-#define DOF4_J2_SERVO_REL_MAX 1.75f
-/** @brief J3 相对舵机中位的下限；绝对上限允许到 q3=0 的伸直姿态。 */
+#define DOF4_J2_SERVO_REL_MIN (-3.10f)
+#define DOF4_J2_SERVO_REL_MAX 2.10f
+/** @brief J3 相对舵机中位的下限；绝对上限允许轻微反向，减少边界点被拒绝。 */
 #define DOF4_J3_SERVO_REL_MIN (-4.44f)
-#define DOF4_J3_ABS_MAX 0.0f
+#define DOF4_J3_ABS_MAX 0.35f
 /** @brief J4 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
-#define DOF4_J4_SERVO_REL_MIN (-1.68f)
-#define DOF4_J4_SERVO_REL_MAX 1.68f
+#define DOF4_J4_SERVO_REL_MIN (-2.20f)
+#define DOF4_J4_SERVO_REL_MAX 2.20f
 
 /** @brief 几何解算退化阈值。 */
 #define DOF4_GEOM_EPS 1.0e-6f
@@ -312,24 +299,6 @@ bool g_dof4_arm_started = false;
 
 static Dof4_CartesianPlanner g_planner_left;
 static Dof4_CartesianPlanner g_planner_right;
-
-/* ════════════════════════════════════════════════════════════════
- * 碰撞规避状态机
- * ════════════════════════════════════════════════════════════════ */
-
-/** @brief 碰撞规避子状态 */
-typedef enum {
-    DOF4_AVOID_NORMAL          = 0,  /**< 正常模式，双臂自由移动 */
-    DOF4_AVOID_RIGHT_RETREAT   = 1,  /**< 右臂撤退到安全位 */
-    DOF4_AVOID_LEFT_ADVANCE    = 2,  /**< 左臂向目标前进 */
-    DOF4_AVOID_RIGHT_ADVANCE   = 3,  /**< 右臂向目标前进 */
-} Dof4_AvoidState;
-
-static Dof4_AvoidState   s_avoid_state;
-static Dof4_Pose         s_saved_left_target;   /**< 碰撞触发时保存的左臂目标 */
-static Dof4_Pose         s_saved_right_target;  /**< 碰撞触发时保存的右臂目标 */
-static Dof4_Pose         s_retreat_pose_right;  /**< 动态计算的右臂安全位 */
-static uint32_t          s_avoid_enter_tick;    /**< 进入当前规避子状态的 tick */
 
 #ifdef DOF4_HOST_TEST
 static uint32_t g_dof4_host_tick_ms;
@@ -875,8 +844,8 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
     cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
     cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
     cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
-    cfg.servo_speed = 2000U;
-    cfg.servo_acc = 20U;
+    cfg.servo_speed = 3000U;
+    cfg.servo_acc = 25U;
 
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
@@ -1494,9 +1463,9 @@ Dof4_Status Dof4_arm_read_servo_pos(Dof4_Arm *arm)
         return DOF4_STATUS_NULL_PARAM;
     }
 
+#ifndef DOF4_HOST_TEST
     uint8_t fail_count = 0U;
 
-#ifndef DOF4_HOST_TEST
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         const int pos = ReadPos((int)arm->cfg.servo_id[i]);
         if (pos < 0) {
@@ -1641,17 +1610,6 @@ Dof4_Status Dof4_batch_write_all_servo(const Dof4_Arm *arm_left,
 #endif 
     return DOF4_STATUS_OK;
 }
-
-/* ════════════════════════════════════════════════════════════════
- * 碰撞规避辅助函数 — 前向声明（定义见文件末尾）
- * ════════════════════════════════════════════════════════════════ */
-
-static void dof4_compute_retreat_pose(const Dof4_CollisionDetail *detail,
-                                      const Dof4_Pose *right_current,
-                                      Dof4_Pose *retreat);
-static bool dof4_is_pose_reached(const Dof4_Arm *arm,
-                                 const Dof4_Pose *target,
-                                 float tol_m);
 
 /**
  * @brief 双臂一步式控制循环——每帧执行一次完整的感知→决策→执行流水线。
@@ -1907,66 +1865,6 @@ Dof4_Status Dof4_dual_arm_control_loop(Dof4_Arm *arm_left,
     return DOF4_STATUS_OK;
 
 }
-
-/* ════════════════════════════════════════════════════════════════
- * 碰撞规避辅助函数
- * ════════════════════════════════════════════════════════════════ */
-/**
- * @brief 基于碰撞详情计算右臂安全撤退位姿。
- *
- * 利用碰撞检测返回的 closest_a / closest_b 得到最近距离向量方向，
- * 将右臂当前位姿沿该方向推开 DOF4_AVOID_PUSH_M，并附加 Z 抬高。
- *
- * @param detail          碰撞详情（含 closest_a / closest_b）。
- * @param right_current   右臂当前 FK 位姿。
- * @param retreat         输出安全撤退位姿。
- */
-static void dof4_compute_retreat_pose(const Dof4_CollisionDetail *detail,
-                                      const Dof4_Pose *right_current,
-                                      Dof4_Pose *retreat)
-{
-    float dir_x = detail->closest_b[0] - detail->closest_a[0];
-    float dir_y = detail->closest_b[1] - detail->closest_a[1];
-    float dir_z = detail->closest_b[2] - detail->closest_a[2];
-    const float len = sqrtf(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z);
-
-    if (len > DOF4_GEOM_EPS) {
-        dir_x /= len;
-        dir_y /= len;
-        dir_z /= len;
-    } else {
-        /* 退化：沿默认方向（右臂向右后方推开） */
-        dir_x = 0.0f;
-        dir_y = -1.0f;
-        dir_z = 0.3f;
-    }
-
-    retreat->x     = right_current->x + dir_x * DOF4_AVOID_PUSH_M;
-    retreat->y     = right_current->y + dir_y * DOF4_AVOID_PUSH_M;
-    retreat->z     = right_current->z + dir_z * DOF4_AVOID_PUSH_M + DOF4_AVOID_Z_LIFT_M;
-    retreat->pitch = right_current->pitch;
-}
-
-/**
- * @brief 检查单臂 FK 位姿是否已到达目标（位置 + pitch 均在容差内）。
- * @param arm    机械臂实例。
- * @param target 目标位姿。
- * @param tol_m  位置容差，单位 m。
- * @retval true  已到位。
- * @retval false 未到位。
- */
-static bool dof4_is_pose_reached(const Dof4_Arm *arm,
-                                 const Dof4_Pose *target,
-                                 float tol_m)
-{
-    const float dx = arm->current_pose.x - target->x;
-    const float dy = arm->current_pose.y - target->y;
-    const float dz = arm->current_pose.z - target->z;
-    const float pos_err = sqrtf(dx * dx + dy * dy + dz * dz);
-    const float pitch_err = fabsf(Dof4_normalize_angle(arm->current_pose.pitch - target->pitch));
-    return (pos_err <= tol_m) && (pitch_err <= tol_m);
-}
-
 
 /**
  * @brief 将位姿钳位到机械臂工作空间内。

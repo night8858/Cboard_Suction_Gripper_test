@@ -62,7 +62,7 @@
 #define PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS       1000U /**< 从背部取回：工作臂吸附稳定等待 */
 #define PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS      500U /**< 从背部取回：关闭来源背部阀后的释放等待 */
 #define PC_ACT4_DELAY_IDLE_HOLD_MS                100U /**< 到达 IDLE 后的结束保持 */
-#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      100U /**< 动态路径悬停点保持 */
+#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      60U /**< 动态路径悬停点保持 */
 
 /* ======================== 路径数组容量 ======================== */
 #define PC_ACT4_ARM_COUNT              2U     /**< 机械臂数量（左/右） */
@@ -246,14 +246,14 @@ static const PcAction4DOF_DynamicTemplate s_pick_templates[PC_ACT4_ARM_COUNT] = 
     {
         .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
         .exit_offset  = {-0.10f, -0.07f, 0.38f, -0.30f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
         .exit_offset  = {0.10f, 0.07f, 0.40f, -0.30f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
@@ -269,14 +269,14 @@ static const PcAction4DOF_DynamicTemplate s_dual_pick_templates[PC_ACT4_ARM_COUN
     {
         .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
         .exit_offset  = {0.10f, -0.07f, 0.365f, -0.30f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
         .exit_offset  = {0.10f, 0.07f, 0.385f, -0.30f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
@@ -292,14 +292,14 @@ static const PcAction4DOF_DynamicTemplate s_place_templates[PC_ACT4_ARM_COUNT] =
     {
         .entry_offset = {-0.075f, -0.20f, 0.49f, -0.30f},
         .exit_offset  = {-0.175f, -0.24f, 0.44f, -0.50f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
     /* 右臂 */
     {
         .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
         .exit_offset  = {-0.175f, 0.15f, 0.43f, -0.50f},
-        .target_pitch = -1.50f,
+        .target_pitch = -1.57f,
         .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
     },
 };
@@ -407,7 +407,7 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
             PC_JOINT_POINT(2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(1.570f, 1.50f, -1.50f, -1.463f),   /* retreat */
+            PC_JOINT_POINT(1.570f, 1.50f, -1.57f, -1.463f),   /* retreat */
             PC_JOINT_POINT(1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,
@@ -422,7 +422,7 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
             PC_JOINT_POINT(-2.800f, 1.57f, -1.88f, -1.21f),   /* target */
         },
         .post = {
-            PC_JOINT_POINT(-1.570f, 1.50f, -1.50f, -1.463f),   /* retreat */
+            PC_JOINT_POINT(-1.570f, 1.50f, -1.57f, -1.463f),   /* retreat */
             PC_JOINT_POINT(-1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
         },
         .pre_count = 4U,

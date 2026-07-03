@@ -107,19 +107,19 @@ int main(void)
                      "right initial feedback angle");
     }
 
-    require_near(left.cfg.joint_min[1], L_J2_ZERO_BIAS_RAD - 2.70f, TEST_FLOAT_EPS, "L J2 min");
-    require_near(left.cfg.joint_max[1], L_J2_ZERO_BIAS_RAD + 1.75f, TEST_FLOAT_EPS, "L J2 max");
-    require_near(left.cfg.joint_min[3], L_J4_ZERO_BIAS_RAD - 1.68f, TEST_FLOAT_EPS, "L J4 min");
-    require_near(left.cfg.joint_max[3], L_J4_ZERO_BIAS_RAD + 1.68f, TEST_FLOAT_EPS, "L J4 max");
-    require_near(left.cfg.joint_max[2], 0.0f, TEST_FLOAT_EPS, "L J3 straight max");
-    require_near(right.cfg.joint_max[2], 0.0f, TEST_FLOAT_EPS, "R J3 straight max");
+    require_near(left.cfg.joint_min[1], L_J2_ZERO_BIAS_RAD - 3.10f, TEST_FLOAT_EPS, "L J2 min");
+    require_near(left.cfg.joint_max[1], L_J2_ZERO_BIAS_RAD + 2.10f, TEST_FLOAT_EPS, "L J2 max");
+    require_near(left.cfg.joint_min[3], L_J4_ZERO_BIAS_RAD - 2.20f, TEST_FLOAT_EPS, "L J4 min");
+    require_near(left.cfg.joint_max[3], L_J4_ZERO_BIAS_RAD + 2.20f, TEST_FLOAT_EPS, "L J4 max");
+    require_near(left.cfg.joint_max[2], 0.35f, TEST_FLOAT_EPS, "L J3 straight max");
+    require_near(right.cfg.joint_max[2], 0.35f, TEST_FLOAT_EPS, "R J3 straight max");
 
     int16_t left_j3_servo = 0;
     int16_t right_j3_servo = 0;
     require_ok(Dof4_angle_to_servo(&left, 2U, 0.0f, &left_j3_servo), "L J3 straight mapping");
     require_ok(Dof4_angle_to_servo(&right, 2U, 0.0f, &right_j3_servo), "R J3 straight mapping");
     require_true(abs((int)left_j3_servo - 1024) <= 1, "L J3 straight servo near 1024");
-    require_true(abs((int)right_j3_servo - 998) <= 1, "R J3 straight servo near 998");
+    require_true(abs((int)right_j3_servo - 1024) <= 1, "R J3 straight servo near 1024");
 
     Dof4_JointState straight = left.joint_actual;
     straight.q[2] = 0.0f;
@@ -131,10 +131,12 @@ int main(void)
     const Dof4_Pose right_grab = {0.4f, -0.425f, -0.21f, -1.45f};
     const Dof4_Pose left_place = {0.425f, 0.40f, -0.19f, -1.45f};
     const Dof4_Pose right_place = {0.425f, -0.40f, -0.19f, -1.45f};
+    const Dof4_Pose left_low_pick = {0.2224f, 0.2854f, -0.5010f, -1.57f};
     verify_pose_round_trip(&left, &left_grab, "left front grab");
     verify_pose_round_trip(&right, &right_grab, "right front grab");
     verify_pose_round_trip(&left, &left_place, "left front place");
     verify_pose_round_trip(&right, &right_place, "right front place");
+    verify_pose_round_trip(&left, &left_low_pick, "left low pick");
 
     Dof4_JointState over_limit = right.joint_actual;
     over_limit.q[1] = right.cfg.joint_max[1] + 0.2f;

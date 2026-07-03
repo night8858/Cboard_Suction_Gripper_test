@@ -156,7 +156,7 @@ void gimbal_control_loop(void)
     get_gimbal_servo_pos(&Gimbal);
     gimbal_servo_move_to_position(&Gimbal);
 }
-
+ 
 
 void gimbal_set_target_position(Gimbal_s *Gimbal, float J1, float pitch, float yaw) 
 {
