@@ -1,7 +1,7 @@
 {
     "cortex-debug.gdbPath": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-gdb-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb",
     "cortex-debug.armToolchainPath": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin",
-    "cmake.cmakePath": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/cmake/4.3.1+st.1/bin/cmake",
+    "cmake.cmakePath": "cube-cmake",
     "cmake.useCMakePresets": "always",
     "cmake.configurePreset": "Debug",
     "cmake.buildPreset": "Debug",
@@ -11,11 +11,13 @@
     "cmake.preferredGenerators": [
         "Ninja"
     ],
-    "stm32cube-ide-clangd.path": "${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/st-arm-clangd/21.1.0+st.2/bin/starm-clangd",
+    "stm32cube-ide-clangd.path": "cube",
     "stm32cube-ide-clangd.arguments": [
         "starm-clangd",
         "--query-driver=${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc",
         "--query-driver=${env:HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++"
     ],
-    "cmake.configureArgs": []
+    "cmake.configureArgs": [
+        "-DCMAKE_COMMAND=cube-cmake"
+    ]
 }

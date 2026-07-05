@@ -250,7 +250,7 @@ int main(void)
     require_true(state->pose_set_calls == 0U, "pose is queued after start");
     require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
                  "pose pending after start");
-    require_near(pending_pose.x, 0.10f, "pending pose left x");
+    require_near(pending_pose.x, 0.11f, "pending pose left x");
     require_near(pending_pose.pitch, 0.40f, "pending pose left pitch");
     require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
                  "pending pose not active before arm task consumes");
@@ -264,17 +264,38 @@ int main(void)
     state = cmd4_host_mocks_state();
     require_true(state->pose_set_calls == 1U, "arm task applies manual pose");
     require_true(cmd4_manual_pose_active(CMD4_ARM_LEFT), "manual pose active");
-    require_near(g_dof4_arm_left.current_pose.x, 0.10f, "pose left x");
+    require_near(g_dof4_arm_left.current_pose.x, 0.11f, "pose left x");
     require_near(g_dof4_arm_left.current_pose.pitch, 0.40f, "pose left pitch");
 
     len = build_pose_frame(CMD4_ARM_LEFT, 0.11f, 0.21f, -0.31f, 0.41f, frame);
     cmd4_rx_feed(frame, len);
+    require_true(cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "new pending manual pose keeps active");
     len = build_pose_frame(CMD4_ARM_LEFT, 0.12f, 0.22f, -0.32f, 0.42f, frame);
     cmd4_rx_feed(frame, len);
+    require_true(cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "latest pending manual pose keeps active");
     require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
                  "latest pose pending");
-    require_near(pending_pose.x, 0.12f, "latest pending pose x");
+    require_near(pending_pose.x, 0.13f, "latest pending pose x");
     require_near(pending_pose.pitch, 0.42f, "latest pending pose pitch");
+    require_true(cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "taking latest pending pose keeps active");
+
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.20f, 0.30f, -0.40f, 0.50f, frame);
+    cmd4_rx_feed(frame, len);
+    len = build_pose_frame(CMD4_ARM_RIGHT, 0.30f, -0.20f, 0.10f, -0.60f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "left pending independent from right");
+    require_near(pending_pose.x, 0.21f, "independent left pending x");
+    require_near(pending_pose.pitch, 0.50f, "independent left pending pitch");
+    require_true(cmd4_manual_pose_take_pending(CMD4_ARM_RIGHT, &pending_pose),
+                 "right pending independent from left");
+    require_near(pending_pose.x, 0.26f, "independent right pending x");
+    require_near(pending_pose.y, -0.15f, "independent right pending y");
+    require_near(pending_pose.z, 0.04f, "independent right pending z");
+    require_near(pending_pose.pitch, -0.60f, "independent right pending pitch");
 
     len = build_action_frame(5U, frame);
     require_true(len == CMD4_FRAME_ACTION_LEN, "action frame length");
@@ -400,7 +421,7 @@ int main(void)
     require_true(state->arm_start_calls == 1U, "single pick auto-starts arm");
     assert_all_valves_open(state, "single pick auto-start opens all valves");
     require_true(state->last_arm_id == DOF4_ARM_RIGHT, "single pick arm");
-    require_near(state->last_single_target.z, -0.33f, "single pick z");
+    require_near(state->last_single_target.z, -0.39f, "single pick z");
     require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
                  "PC action clears manual pose active");
     require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
@@ -416,7 +437,7 @@ int main(void)
     state = cmd4_host_mocks_state();
     require_true(state->single_place_calls == 1U, "single place dispatch");
     require_true(state->last_arm_id == DOF4_ARM_LEFT, "single place arm");
-    require_near(state->last_single_target.y, -0.55f, "single place y");
+    require_near(state->last_single_target.y, -0.57f, "single place y");
 
     len = build_single_back_frame(CMD4_PUT_BLOCK_BACK, CMD4_ARM_LEFT, frame);
     require_true(len == CMD4_FRAME_SINGLE_BACK_ACTION_LEN,
@@ -442,8 +463,8 @@ int main(void)
     cmd4_rx_feed(frame, len);
     state = cmd4_host_mocks_state();
     require_true(state->dual_pick_calls == 1U, "dual pick dispatch");
-    require_near(state->last_left_target.x, 0.10f, "dual pick left x");
-    require_near(state->last_right_target.y, -0.50f, "dual pick right y");
+    require_near(state->last_left_target.x, 0.11f, "dual pick left x");
+    require_near(state->last_right_target.y, -0.45f, "dual pick right y");
 
     len = build_dual_back_frame(CMD4_PUT_BLOCK_BACK_ALL, frame);
     require_true(len == CMD4_FRAME_DUAL_BACK_ACTION_LEN,
@@ -461,8 +482,8 @@ int main(void)
     cmd4_rx_feed(frame, len);
     state = cmd4_host_mocks_state();
     require_true(state->dual_place_calls == 1U, "dual place dispatch");
-    require_near(state->last_left_target.z, -0.33f, "dual place left z");
-    require_near(state->last_right_target.x, 0.44f, "dual place right x");
+    require_near(state->last_left_target.z, -0.30f, "dual place left z");
+    require_near(state->last_right_target.x, 0.40f, "dual place right x");
 
     len = build_dual_back_frame(CMD4_GET_BLOCK_BACK_ALL, frame);
     require_true(len == CMD4_FRAME_DUAL_BACK_ACTION_LEN,

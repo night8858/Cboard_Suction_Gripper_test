@@ -89,6 +89,8 @@
 #include <pc_action_executor_4dof.h>
 #include <pneumatic_control.h>
 #include <stm32f4xx_hal.h>
+#include <FreeRTOS.h>
+#include <task.h>
 #include <usart.h>
 #include <usart_interface.h>
 #include <virtual_serial_port.h>
@@ -102,6 +104,8 @@
 #include "virtual_serial_port.h" /* 虚拟串口 (VCP) 收发接口 */
 #include "usart_interface.h"         /* 小 R 语音模块串口接口 */
 #include "stm32f4xx_hal.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "gimbal.h"                 /* 相机云台控制接口 */
 #endif
 
@@ -200,6 +204,25 @@ static void cmd4_apply_target_bias(uint8_t arm_id, Dof4_Pose *pose)
         pose->y += CMD4_RIGHT_TARGET_BIAS_Y_M;
         pose->z += CMD4_RIGHT_TARGET_BIAS_Z_M;
     }
+}
+
+static void cmd4_manual_pose_store_latest(uint8_t arm_id, const Dof4_Pose *pose)
+{
+    if (arm_id > CMD4_ARM_RIGHT || pose == NULL) {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    s_manual_pose_target[arm_id] = *pose;
+    s_manual_pose_pending[arm_id] = true;
+    taskEXIT_CRITICAL();
+}
+
+static void cmd4_startup_request_mark_pending(void)
+{
+    taskENTER_CRITICAL();
+    s_startup_request_pending = true;
+    taskEXIT_CRITICAL();
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -737,7 +760,7 @@ static void cmd4_rx_state_machine(uint8_t byte)
  * 约束:
  *   - 必须先通过 CMD4_ARM_START 启动机械臂, BB 02 不自动启动
  *   - 动作调度器激活时拒绝, 避免抢占自动动作
- *   - 请求先缓存, 由 arm_control_task 在启动姿态完成后应用
+ *   - 每臂只保留最新请求, 由 arm_control_task 在启动姿态完成后应用
  */
 static void cmd4_handle_pose_control(const uint8_t *data)
 {
@@ -761,10 +784,7 @@ static void cmd4_handle_pose_control(const uint8_t *data)
 
     Dof4_Pose target = {x, y, z, pitch};
     cmd4_apply_target_bias(arm_id, &target);
-
-    s_manual_pose_target[arm_id] = target;
-    s_manual_pose_pending[arm_id] = true;
-    s_manual_pose_active[arm_id] = false;
+    cmd4_manual_pose_store_latest(arm_id, &target);
 }
 
 /**
@@ -1140,7 +1160,7 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
                                       off_z * 0.001f);
                 Dof4_double_arm_start();
                 cmd4_mark_all_valves_open();
-                s_startup_request_pending = true;
+                cmd4_startup_request_mark_pending();
             }
             break;
 
@@ -1208,7 +1228,11 @@ bool cmd4_manual_pose_active(uint8_t arm_id)
     if (arm_id > CMD4_ARM_RIGHT) {
         return false;
     }
-    return s_manual_pose_active[arm_id];
+
+    taskENTER_CRITICAL();
+    const bool active = s_manual_pose_active[arm_id];
+    taskEXIT_CRITICAL();
+    return active;
 }
 
 bool cmd4_manual_pose_take_pending(uint8_t arm_id, Dof4_Pose *pose)
@@ -1216,13 +1240,16 @@ bool cmd4_manual_pose_take_pending(uint8_t arm_id, Dof4_Pose *pose)
     if (arm_id > CMD4_ARM_RIGHT || pose == NULL) {
         return false;
     }
-    if (!s_manual_pose_pending[arm_id]) {
-        return false;
-    }
 
-    *pose = s_manual_pose_target[arm_id];
-    s_manual_pose_pending[arm_id] = false;
-    return true;
+    bool pending = false;
+    taskENTER_CRITICAL();
+    if (s_manual_pose_pending[arm_id]) {
+        *pose = s_manual_pose_target[arm_id];
+        s_manual_pose_pending[arm_id] = false;
+        pending = true;
+    }
+    taskEXIT_CRITICAL();
+    return pending;
 }
 
 void cmd4_manual_pose_set_active(uint8_t arm_id, bool active)
@@ -1230,16 +1257,23 @@ void cmd4_manual_pose_set_active(uint8_t arm_id, bool active)
     if (arm_id > CMD4_ARM_RIGHT) {
         return;
     }
+
+    taskENTER_CRITICAL();
     s_manual_pose_active[arm_id] = active;
+    taskEXIT_CRITICAL();
 }
 
 bool cmd4_startup_request_take(void)
 {
-    if (!s_startup_request_pending) {
-        return false;
+    bool pending = false;
+
+    taskENTER_CRITICAL();
+    if (s_startup_request_pending) {
+        s_startup_request_pending = false;
+        pending = true;
     }
-    s_startup_request_pending = false;
-    return true;
+    taskEXIT_CRITICAL();
+    return pending;
 }
 
 /**
@@ -1251,8 +1285,10 @@ bool cmd4_startup_request_take(void)
  */
 void cmd4_clear_manual_pose(void)
 {
+    taskENTER_CRITICAL();
     s_manual_pose_active[CMD4_ARM_LEFT] = false;
     s_manual_pose_active[CMD4_ARM_RIGHT] = false;
     s_manual_pose_pending[CMD4_ARM_LEFT] = false;
     s_manual_pose_pending[CMD4_ARM_RIGHT] = false;
+    taskEXIT_CRITICAL();
 }
