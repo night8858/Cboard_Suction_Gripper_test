@@ -12,14 +12,18 @@
 Dof4_Arm g_dof4_arm_left;
 Dof4_Arm g_dof4_arm_right;
 bool g_dof4_arm_started;
+volatile uint32_t g_pc_action_error_event_count;
 
 static uint32_t s_tick_ms;
 static unsigned s_relay_on_calls;
 static unsigned s_relay_calls;
 static unsigned s_set_target_calls;
+static unsigned s_set_joint_calls;
 static bool s_action_active;
 static uint8_t s_valve_shadow[4];
 static bool s_back_occupied[2];
+static bool s_hold_pose_feedback;
+static bool s_hold_joint_feedback;
 
 typedef struct {
     Dof4_ArmId arm_id;
@@ -31,8 +35,14 @@ typedef struct {
     uint8_t state;
 } RelayCall;
 
+typedef struct {
+    Dof4_ArmId arm_id;
+    Dof4_JointState joints;
+} JointCall;
+
 static TargetCall s_target_calls[64];
 static RelayCall s_relay_history[64];
+static JointCall s_joint_calls[64];
 
 static void require_true(bool value, const char *message)
 {
@@ -57,6 +67,7 @@ static void init_arm(Dof4_Arm *arm)
 {
     memset(arm, 0, sizeof(*arm));
     arm->current_pose = (Dof4_Pose){0.0f, 0.0f, 0.0f, -1.50f};
+    arm->cfg.servo_speed = 3000U;
     for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
         arm->cfg.joint_min[i] = -10.0f;
         arm->cfg.joint_max[i] = 10.0f;
@@ -72,10 +83,14 @@ static void reset_test_state(void)
     s_relay_on_calls = 0U;
     s_relay_calls = 0U;
     s_set_target_calls = 0U;
+    s_set_joint_calls = 0U;
     memset(s_valve_shadow, 0, sizeof(s_valve_shadow));
     memset(s_back_occupied, 0, sizeof(s_back_occupied));
     memset(s_target_calls, 0, sizeof(s_target_calls));
     memset(s_relay_history, 0, sizeof(s_relay_history));
+    memset(s_joint_calls, 0, sizeof(s_joint_calls));
+    s_hold_pose_feedback = false;
+    s_hold_joint_feedback = false;
     s_action_active = false;
     pc_action_4dof_init();
 }
@@ -137,15 +152,25 @@ Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm,
     }
     ++s_set_target_calls;
     arm->target_pose = (Dof4_Pose){x, y, z, pitch};
-    arm->current_pose = arm->target_pose;
+    if (!s_hold_pose_feedback) {
+        arm->current_pose = arm->target_pose;
+    }
     return DOF4_STATUS_OK;
 }
 
 Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
                                       const Dof4_JointState *joints)
 {
+    if (s_set_joint_calls < (sizeof(s_joint_calls) / sizeof(s_joint_calls[0]))) {
+        s_joint_calls[s_set_joint_calls].arm_id =
+            (arm == &g_dof4_arm_right) ? DOF4_ARM_RIGHT : DOF4_ARM_LEFT;
+        s_joint_calls[s_set_joint_calls].joints = *joints;
+    }
+    ++s_set_joint_calls;
     arm->joint_target = *joints;
-    arm->joint_actual = *joints;
+    if (!s_hold_joint_feedback) {
+        arm->joint_actual = *joints;
+    }
     return DOF4_STATUS_OK;
 }
 
@@ -174,8 +199,9 @@ Dof4_Status Dof4_angle_to_servo(const Dof4_Arm *arm,
 {
     (void)arm;
     (void)joint_index;
-    (void)angle_rad;
-    *servo_pos = 0;
+    *servo_pos = (int16_t)((angle_rad >= 0.0f)
+                               ? (angle_rad * 1000.0f + 0.5f)
+                               : (angle_rad * 1000.0f - 0.5f));
     return DOF4_STATUS_OK;
 }
 
@@ -186,7 +212,7 @@ Dof4_Status Dof4_servo_to_angle(const Dof4_Arm *arm,
 {
     (void)arm;
     (void)joint_index;
-    *angle_rad = (float)servo_pos;
+    *angle_rad = (float)servo_pos / 1000.0f;
     return DOF4_STATUS_OK;
 }
 
@@ -254,20 +280,32 @@ static bool relay_seen_range(unsigned start_index,
     return false;
 }
 
+static bool target_pose_seen(float x, float z)
+{
+    for (unsigned i = 0U; i < s_set_target_calls &&
+                         i < (sizeof(s_target_calls) / sizeof(s_target_calls[0])); ++i) {
+        if (fabsf(s_target_calls[i].pose.x - x) <= 1.0e-6f &&
+            fabsf(s_target_calls[i].pose.z - z) <= 1.0e-6f) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void advance_dynamic_to_target(void)
 {
     pc_action_4dof_loop();
     require_true(s_set_target_calls > 0U, "dynamic action drives hover point");
     s_tick_ms = 1000U;
-    for (uint8_t i = 0U; i < 4U && s_set_target_calls < 2U; ++i) {
+    for (uint8_t i = 0U; i < 6U && !target_pose_seen(0.20f, 0.30f); ++i) {
         pc_action_4dof_loop();
     }
-    require_true(s_set_target_calls >= 2U, "dynamic action drives target point");
+    require_true(target_pose_seen(0.20f, 0.30f), "dynamic action drives target point");
 }
 
 static void advance_dynamic_target_settle(void)
 {
-    s_tick_ms += 500U;
+    s_tick_ms += 800U;
     pc_action_4dof_loop();
 }
 
@@ -289,6 +327,29 @@ static void advance_joint_to_operation_target(void)
     pc_action_4dof_loop();
 }
 
+static void require_joint_near(const Dof4_JointState *actual,
+                               const float expected[DOF4_JOINT_COUNT],
+                               const char *message)
+{
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        if (fabsf(actual->q[i] - expected[i]) > 1.0e-6f) {
+            printf("FAIL: %s joint%u expected=%.6f actual=%.6f\n",
+                   message,
+                   (unsigned)i,
+                   (double)expected[i],
+                   (double)actual->q[i]);
+            exit(1);
+        }
+    }
+}
+
+static void finish_joint_action_from_retreat(void)
+{
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+}
+
 int main(void)
 {
     Dof4_Pose target = {0.20f, 0.10f, 0.30f, 0.0f};
@@ -305,14 +366,12 @@ int main(void)
     require_true(s_set_target_calls == 1U, "first loop drives P1");
     require_near(s_target_calls[0].pose.x, 0.20f, "hover target x");
     require_near(s_target_calls[0].pose.y, 0.10f, "hover target y");
-    require_near(s_target_calls[0].pose.z, 0.40f, "hover target z plus clearance");
+    require_near(s_target_calls[0].pose.z, 0.36f, "hover target z plus clearance");
     s_tick_ms = 1000U;
-    for (uint8_t i = 0U; i < 4U && s_set_target_calls < 2U; ++i) {
+    for (uint8_t i = 0U; i < 6U && !target_pose_seen(0.20f, 0.30f); ++i) {
         pc_action_4dof_loop();
     }
-    require_true(s_set_target_calls >= 2U, "target driven after hover point");
-    require_near(s_target_calls[1].pose.x, 0.20f, "target x");
-    require_near(s_target_calls[1].pose.z, 0.30f, "target z");
+    require_true(target_pose_seen(0.20f, 0.30f), "target driven after hover point");
     require_true(!g_dof4_arm_left.clip_diagnostic.pending,
                  "dynamic two-point path accepted");
     pc_action_4dof_loop();
@@ -389,6 +448,24 @@ int main(void)
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
     require_true(pc_action_4dof_start_place(DOF4_ARM_LEFT, &target),
+                 "place timeout request is queued");
+    pc_action_4dof_loop();
+    s_tick_ms += 1600U;
+    pc_action_4dof_loop();
+    s_hold_pose_feedback = true;
+    pc_action_4dof_loop();
+    const unsigned timeout_place_before_release = s_relay_calls;
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
+    s_tick_ms += 800U;
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(timeout_place_before_release, 0U, 0U),
+                 "dynamic place timeout still closes working arm valve");
+
+    reset_test_state();
+    target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
+    require_true(pc_action_4dof_start_place(DOF4_ARM_LEFT, &target),
                  "place finish helper setup request is queued");
     advance_dynamic_to_target();
     advance_dynamic_target_settle();
@@ -424,6 +501,27 @@ int main(void)
     reset_test_state();
     require_true(pc_action_4dof_start_put_back(DOF4_ARM_LEFT),
                  "put-back request is queued");
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
+                 "put-back speed unchanged while pending");
+    pc_action_4dof_loop();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
+                 "put-back applies dedicated left servo speed");
+    require_true(g_dof4_arm_right.cfg.servo_speed == 3000U,
+                 "put-back leaves unused right servo speed unchanged");
+    require_true(s_set_joint_calls > 0U &&
+                 s_joint_calls[0].arm_id == DOF4_ARM_LEFT,
+                 "put-back first joint target recorded");
+    const float put_back_left_wp2[DOF4_JOINT_COUNT] = {
+        2.800f, 1.50f, -1.20f, -1.680f
+    };
+    require_joint_near(&s_joint_calls[0].joints,
+                       put_back_left_wp2,
+                       "put-back first point is waypoint_2");
+    require_true(fabsf(s_joint_calls[0].joints.q[0] - (-0.042f)) > 0.1f,
+                 "put-back skips original approach");
+    require_true(fabsf(s_joint_calls[0].joints.q[0] - 1.570f) > 0.1f,
+                 "put-back skips original waypoint_1");
+    s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U &&
@@ -439,15 +537,62 @@ int main(void)
                  "put-back closes working arm after back suction hold");
     require_true(s_back_occupied[DOF4_ARM_LEFT], "put-back marks back occupied");
     require_true(s_valve_shadow[2] == 1U, "put-back leaves target back valve open");
+    s_tick_ms += 2000U;
+    pc_action_4dof_loop();
+    finish_joint_action_from_retreat();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
+                 "put-back restores left servo speed after finish");
+    require_true(g_dof4_arm_right.cfg.servo_speed == 3000U,
+                 "put-back keeps right servo speed restored");
+
+    reset_test_state();
+    require_true(pc_action_4dof_start_put_back(DOF4_ARM_LEFT),
+                 "put-back timeout request is queued");
+    pc_action_4dof_loop();
+    s_hold_joint_feedback = true;
+    pc_action_4dof_loop();
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
+    const unsigned timeout_put_before_back_suction = s_relay_calls;
+    pc_action_4dof_loop();
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(timeout_put_before_back_suction, 2U, 1U),
+                 "put-back target timeout still opens target back valve");
+    const unsigned timeout_put_before_arm_release = s_relay_calls;
+    s_tick_ms += 2000U;
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(timeout_put_before_arm_release, 0U, 0U),
+                 "put-back target timeout still closes working arm valve");
+    require_true(s_back_occupied[DOF4_ARM_LEFT],
+                 "put-back target timeout still marks back occupied");
 
     reset_test_state();
     require_true(pc_action_4dof_start_get_back(DOF4_ARM_LEFT),
                  "get-back request is queued");
+    pc_action_4dof_loop();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
+                 "get-back applies dedicated left servo speed");
+    require_true(s_set_joint_calls > 0U &&
+                 s_joint_calls[0].arm_id == DOF4_ARM_LEFT,
+                 "get-back first joint target recorded");
+    const float get_back_left_wp2[DOF4_JOINT_COUNT] = {
+        2.800f, 1.50f, -1.00f, -1.680f
+    };
+    require_joint_near(&s_joint_calls[0].joints,
+                       get_back_left_wp2,
+                       "get-back first point is waypoint_2");
+    require_true(fabsf(s_joint_calls[0].joints.q[0] - 1.570f) > 0.1f,
+                 "get-back skips original approach");
+    require_true(fabsf(s_joint_calls[0].joints.q[0] - 2.000f) > 0.1f,
+                 "get-back skips original waypoint_1");
+    s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
     pc_action_4dof_loop();
     require_true(!relay_seen_after(0U, 0U, 0U),
                  "get-back keeps working arm valve open before source release");
-    s_tick_ms += 1000U;
+    s_tick_ms += 1600U;
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 0U &&
                  s_relay_history[s_relay_calls - 1U].relay_id == 2U &&
@@ -460,6 +605,24 @@ int main(void)
     reset_test_state();
     require_true(pc_action_4dof_start_dual_put_back(),
                  "dual put-back request is queued");
+    pc_action_4dof_loop();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 6000U,
+                 "dual put-back applies dedicated speed to both arms");
+    require_true(s_set_joint_calls >= 2U &&
+                 s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
+                 s_joint_calls[1].arm_id == DOF4_ARM_RIGHT,
+                 "dual put-back first joint targets recorded");
+    const float put_back_right_wp2[DOF4_JOINT_COUNT] = {
+        -2.800f, 1.50f, -1.20f, -1.680f
+    };
+    require_joint_near(&s_joint_calls[0].joints,
+                       put_back_left_wp2,
+                       "dual put-back left first point is waypoint_2");
+    require_joint_near(&s_joint_calls[1].joints,
+                       put_back_right_wp2,
+                       "dual put-back right first point is waypoint_2");
+    s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U && s_valve_shadow[3] == 1U &&
@@ -482,9 +645,28 @@ int main(void)
     reset_test_state();
     require_true(pc_action_4dof_start_dual_get_back(),
                  "dual get-back request is queued");
+    pc_action_4dof_loop();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 6000U,
+                 "dual get-back applies dedicated speed to both arms");
+    require_true(s_set_joint_calls >= 2U &&
+                 s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
+                 s_joint_calls[1].arm_id == DOF4_ARM_RIGHT,
+                 "dual get-back first joint targets recorded");
+    const float get_back_right_wp2[DOF4_JOINT_COUNT] = {
+        -2.800f, 1.50f, -1.00f, -1.680f
+    };
+    require_joint_near(&s_joint_calls[0].joints,
+                       get_back_left_wp2,
+                       "dual get-back left first point is waypoint_2");
+    require_joint_near(&s_joint_calls[1].joints,
+                       get_back_right_wp2,
+                       "dual get-back right first point is waypoint_2");
+    s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
     pc_action_4dof_loop();
-    s_tick_ms += 1000U;
+    s_tick_ms += 1600U;
+    pc_action_4dof_loop();
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 0U && s_valve_shadow[3] == 0U &&
                  relay_seen_after(0U, 2U, 0U) &&

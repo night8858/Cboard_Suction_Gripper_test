@@ -54,22 +54,32 @@
 
 /// ════════════════════════════════════════════════════════════════
 //特殊角度
+// #define STAY_LEVEL 0.0f
+// #define STAY_DOWN  -1.5f
+
+// #define BLOCK_GET_DOWN_Z -0.22f    //TODO: 实测调整z的下降目标高度，确保能贴近物块但不碰撞
+
+// //特殊距离设定
+// #define BLOCK_HEIGHT               -0.08f
+// //小狗为-0.03f   测试架为
+// #define BLOCK_FIRST_LAYER_HEIGHT  -0.21f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
+// #define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)   
+
+// //雷达给的是0.3的x
+// #define BLOCK_X_DESTANCE_FROM_BASE 0.37f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
+
+// #define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.32f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
+// #define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
 #define STAY_LEVEL 0.0f
-#define STAY_DOWN  -1.5f
+#define STAY_DOWN  (-1.5f)
 
-#define BLOCK_GET_DOWN_Z -0.22f    //TODO: 实测调整z的下降目标高度，确保能贴近物块但不碰撞
+#define BLOCK_HEIGHT               (-0.08f)
+#define BLOCK_FIRST_LAYER_HEIGHT   (-0.21f)
+#define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT + 0.25f)
+#define BLOCK_X_DESTANCE_FROM_BASE 0.37f
+#define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.32f
+#define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f
 
-//特殊距离设定
-#define BLOCK_HEIGHT               -0.08f
-//小狗为-0.03f   测试架为
-#define BLOCK_FIRST_LAYER_HEIGHT  -0.21f                                    /// 实测调整第一层堆叠时的放置高度，同时也是第一层的抓取高度，确保能抓取到物块且不碰撞
-#define BLOCK_SECOND_LAYER_HEIGHT  (BLOCK_FIRST_LAYER_HEIGHT  + 0.25f)   
-
-//雷达给的是0.3的x
-#define BLOCK_X_DESTANCE_FROM_BASE 0.37f                                      /// 物块距臂基座的x水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定
-
-#define BLOCK_Y_DESTANCE_FROM_BASE_PICK  0.32f                                      /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能抓取到物块,主要由于雷达的目标点决定 
-#define BLOCK_Y_DESTANCE_FROM_BASE_PLACE 0.40f                                       /// 物块距臂基座的y水平距离，实测调整确保在臂工作空间内且能放置到放置区,主要由于雷达的目标点决定 
 /* ════════════════════════════════════════════════════════════════
  * 外部引用
  * ════════════════════════════════════════════════════════════════ */
@@ -160,13 +170,11 @@ typedef enum {
 #define ACT4_JOINT_TODO {0.0f, 0.0f, 0.0f, 0.0f}
 
 /** @brief 左背占用时的默认左臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_left_back_avoid_pose  = {0.20f,  0.23f, 0.22f, 0.40f};
+static const Dof4_Pose s_default_left_back_avoid_pose  = {0.10f,  0.15f, 0.28f, 0.45f};
 /** @brief 右背占用时的默认右臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_right_back_avoid_pose = {0.20f, -0.23f, 0.22f, 0.40f};
-/** @brief 当前生效的左背占用避让位，放置到左背动作完成后更新。 */
-static Dof4_Pose s_current_left_back_avoid_pose  = {0.20f,  0.23f, 0.22f, 0.40f};
-/** @brief 当前生效的右背占用避让位，放置到右背动作完成后更新。 */
-static Dof4_Pose s_current_right_back_avoid_pose = {0.20f, -0.23f, 0.22f, 0.40f};
+static const Dof4_Pose s_default_right_back_avoid_pose = {0.10f, -0.15f, 0.28f, 0.45f};
+static Dof4_Pose s_current_left_back_avoid_pose  = {0.10f,  0.15f, 0.28f, 0.45f};
+static Dof4_Pose s_current_right_back_avoid_pose = {0.10f, -0.15f, 0.28f, 0.45f};
 
 /* ════════════════════════════════════════════════════════════════
  * 目标位姿数据结构
@@ -543,21 +551,23 @@ static const Action4DOF_TargetData s_action_targets[] = {
     },
 };
 
-/* 后背动作关节轨迹表。所有角度均为 TODO 占位值，调试时逐点替换。 */
+/* 后背动作关节轨迹表。
+ * 背部放置/取回预设入口已统一转发到 pc_action_executor_4dof.c，
+ * 该表仅保留为历史调试数据，不再作为背部动作的实际执行路径来源。 */
 static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] = {
     //同时放置到背部的动作使用以下轨迹，单臂放置到背部的动作使用对应臂的轨迹，其他动作不使用关节轨迹。
     [ACTION_BLOCK_PLACE_BACK] = {
         .left = {
-            .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
-            .waypoint_1 = {1.57f, 1.5f, -1.7f, -1.463f},
+            .approach =   {3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_1 = {3.1f, 1.5f, -1.19f, -1.68f},
             .waypoint_2 = {3.1f, 1.5f, -1.19f, -1.68f},
             .target =     {3.04f, 1.57f, -1.88f, -1.247f},
             .retreat =    {3.1f, 1.5f, -1.19f, -1.68f},
             .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
         },
         .right = {
-            .approach =   {0.042f, 1.5f, -1.7f, -1.463f},
-            .waypoint_1 = {-1.57f, 1.5f, -1.7f, -1.463f},
+            .approach =   {-3.1f, 1.5f, -1.19f, -1.68f},
+            .waypoint_1 = {-3.1f, 1.5f, -1.19f, -1.68f},
             .waypoint_2 = {-3.1f, 1.5f, -1.19f, -1.68f},
             .target =     {-3.04f, 1.57f, -1.88f, -1.247f},
             .retreat =    {-3.1f, 1.5f, -1.19f, -1.68f},
@@ -569,8 +579,8 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
     //单臂放置到背部的动作使用以下轨迹，左->左背，右->右背，另一臂不使用轨迹保持原位。
     [ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK] = {
         .left = {
-            .approach =   {-0.042f, 1.5f, -1.7f, -1.463f},
-            .waypoint_1 = {1.57f, 1.5f, -1.7f, -1.463f},
+            .approach =   {2.8f, 1.5f, -1.19f, -1.68f},
+            .waypoint_1 = {2.8f, 1.5f, -1.19f, -1.68f},
             .waypoint_2 = {2.8f, 1.5f, -1.19f, -1.68f},
             .target =     {2.8f, 1.57f, -1.88f, -1.247f},//在此之后还需要一个中间点，不然容易打到
             .retreat =    {2.1f, 1.5f, -1.19f, -1.68f},
@@ -582,8 +592,8 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
 
     [ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK] = {
         .right = {
-        .approach =   {0.042f,1.5f,-1.7f,-1.463f},
-        .waypoint_1 = {-1.57f,1.5f,-1.7f,-1.463f}, 
+        .approach =   {-2.8f,1.5f,-1.0f,-1.68f},
+        .waypoint_1 = {-2.8f,1.5f,-1.0f,-1.68f}, 
         .waypoint_2 = {-2.8f,1.5f,-1.0f,-1.68f}, 
         .target =     {-2.8f,1.57f,-1.88f,-1.247f}, 
         .retreat =    {-2.0f,1.5f,-1.80f,-1.68f}, 
@@ -595,24 +605,24 @@ static const Action4DOF_JointTargetData s_back_joint_targets[ACTION_4DOF_COUNT] 
     //从背部抓取到手的动作使用以下轨迹，左背->左手，右背->右手，另一臂不使用轨迹保持原位。
     [ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM] = {
         .left = {
-            .approach =   {3.1f, 1.5f, -1.19f, -1.68f},
-            .waypoint_1 = {3.1f, 1.5f, -1.19f, -1.68f},
-            .waypoint_2 = {1.57f, 1.5f, -1.7f, -1.463f},
-            .target =     {3.04f, 1.57f, -1.88f, -1.247f},
-            .retreat =    {-0.042f, 1.5f, -1.7f, -1.463f},
-            .complete =   {-0.042f, 1.5f, -1.7f, -1.463f},
+            .approach =   {2.800f, 1.50f, -1.00f, -1.680f},
+            .waypoint_1 = {2.800f, 1.50f, -1.00f, -1.680f},
+            .waypoint_2 = {2.800f, 1.50f, -1.00f, -1.680f},
+            .target =     {2.800f, 1.57f, -1.88f, -1.21f},
+            .retreat =    {2.800f, 1.50f, -1.57f, -1.463f},
+            .complete =   {1.042f, 1.50f, -1.70f, -1.463f},
         },
         .use_left = true,
         .use_right = false,
     },
     [ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM] = {
         .right = {
-        .approach =   {-1.57f, 1.5f, -1.19f, -1.68f},
-        .waypoint_1 = {-2.0f,1.5f,-1.0f,-1.463f}, 
-        .waypoint_2 = {-2.8f,1.5f,-1.0f,-1.68f}, 
-        .target =     {-2.8f,1.57f,-1.88f,-1.247f}, 
-        .retreat =    {-1.57f,1.5f,-1.80f,-1.68f}, 
-            .complete =   {0.042f, 1.5f, -1.7f, -1.463f},
+            .approach =   {-2.800f, 1.50f, -1.00f, -1.680f},
+            .waypoint_1 = {-2.800f, 1.50f, -1.00f, -1.680f},
+            .waypoint_2 = {-2.800f, 1.50f, -1.00f, -1.680f},
+            .target =     {-2.800f, 1.57f, -1.88f, -1.21f},
+            .retreat =    {-2.800f, 1.50f, -1.57f, -1.463f},
+            .complete =   {-1.042f, 1.50f, -1.70f, -1.463f},
         },
         .use_left = false,
         .use_right = true,
@@ -771,6 +781,29 @@ static bool action_4dof_is_back_place_action(action_state_4dof_e action)
 {
     return (action >= ACTION_BLOCK_PLACE_BACK &&
             action <= ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK);
+}
+
+static bool action_4dof_try_start_pc_back_action(action_state_4dof_e action)
+{
+    switch (action) {
+    case ACTION_BLOCK_PLACE_BACK:
+        return pc_action_4dof_start_dual_put_back();
+
+    case ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK:
+        return pc_action_4dof_start_put_back(DOF4_ARM_LEFT);
+
+    case ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK:
+        return pc_action_4dof_start_put_back(DOF4_ARM_RIGHT);
+
+    case ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM:
+        return pc_action_4dof_start_get_back(DOF4_ARM_LEFT);
+
+    case ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM:
+        return pc_action_4dof_start_get_back(DOF4_ARM_RIGHT);
+
+    default:
+        return false;
+    }
 }
 
 static void action_4dof_control_arm_suction(const Action4DOF_TargetData *td, uint8_t state)
@@ -1712,7 +1745,7 @@ static void action_4dof_handle(void)
 /**
  * @brief 获取指定臂的自适应 IDLE 位姿（世界坐标系，基于 effective_base 动态计算）。
  *
- * IDLE 位姿 = effective_base + (IDLE_BASE_X, IDLE_BASE_Y, IDLE_BASE_Z)。
+ * 普通 IDLE 位姿 = effective_base + 对应侧 IDLE_*_BASE_X/Y/Z。
  * effective_base = cfg.base + cfg.base_offset，因此 base_offset 变化时
  * IDLE 归位点自动跟随基座移动。
  * 若对应侧背部已有物块，则不使用普通 idle，而返回该侧的放置/背部高位避让点，
@@ -1734,12 +1767,13 @@ Dof4_Pose action_4dof_get_idle_pose(Dof4_ArmId arm_id)
     const float base_x = arm->cfg.base[0] + arm->cfg.base_offset[0];
     const float base_y = arm->cfg.base[1] + arm->cfg.base_offset[1];
     const float base_z = arm->cfg.base[2] + arm->cfg.base_offset[2];
+    const bool is_left = (arm_id == DOF4_ARM_LEFT);
 
     Dof4_Pose pose;
-    pose.x     = base_x + IDLE_BASE_X;
-    pose.y     = base_y + IDLE_BASE_Y;
-    pose.z     = base_z + IDLE_BASE_Z;
-    pose.pitch = IDLE_BASE_PITCH;
+    pose.x     = base_x + (is_left ? IDLE_LEFT_BASE_X : IDLE_RIGHT_BASE_X);
+    pose.y     = base_y + (is_left ? IDLE_LEFT_BASE_Y : IDLE_RIGHT_BASE_Y);
+    pose.z     = base_z + (is_left ? IDLE_LEFT_BASE_Z : IDLE_RIGHT_BASE_Z);
+    pose.pitch = is_left ? IDLE_LEFT_BASE_PITCH : IDLE_RIGHT_BASE_PITCH;
 
     return pose;
 }
@@ -1793,6 +1827,12 @@ static bool action_4dof_trigger_internal(action_state_4dof_e action)
     /* 检查 action 是否合法 */
     if (action <= ACTION_4DOF_IDLE || (uint32_t)action >= ACTION_4DOF_COUNT) {
         return false;
+    }
+
+    /* 背部放置/取回统一由 PC action 执行，避免维护两套固定关节路径。 */
+    if (action_4dof_is_back_place_action(action) ||
+        action_4dof_is_back_get_action(action)) {
+        return action_4dof_try_start_pc_back_action(action);
     }
 
     /*

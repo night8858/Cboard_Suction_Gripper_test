@@ -177,7 +177,7 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 /** @brief 右臂 J1 位置 Y，单位 m。默认归零，安装偏置由上位机补偿。 */
 #define DOF4_URDF_R_BASE_Y 0.0f
 /** @brief 右臂 J1 位置 Z，单位 m。默认归零，安装偏置由上位机补偿。 */
-#define DOF4_URDF_R_BASE_Z 0.0f
+#define DOF4_URDF_R_BASE_Z 0.00f
 
 /** @brief URDF J1 到 J2 水平等效偏移，单位 m。 */
 #define DOF4_URDF_SHOULDER_R 0.02716f
@@ -190,7 +190,7 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 /** @brief URDF 左臂 J4-TCP 等效长度，单位 m。 */
 #define DOF4_URDF_L_TOOL_LEN 0.03600f
 /** @brief URDF 右臂 J4-TCP 等效长度，单位 m。 */
-#define DOF4_URDF_R_TOOL_LEN 0.03620f
+#define DOF4_URDF_R_TOOL_LEN 0.03600f
 
 /** @brief 左臂 J1 下限，单位 rad。 */
 #define DOF4_L_J1_MIN (-3.75f)  /* -215°, 下限较 URDF 原值扩展 15° */

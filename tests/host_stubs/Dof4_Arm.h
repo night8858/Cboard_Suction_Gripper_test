@@ -51,6 +51,11 @@ typedef struct {
 typedef struct {
     float joint_min[DOF4_JOINT_COUNT];
     float joint_max[DOF4_JOINT_COUNT];
+    float base[3];
+    float base_offset[3];
+    float cart_vel_mps;
+    float pitch_vel_rps;
+    uint16_t servo_speed;
 } Dof4_ArmConfig;
 
 typedef struct {
@@ -69,6 +74,12 @@ extern Dof4_Arm g_dof4_arm_right;
 extern bool g_dof4_arm_started;
 
 Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm, float x, float y, float z, float pitch);
+Dof4_Status Dof4_arm_set_target_via(Dof4_Arm *arm,
+                                    float x,
+                                    float y,
+                                    float z,
+                                    float pitch,
+                                    const float via_vel[4]);
 Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm, const Dof4_JointState *joints);
 Dof4_Status Dof4_arm_inverse_kinematics(const Dof4_Arm *arm,
                                         const Dof4_Pose *target,

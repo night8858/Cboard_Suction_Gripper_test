@@ -12,6 +12,7 @@
 
 #include "Dof4_Arm.h"
 #include "action_scheduler_4dof.h"
+#include "command_decode_4dof.h"
 #include "pc_action_executor_4dof.h"
 
 #include <math.h>
@@ -38,12 +39,39 @@ static bool arm_control_pose_reached(const Dof4_Arm *arm,
     return (pos_err <= pos_tol_m) && (pitch_err <= pitch_tol_rad);
 }
 
+static void arm_control_apply_manual_pose_requests(void)
+{
+    Dof4_Pose pose;
+
+    if (cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pose)) {
+        const Dof4_Status st = Dof4_arm_set_target(&g_dof4_arm_left,
+                                                   pose.x,
+                                                   pose.y,
+                                                   pose.z,
+                                                   pose.pitch);
+        cmd4_manual_pose_set_active(CMD4_ARM_LEFT, st == DOF4_STATUS_OK);
+    }
+
+    if (cmd4_manual_pose_take_pending(CMD4_ARM_RIGHT, &pose)) {
+        const Dof4_Status st = Dof4_arm_set_target(&g_dof4_arm_right,
+                                                   pose.x,
+                                                   pose.y,
+                                                   pose.z,
+                                                   pose.pitch);
+        cmd4_manual_pose_set_active(CMD4_ARM_RIGHT, st == DOF4_STATUS_OK);
+    }
+}
+
 void arm_control_task(void *argument)
 {
     (void)argument;
     osDelay(500);
 
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
+    
+    Dof4_arm_set_tcp_offset(&g_dof4_arm_left,  0.0f, 0.0f, -0.05f);
+    Dof4_arm_set_tcp_offset(&g_dof4_arm_right, 0.0f, 0.0f, -0.05f);
+
     Dof4_double_arm_Desable();
     (void)Dof4_servo_comm_check(1U, &g_dof4_servo_comm_diagnostic);
     Dof4_set_world_offset(0.0f, 0.0f, 0.0f);
@@ -63,6 +91,11 @@ void arm_control_task(void *argument)
             Dof4_batch_read_all_servo(&g_dof4_arm_left, &g_dof4_arm_right);
             osDelay(5);
             continue;
+        }
+
+        if (cmd4_startup_request_take()) {
+            startup_executed = false;
+            startup_running = false;
         }
 
         if (!startup_executed) {
@@ -108,12 +141,26 @@ void arm_control_task(void *argument)
         }
 
         pc_action_4dof_loop();
+        arm_control_apply_manual_pose_requests();
 
         if (!pc_action_4dof_is_active()) {
             const Dof4_Pose idle_left  = action_4dof_get_idle_pose(DOF4_ARM_LEFT);
             const Dof4_Pose idle_right = action_4dof_get_idle_pose(DOF4_ARM_RIGHT);
-            (void)Dof4_arm_set_target(&g_dof4_arm_left,  idle_left.x,  idle_left.y,  idle_left.z,  idle_left.pitch);
-            (void)Dof4_arm_set_target(&g_dof4_arm_right, idle_right.x, idle_right.y, idle_right.z, idle_right.pitch);
+
+            if (!cmd4_manual_pose_active(CMD4_ARM_LEFT)) {
+                (void)Dof4_arm_set_target(&g_dof4_arm_left,
+                                          idle_left.x,
+                                          idle_left.y,
+                                          idle_left.z,
+                                          idle_left.pitch);
+            }
+            if (!cmd4_manual_pose_active(CMD4_ARM_RIGHT)) {
+                (void)Dof4_arm_set_target(&g_dof4_arm_right,
+                                          idle_right.x,
+                                          idle_right.y,
+                                          idle_right.z,
+                                          idle_right.pitch);
+            }
         }
 
         (void)Dof4_dual_arm_control_loop(&g_dof4_arm_left, &g_dof4_arm_right, now_ms);

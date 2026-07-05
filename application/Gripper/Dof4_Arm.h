@@ -55,8 +55,8 @@ extern "C" {
 #define R_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define R_J3_ZERO_BIAS_RAD -1.57f
 #define R_J3_SERVO_SIGN (-1)
-#define R_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
-#define R_J3_URDF_MAX_DEG (0.35f * DOF4_RAD_TO_DEG)
+#define R_J3_URDF_MIN_DEG (-4.8f * DOF4_RAD_TO_DEG)
+#define R_J3_URDF_MAX_DEG (0.9f * DOF4_RAD_TO_DEG)
 
 /* R_J4: 实物轴按安装对应 URDF +Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J4_ZERO_POS DOF4_SERVO_CENTER_POS
@@ -95,8 +95,8 @@ extern "C" {
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J3_ZERO_BIAS_RAD -1.57f
 #define L_J3_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
-#define L_J3_URDF_MIN_DEG (-4.44f * DOF4_RAD_TO_DEG)
-#define L_J3_URDF_MAX_DEG (0.35f * DOF4_RAD_TO_DEG)
+#define L_J3_URDF_MIN_DEG (-4.8f * DOF4_RAD_TO_DEG)
+#define L_J3_URDF_MAX_DEG (0.9f * DOF4_RAD_TO_DEG)
 
 #define L_J4_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J4_ZERO_BIAS_RAD -0.00f
@@ -116,7 +116,7 @@ extern "C" {
 #define DOF4_TRAJ_MIN_DURATION_S 0.15f
 
 /** @brief 默认轨迹最长时间，单位 s。 */
-#define DOF4_TRAJ_MAX_DURATION_S 0.50f
+#define DOF4_TRAJ_MAX_DURATION_S 0.8f
 
 /** @brief 默认笛卡尔最大速度，单位 m/s。 */
 #define DOF4_DEFAULT_CART_VEL_MPS 2.0f

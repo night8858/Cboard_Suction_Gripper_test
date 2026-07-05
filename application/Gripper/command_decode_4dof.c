@@ -127,6 +127,26 @@ typedef union {
 extern PumpCtrl g_pump;  /**< 全局气泵控制实例，管理启停与目标转速 */
 extern Gimbal_s Gimbal;  /**< 全局云台实例，管理云台状态与目标角度 */
 
+/* 外部目标点补偿量，单位 m。实际执行目标 = 上位机目标 + 偏置。 */
+#ifndef CMD4_LEFT_TARGET_BIAS_X_M
+#define CMD4_LEFT_TARGET_BIAS_X_M 0.01f
+#endif
+#ifndef CMD4_LEFT_TARGET_BIAS_Y_M
+#define CMD4_LEFT_TARGET_BIAS_Y_M (-0.02f)
+#endif
+#ifndef CMD4_LEFT_TARGET_BIAS_Z_M
+#define CMD4_LEFT_TARGET_BIAS_Z_M 0.03f
+#endif
+#ifndef CMD4_RIGHT_TARGET_BIAS_X_M
+#define CMD4_RIGHT_TARGET_BIAS_X_M (-0.04f)
+#endif
+#ifndef CMD4_RIGHT_TARGET_BIAS_Y_M
+#define CMD4_RIGHT_TARGET_BIAS_Y_M 0.05f
+#endif
+#ifndef CMD4_RIGHT_TARGET_BIAS_Z_M
+#define CMD4_RIGHT_TARGET_BIAS_Z_M (-0.06f)
+#endif
+
 /* ════════════════════════════════════════════════════════════════
  * 模块内部状态
  * ════════════════════════════════════════════════════════════════ */
@@ -141,11 +161,14 @@ static uint8_t s_valve_shadow[4] = {0u, 0u, 0u, 0u};
 
 /** @brief 手动位姿控制激活标记
  *
- * 当上位机通过 CMD4_POSE_CONTROL 下发目标位姿时置 true；
+ * 当 arm_control_task 成功应用 CMD4_POSE_CONTROL 目标位姿时置 true；
  * 动作调度器触发后由 cmd4_clear_manual_pose() 统一清除。
  * [0]=左臂, [1]=右臂
  */
 static bool s_manual_pose_active[2] = {false, false};
+static bool s_manual_pose_pending[2] = {false, false};
+static Dof4_Pose s_manual_pose_target[2];
+static bool s_startup_request_pending = false;
 
 static void cmd4_mark_all_valves_open(void)
 {
@@ -159,6 +182,23 @@ static void cmd4_start_arm_if_needed(void)
     if (!g_dof4_arm_started) {
         Dof4_double_arm_start();
         cmd4_mark_all_valves_open();
+    }
+}
+
+static void cmd4_apply_target_bias(uint8_t arm_id, Dof4_Pose *pose)
+{
+    if (pose == NULL) {
+        return;
+    }
+
+    if (arm_id == CMD4_ARM_LEFT) {
+        pose->x += CMD4_LEFT_TARGET_BIAS_X_M;
+        pose->y += CMD4_LEFT_TARGET_BIAS_Y_M;
+        pose->z += CMD4_LEFT_TARGET_BIAS_Z_M;
+    } else if (arm_id == CMD4_ARM_RIGHT) {
+        pose->x += CMD4_RIGHT_TARGET_BIAS_X_M;
+        pose->y += CMD4_RIGHT_TARGET_BIAS_Y_M;
+        pose->z += CMD4_RIGHT_TARGET_BIAS_Z_M;
     }
 }
 
@@ -695,9 +735,9 @@ static void cmd4_rx_state_machine(uint8_t byte)
  *   [13..16] pitch   目标末端俯仰角 (float32 LE, 弧度)
  *
  * 约束:
- *   - 动作调度器激活时拒绝 (避免与自动动作冲突)
- *   - IK 求解失败时静默忽略, 不阻塞
- *   - 成功设置后标记 s_manual_pose_active 为 true
+ *   - 必须先通过 CMD4_ARM_START 启动机械臂, BB 02 不自动启动
+ *   - 动作调度器激活时拒绝, 避免抢占自动动作
+ *   - 请求先缓存, 由 arm_control_task 在启动姿态完成后应用
  */
 static void cmd4_handle_pose_control(const uint8_t *data)
 {
@@ -711,16 +751,20 @@ static void cmd4_handle_pose_control(const uint8_t *data)
         return;
     }
 
+    if (!g_dof4_arm_started) {
+        return;
+    }
+
     if (action_4dof_is_active() || pc_action_4dof_is_active()) {
         return;
     }
 
-    Dof4_Arm *arm = (arm_id == CMD4_ARM_LEFT) ? &g_dof4_arm_left : &g_dof4_arm_right;
-    Dof4_Status st = Dof4_arm_set_target(arm, x, y, z, pitch);
-    if (st == DOF4_STATUS_OK) {
-        cmd4_start_arm_if_needed();
-        s_manual_pose_active[arm_id] = true;
-    }
+    Dof4_Pose target = {x, y, z, pitch};
+    cmd4_apply_target_bias(arm_id, &target);
+
+    s_manual_pose_target[arm_id] = target;
+    s_manual_pose_pending[arm_id] = true;
+    s_manual_pose_active[arm_id] = false;
 }
 
 /**
@@ -738,9 +782,8 @@ static void cmd4_handle_action_control(const uint8_t *data)
 {
     uint8_t action_id = data[0];
 
-    cmd4_clear_manual_pose();
-
     if (action_id == 0u) {
+        cmd4_clear_manual_pose();
         action_4dof_abort();
         return;
     }
@@ -749,6 +792,7 @@ static void cmd4_handle_action_control(const uint8_t *data)
         return;
     }
 
+    cmd4_clear_manual_pose();
     if (action_4dof_trigger((action_state_4dof_e)action_id)) {
         cmd4_start_arm_if_needed();
     }
@@ -784,13 +828,14 @@ static void cmd4_handle_single_target_action(uint8_t cmd, const uint8_t *data)
         return;
     }
 
+    cmd4_apply_target_bias(arm_id, &target);
+
+    cmd4_clear_manual_pose();
     cmd4_start_arm_if_needed();
     const bool accepted = (cmd == CMD4_PICK_BLOCK)
         ? pc_action_4dof_start_pick((Dof4_ArmId)arm_id, &target)
         : pc_action_4dof_start_place((Dof4_ArmId)arm_id, &target);
-    if (accepted) {
-        cmd4_clear_manual_pose();
-    }
+    (void)accepted;
 }
 
 /**
@@ -811,17 +856,13 @@ static void cmd4_handle_single_back_action(uint8_t cmd, const uint8_t *data)
         return;
     }
 
-    bool accepted;
+    cmd4_clear_manual_pose();
     if (cmd == CMD4_PUT_BLOCK_BACK) {
         cmd4_start_arm_if_needed();
-        accepted = pc_action_4dof_start_put_back((Dof4_ArmId)arm_id);
+        (void)pc_action_4dof_start_put_back((Dof4_ArmId)arm_id);
     } else {
         cmd4_start_arm_if_needed();
-        accepted = pc_action_4dof_start_get_back((Dof4_ArmId)arm_id);
-    }
-
-    if (accepted) {
-        cmd4_clear_manual_pose();
+        (void)pc_action_4dof_start_get_back((Dof4_ArmId)arm_id);
     }
 }
 
@@ -853,13 +894,15 @@ static void cmd4_handle_dual_target_action(uint8_t cmd, const uint8_t *data)
         .pitch = 0.0f,
     };
 
+    cmd4_apply_target_bias(CMD4_ARM_LEFT, &left_target);
+    cmd4_apply_target_bias(CMD4_ARM_RIGHT, &right_target);
+
+    cmd4_clear_manual_pose();
     cmd4_start_arm_if_needed();
     const bool accepted = (cmd == CMD4_PICK_BLOCK_ALL)
         ? pc_action_4dof_start_dual_pick(&left_target, &right_target)
         : pc_action_4dof_start_dual_place(&left_target, &right_target);
-    if (accepted) {
-        cmd4_clear_manual_pose();
-    }
+    (void)accepted;
 }
 
 /**
@@ -869,13 +912,12 @@ static void cmd4_handle_dual_target_action(uint8_t cmd, const uint8_t *data)
  */
 static void cmd4_handle_dual_back_action(uint8_t cmd)
 {
+    cmd4_clear_manual_pose();
     cmd4_start_arm_if_needed();
     const bool accepted = (cmd == CMD4_PUT_BLOCK_BACK_ALL)
         ? pc_action_4dof_start_dual_put_back()
         : pc_action_4dof_start_dual_get_back();
-    if (accepted) {
-        cmd4_clear_manual_pose();
-    }
+    (void)accepted;
 }
 
 /**
@@ -1084,12 +1126,21 @@ static void cmd4_dispatch_frame(const uint8_t *buf, uint8_t len)
                 float off_x = cmd4_get_float_le(&data[0]);
                 float off_y = cmd4_get_float_le(&data[4]);
                 float off_z = cmd4_get_float_le(&data[8]);
+                if (action_4dof_is_active()) {
+                    action_4dof_abort();
+                }
+                if (pc_action_4dof_is_active() ||
+                    pc_action_4dof_completion_pending()) {
+                    pc_action_4dof_abort();
+                }
+                cmd4_clear_manual_pose();
                 /* 协议单位 mm → 内部单位 m */
                 Dof4_set_world_offset(off_x * 0.001f,
                                       off_y * 0.001f,
                                       off_z * 0.001f);
                 Dof4_double_arm_start();
                 cmd4_mark_all_valves_open();
+                s_startup_request_pending = true;
             }
             break;
 
@@ -1160,6 +1211,37 @@ bool cmd4_manual_pose_active(uint8_t arm_id)
     return s_manual_pose_active[arm_id];
 }
 
+bool cmd4_manual_pose_take_pending(uint8_t arm_id, Dof4_Pose *pose)
+{
+    if (arm_id > CMD4_ARM_RIGHT || pose == NULL) {
+        return false;
+    }
+    if (!s_manual_pose_pending[arm_id]) {
+        return false;
+    }
+
+    *pose = s_manual_pose_target[arm_id];
+    s_manual_pose_pending[arm_id] = false;
+    return true;
+}
+
+void cmd4_manual_pose_set_active(uint8_t arm_id, bool active)
+{
+    if (arm_id > CMD4_ARM_RIGHT) {
+        return;
+    }
+    s_manual_pose_active[arm_id] = active;
+}
+
+bool cmd4_startup_request_take(void)
+{
+    if (!s_startup_request_pending) {
+        return false;
+    }
+    s_startup_request_pending = false;
+    return true;
+}
+
 /**
  * @brief 清除所有手动位姿控制标记
  *
@@ -1171,4 +1253,6 @@ void cmd4_clear_manual_pose(void)
 {
     s_manual_pose_active[CMD4_ARM_LEFT] = false;
     s_manual_pose_active[CMD4_ARM_RIGHT] = false;
+    s_manual_pose_pending[CMD4_ARM_LEFT] = false;
+    s_manual_pose_pending[CMD4_ARM_RIGHT] = false;
 }

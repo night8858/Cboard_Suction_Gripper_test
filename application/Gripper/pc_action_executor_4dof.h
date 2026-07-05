@@ -53,6 +53,9 @@ void pc_action_4dof_init(void);
 /** @brief 周期推进 PC 动作状态机，应在 4DOF 控制任务中每周期调用一次。 */
 void pc_action_4dof_loop(void);
 
+/** @brief 强制中断当前/待处理 PC 动作，不产生动作完成帧。 */
+void pc_action_4dof_abort(void);
+
 /** @brief 查询 PC 动作是否正在执行，用于控制任务选择 PC 动作或 IDLE 目标。 */
 bool pc_action_4dof_is_active(void);
 

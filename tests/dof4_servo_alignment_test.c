@@ -132,11 +132,15 @@ int main(void)
     const Dof4_Pose left_place = {0.425f, 0.40f, -0.19f, -1.45f};
     const Dof4_Pose right_place = {0.425f, -0.40f, -0.19f, -1.45f};
     const Dof4_Pose left_low_pick = {0.2224f, 0.2854f, -0.5010f, -1.57f};
+    const Dof4_Pose right_pc_edge_biased = {0.51f, -0.22f, -0.03f, -1.48f};
     verify_pose_round_trip(&left, &left_grab, "left front grab");
     verify_pose_round_trip(&right, &right_grab, "right front grab");
     verify_pose_round_trip(&left, &left_place, "left front place");
     verify_pose_round_trip(&right, &right_place, "right front place");
     verify_pose_round_trip(&left, &left_low_pick, "left low pick");
+    require_ok(Dof4_arm_set_tcp_offset(&right, 0.0f, 0.0f, -0.05f),
+               "right runtime TCP offset");
+    verify_pose_round_trip(&right, &right_pc_edge_biased, "right PC edge target after bias");
 
     Dof4_JointState over_limit = right.joint_actual;
     over_limit.q[1] = right.cfg.joint_max[1] + 0.2f;

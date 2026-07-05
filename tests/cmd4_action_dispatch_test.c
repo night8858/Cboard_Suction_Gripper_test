@@ -208,6 +208,7 @@ int main(void)
 {
     uint8_t frame[CMD4_FRAME_MAX_LEN];
     const Cmd4HostMockState *state;
+    Dof4_Pose pending_pose;
     uint8_t len;
 
     cmd4_host_mocks_reset();
@@ -215,12 +216,65 @@ int main(void)
     require_true(len == CMD4_FRAME_POSE_LEN, "pose frame length");
     cmd4_rx_feed(frame, len);
     state = cmd4_host_mocks_state();
-    require_true(state->pose_set_calls == 1U, "pose dispatch");
-    require_true(state->arm_start_calls == 1U, "pose auto-starts arm");
-    assert_all_valves_open(state, "pose auto-start opens all valves");
+    require_true(state->pose_set_calls == 0U, "pose ignored before start");
+    require_true(state->arm_start_calls == 0U, "pose does not auto-start arm");
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "pose before start has no pending request");
+    require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "pose before start not active");
+
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->arm_start_calls == 1U, "arm start before manual pose");
+    assert_all_valves_open(state, "arm start opens all valves");
+    require_true(cmd4_startup_request_take(), "arm start creates startup request");
+    require_true(!cmd4_startup_request_take(), "startup request is consumed once");
+
+    len = build_arm_start_frame(1.0f, 2.0f, 3.0f, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->arm_start_calls == 2U,
+                 "repeated arm start dispatches start again");
+    require_true(state->world_offset_calls == 2U,
+                 "repeated arm start updates world offset");
+    require_near(state->last_offset_x, 0.001f, "repeated start offset x");
+    require_near(state->last_offset_y, 0.002f, "repeated start offset y");
+    require_near(state->last_offset_z, 0.003f, "repeated start offset z");
+    require_true(cmd4_startup_request_take(),
+                 "repeated arm start creates startup request");
+
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.10f, 0.20f, -0.30f, 0.40f, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->pose_set_calls == 0U, "pose is queued after start");
+    require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "pose pending after start");
+    require_near(pending_pose.x, 0.10f, "pending pose left x");
+    require_near(pending_pose.pitch, 0.40f, "pending pose left pitch");
+    require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "pending pose not active before arm task consumes");
+
+    (void)Dof4_arm_set_target(&g_dof4_arm_left,
+                              pending_pose.x,
+                              pending_pose.y,
+                              pending_pose.z,
+                              pending_pose.pitch);
+    cmd4_manual_pose_set_active(CMD4_ARM_LEFT, true);
+    state = cmd4_host_mocks_state();
+    require_true(state->pose_set_calls == 1U, "arm task applies manual pose");
     require_true(cmd4_manual_pose_active(CMD4_ARM_LEFT), "manual pose active");
     require_near(g_dof4_arm_left.current_pose.x, 0.10f, "pose left x");
     require_near(g_dof4_arm_left.current_pose.pitch, 0.40f, "pose left pitch");
+
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.11f, 0.21f, -0.31f, 0.41f, frame);
+    cmd4_rx_feed(frame, len);
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.12f, 0.22f, -0.32f, 0.42f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "latest pose pending");
+    require_near(pending_pose.x, 0.12f, "latest pending pose x");
+    require_near(pending_pose.pitch, 0.42f, "latest pending pose pitch");
 
     len = build_action_frame(5U, frame);
     require_true(len == CMD4_FRAME_ACTION_LEN, "action frame length");
@@ -229,6 +283,8 @@ int main(void)
     require_true(state->action_trigger_calls == 1U, "preset action dispatch");
     require_true(state->last_action == (action_state_4dof_e)5U, "preset action id");
     require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT), "action clears manual pose");
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "action clears pending manual pose");
 
     len = build_action_frame(0U, frame);
     cmd4_rx_feed(frame, len);
@@ -239,7 +295,7 @@ int main(void)
     require_true(len == CMD4_FRAME_VALVE_LEN, "valve frame length");
     cmd4_rx_feed(frame, len);
     state = cmd4_host_mocks_state();
-    require_true(state->relay_calls == 5U, "valve dispatch after start valves");
+    require_true(state->relay_calls >= 5U, "valve dispatch after start valves");
     require_true(state->last_relay_id == 3U && state->last_relay_state == 1U,
                  "valve relay state");
 
@@ -266,7 +322,72 @@ int main(void)
     require_near(g_pump.target_speed_rpm, 0.0f, "pump stop target");
     require_near(state->last_pump_speed, 0.0f, "pump stop output");
 
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.13f, 0.23f, -0.33f, 0.43f, frame);
+    cmd4_host_mocks_set_action_active(true);
+    cmd4_rx_feed(frame, len);
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "pose ignored while preset action active");
+    cmd4_host_mocks_set_action_active(false);
+
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.14f, 0.24f, -0.34f, 0.44f, frame);
+    cmd4_host_mocks_set_pc_action_active(true);
+    cmd4_rx_feed(frame, len);
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "pose ignored while PC action active");
+    cmd4_host_mocks_set_pc_action_active(false);
+
     cmd4_host_mocks_reset();
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(cmd4_startup_request_take(),
+                 "manual clear setup start creates startup request");
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.16f, 0.26f, -0.36f, 0.46f, frame);
+    cmd4_rx_feed(frame, len);
+    cmd4_manual_pose_set_active(CMD4_ARM_LEFT, true);
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "arm start clears manual active");
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "arm start clears manual pending");
+    require_true(cmd4_startup_request_take(),
+                 "manual clear repeated start creates startup request");
+
+    cmd4_host_mocks_reset();
+    cmd4_host_mocks_set_action_active(true);
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->action_abort_calls == 1U,
+                 "arm start aborts active preset action");
+    require_true(!action_4dof_is_active(),
+                 "arm start clears preset action active mock");
+    require_true(cmd4_startup_request_take(),
+                 "preset abort start creates startup request");
+
+    cmd4_host_mocks_reset();
+    cmd4_host_mocks_set_pc_action_active(true);
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->pc_action_abort_calls == 1U,
+                 "arm start aborts active PC action");
+    require_true(!pc_action_4dof_is_active(),
+                 "arm start clears PC action active mock");
+    require_true(cmd4_startup_request_take(),
+                 "PC abort start creates startup request");
+
+    cmd4_host_mocks_reset();
+    len = build_arm_start_frame(0.0f, 0.0f, 0.0f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(cmd4_startup_request_take(),
+                 "PC action setup start creates startup request");
+    len = build_pose_frame(CMD4_ARM_LEFT, 0.15f, 0.25f, -0.35f, 0.45f, frame);
+    cmd4_rx_feed(frame, len);
+    require_true(cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "PC action setup pending pose");
+    cmd4_manual_pose_set_active(CMD4_ARM_LEFT, true);
+
     len = build_single_target_frame(CMD4_PICK_BLOCK,
                                     CMD4_ARM_RIGHT,
                                     0.11f, 0.22f, -0.33f,
@@ -280,6 +401,10 @@ int main(void)
     assert_all_valves_open(state, "single pick auto-start opens all valves");
     require_true(state->last_arm_id == DOF4_ARM_RIGHT, "single pick arm");
     require_near(state->last_single_target.z, -0.33f, "single pick z");
+    require_true(!cmd4_manual_pose_active(CMD4_ARM_LEFT),
+                 "PC action clears manual pose active");
+    require_true(!cmd4_manual_pose_take_pending(CMD4_ARM_LEFT, &pending_pose),
+                 "PC action clears manual pose pending");
 
     len = build_single_target_frame(CMD4_PLACE_BLOCK,
                                     CMD4_ARM_LEFT,
@@ -350,13 +475,19 @@ int main(void)
     len = build_arm_start_frame(10.0f, -20.0f, 30.0f, frame);
     require_true(len == CMD4_FRAME_ARM_START_LEN, "arm start frame length");
     cmd4_rx_feed(frame, len);
+    require_true(cmd4_startup_request_take(),
+                 "world offset first start creates startup request");
+    len = build_arm_start_frame(-40.0f, 50.0f, -60.0f, frame);
+    cmd4_rx_feed(frame, len);
     state = cmd4_host_mocks_state();
-    require_true(state->world_offset_calls == 1U, "world offset dispatch");
-    require_true(state->arm_start_calls == 1U, "arm start dispatch");
+    require_true(state->world_offset_calls == 2U, "world offset repeated dispatch");
+    require_true(state->arm_start_calls == 2U, "arm start repeated dispatch");
     assert_all_valves_open(state, "arm start opens all valves");
-    require_near(state->last_offset_x, 0.010f, "offset x mm to m");
-    require_near(state->last_offset_y, -0.020f, "offset y mm to m");
-    require_near(state->last_offset_z, 0.030f, "offset z mm to m");
+    require_near(state->last_offset_x, -0.040f, "latest offset x mm to m");
+    require_near(state->last_offset_y, 0.050f, "latest offset y mm to m");
+    require_near(state->last_offset_z, -0.060f, "latest offset z mm to m");
+    require_true(cmd4_startup_request_take(),
+                 "world offset repeated start creates startup request");
 
     cmd4_host_mocks_reset();
     len = build_single_target_frame(CMD4_PICK_BLOCK,

@@ -120,11 +120,17 @@ typedef struct {
 
 extern BlockPlacementState g_block_state;
 
-/** @brief IDLE 位姿参数 — 相对于各自基座 (effective_base) 的偏移量 */
-#define IDLE_BASE_X      0.15f   /**< 基座前方 X 偏移，单位 m */
-#define IDLE_BASE_Y      0.00f   /**< 基座侧方 Y 偏移，单位 m（0=正前方） */
-#define IDLE_BASE_Z      0.25f   /**< 基座上方 Z 偏移，单位 m */
-#define IDLE_BASE_PITCH -0.02f   /**< 基准 pitch，单位 rad */
+/** @brief 左臂普通 IDLE 位姿参数 — 相对于左臂 effective_base 的偏移量 */
+#define IDLE_LEFT_BASE_X       0.13f   /**< 左臂基座前方 X 偏移，单位 m */
+#define IDLE_LEFT_BASE_Y       0.05f   /**< 左臂基座侧方 Y 偏移，单位 m（0=正前方） */
+#define IDLE_LEFT_BASE_Z       0.25f   /**< 左臂基座上方 Z 偏移，单位 m */
+#define IDLE_LEFT_BASE_PITCH  -0.02f   /**< 左臂基准 pitch，单位 rad */
+
+/** @brief 右臂普通 IDLE 位姿参数 — 相对于右臂 effective_base 的偏移量 */
+#define IDLE_RIGHT_BASE_X      0.15f   /**< 右臂基座前方 X 偏移，单位 m */
+#define IDLE_RIGHT_BASE_Y     -0.05f   /**< 右臂基座侧方 Y 偏移，单位 m（0=正前方） */
+#define IDLE_RIGHT_BASE_Z      0.25f   /**< 右臂基座上方 Z 偏移，单位 m */
+#define IDLE_RIGHT_BASE_PITCH -0.02f   /**< 右臂基准 pitch，单位 rad */
 
 /** @brief 根据物块位置状态获取指定臂的自适应 IDLE 位姿 */
 Dof4_Pose action_4dof_get_idle_pose(Dof4_ArmId arm_id);

@@ -26,6 +26,7 @@ typedef struct {
     unsigned pose_set_calls;
     unsigned action_trigger_calls;
     unsigned action_abort_calls;
+    unsigned pc_action_abort_calls;
     unsigned relay_calls;
     unsigned answer_calls;
     unsigned pump_speed_calls;
@@ -51,6 +52,8 @@ typedef struct {
 
 void cmd4_host_mocks_reset(void);
 const Cmd4HostMockState *cmd4_host_mocks_state(void);
+void cmd4_host_mocks_set_action_active(bool active);
+void cmd4_host_mocks_set_pc_action_active(bool active);
 
 #ifdef __cplusplus
 }

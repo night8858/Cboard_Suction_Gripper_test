@@ -1,5 +1,6 @@
 #include "cmd4_host_mocks.h"
 
+#include "command_decode_4dof.h"
 #include "gimbal.h"
 #include "stm32f4xx_hal.h"
 #include "usart_interface.h"
@@ -15,6 +16,8 @@ UART_HandleTypeDef huart1;
 Gimbal_s Gimbal;
 
 static Cmd4HostMockState s_state;
+static bool s_action_active;
+static bool s_pc_action_active;
 
 void cmd4_host_mocks_reset(void)
 {
@@ -23,11 +26,25 @@ void cmd4_host_mocks_reset(void)
     memset(&g_dof4_arm_right, 0, sizeof(g_dof4_arm_right));
     memset(&g_pump, 0, sizeof(g_pump));
     g_dof4_arm_started = false;
+    s_action_active = false;
+    s_pc_action_active = false;
+    cmd4_clear_manual_pose();
+    (void)cmd4_startup_request_take();
 }
 
 const Cmd4HostMockState *cmd4_host_mocks_state(void)
 {
     return &s_state;
+}
+
+void cmd4_host_mocks_set_action_active(bool active)
+{
+    s_action_active = active;
+}
+
+void cmd4_host_mocks_set_pc_action_active(bool active)
+{
+    s_pc_action_active = active;
 }
 
 bool pc_action_4dof_start_pick(Dof4_ArmId arm_id, const Dof4_Pose *target_world)
@@ -92,7 +109,7 @@ bool pc_action_4dof_start_dual_get_back(void)
 
 bool pc_action_4dof_is_active(void)
 {
-    return false;
+    return s_pc_action_active;
 }
 
 bool pc_action_4dof_completion_pending(void)
@@ -102,6 +119,12 @@ bool pc_action_4dof_completion_pending(void)
 
 void pc_action_4dof_completion_acknowledge(void)
 {
+}
+
+void pc_action_4dof_abort(void)
+{
+    ++s_state.pc_action_abort_calls;
+    s_pc_action_active = false;
 }
 
 void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
@@ -125,7 +148,7 @@ void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
 
 bool action_4dof_is_active(void)
 {
-    return false;
+    return s_action_active;
 }
 
 bool action_4dof_trigger(action_state_4dof_e action)
@@ -138,6 +161,7 @@ bool action_4dof_trigger(action_state_4dof_e action)
 void action_4dof_abort(void)
 {
     ++s_state.action_abort_calls;
+    s_action_active = false;
 }
 
 Dof4_Status Dof4_arm_set_target(Dof4_Arm *arm, float x, float y, float z, float pitch)

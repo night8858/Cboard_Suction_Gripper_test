@@ -39,9 +39,11 @@ add_subdirectory(cmake/stm32cubemx)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    "-u _printf_float"
-    "-Wl,-u,_printf_float"
     # Add user defined library search paths
+)
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "-Wl,-u,_printf_float"
 )
 
 # Add sources to executable

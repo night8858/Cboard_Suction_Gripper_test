@@ -108,6 +108,9 @@ void cmd4_rx_feed(const uint8_t *buf, uint32_t len);
 void cmd4_update_valve_shadow(uint8_t valve_id, uint8_t state);
 
 bool cmd4_manual_pose_active(uint8_t arm_id);
+bool cmd4_manual_pose_take_pending(uint8_t arm_id, Dof4_Pose *pose);
+void cmd4_manual_pose_set_active(uint8_t arm_id, bool active);
+bool cmd4_startup_request_take(void);
 void cmd4_clear_manual_pose(void);
 
 #endif /* COMMAND_DECODE_4DOF_H */

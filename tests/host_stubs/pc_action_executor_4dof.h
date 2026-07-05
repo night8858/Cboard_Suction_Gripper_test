@@ -2,6 +2,7 @@
 #define HOST_STUB_PC_ACTION_EXECUTOR_4DOF_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "Dof4_Arm.h"
 
 #define PC_ACTION_4DOF_VERTICAL_CLEARANCE_M 0.05f
@@ -20,6 +21,23 @@ typedef enum {
     PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE = 10,
 } PcAction4DOF_RejectReason;
 
+typedef struct {
+    bool active;
+    bool pending;
+    bool use_left;
+    bool use_right;
+    bool release_committed;
+    bool operation_phase_started;
+    bool joint_phase_started;
+    uint8_t command;
+    uint8_t mode;
+    uint8_t state;
+    uint8_t joint_substate;
+    uint8_t path_index;
+    uint32_t timeout_ms;
+    uint32_t elapsed_ms;
+} PcAction4DOF_DebugSnapshot;
+
 bool pc_action_4dof_start_pick(Dof4_ArmId arm_id, const Dof4_Pose *target_world);
 bool pc_action_4dof_start_place(Dof4_ArmId arm_id, const Dof4_Pose *target_world);
 bool pc_action_4dof_start_put_back(Dof4_ArmId arm_id);
@@ -32,7 +50,9 @@ bool pc_action_4dof_start_dual_put_back(void);
 bool pc_action_4dof_start_dual_get_back(void);
 void pc_action_4dof_init(void);
 void pc_action_4dof_loop(void);
+void pc_action_4dof_abort(void);
 bool pc_action_4dof_is_active(void);
+void pc_action_4dof_get_debug_snapshot(PcAction4DOF_DebugSnapshot *snapshot);
 void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
                                   PcAction4DOF_RejectReason reason,
                                   const Dof4_Pose *target_world);
