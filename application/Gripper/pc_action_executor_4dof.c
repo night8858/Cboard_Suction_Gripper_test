@@ -47,9 +47,9 @@
 /* ======================== 运动到位公差 ======================== */
 /** 到位和超时参数沿用原 4DOF 调度器的量级，便于实机统一调试。 */
 #define PC_ACT4_MOVE_TIMEOUT_MS              2500U   /**< 单段路径运动超时 (ms) */
-#define PC_ACT4_POSE_POS_TOL_M                0.05f  /**< 位姿位置到位公差 (m) */
+#define PC_ACT4_POSE_POS_TOL_M                0.03f  /**< 位姿位置到位公差 (m) */
 #define PC_ACT4_POSE_PITCH_TOL_RAD            0.03f  /**< 位姿俯仰角到位公差 (rad) */
-#define PC_ACT4_JOINT_TOL_RAD                  0.06f /**< 关节角到位公差 (rad) */
+#define PC_ACT4_JOINT_TOL_RAD                  0.01f /**< 关节角到位公差 (rad) */
 #define PC_ACT4_BACK_SERVO_SPEED              6000U  /**< PC 背部固定关节动作专用舵机速度 */
 #define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX         0U    /**< 动态路径到达悬停点后等待（简化后仅一个中间点） */
 #define PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M      0.06f /**< 动态取/放块目标上方悬停高度，需明显大于到位公差 */
@@ -324,7 +324,7 @@ static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.74f, -1.26f),   /* target */
+            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
         },
         .post = {
             PC_JOINT_POINT( 2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
@@ -337,7 +337,7 @@ static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.79f, -1.31f),   /* target */
+            PC_JOINT_POINT( -2.860f, 1.65f, -1.82f, -1.31f),   /* target */
         },
         .post = {
             PC_JOINT_POINT(-2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
@@ -360,7 +360,7 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.74f, -1.26f),   /* target */
+            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
         },
         .post = {
             PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.463f),   /* retreat */
@@ -373,7 +373,7 @@ static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.79f, -1.31f),   /* target */
+            PC_JOINT_POINT( -2.860f, 1.65f, -1.81f, -1.31f),   /* target */
         },
         .post = {
             PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.463f),   /* retreat */
@@ -397,7 +397,7 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.74f, -1.26f),   /* target */
+            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
         },
         .post = {
             PC_JOINT_POINT(2.800f, 1.50f, -1.48f, -1.463f),   /* retreat */
@@ -410,7 +410,7 @@ static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
     {
         .pre = {
             PC_JOINT_POINT(-2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.79f, -1.31f),   /* target */
+            PC_JOINT_POINT( -2.860f, 1.65f, -1.82f, -1.31f),   /* target */
         },
         .post = {
             PC_JOINT_POINT(-2.800f, 1.50f, -1.48f, -1.463f),   /* retreat */

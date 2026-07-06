@@ -2,15 +2,25 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "CMake Configure Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset",
+                "Debug"
+            ],
+            "problemMatcher": []
+        },
+        {
             "label": "CMake Build Debug",
             "type": "shell",
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build/Debug",
-                "-j",
-                "8"
+                "--preset",
+                "Debug"
             ],
+            "dependsOn": "CMake Configure Debug",
             "group": {
                 "kind": "build",
                 "isDefault": true

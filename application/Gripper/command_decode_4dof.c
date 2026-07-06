@@ -174,6 +174,35 @@ static bool s_manual_pose_pending[2] = {false, false};
 static Dof4_Pose s_manual_pose_target[2];
 static bool s_startup_request_pending = false;
 
+#define CMD4_ANSWER_REPEAT_COUNT       5U
+#define CMD4_ANSWER_REPEAT_INTERVAL_MS 600U
+
+typedef struct {
+    bool active;
+    uint8_t answer;
+    uint8_t remaining;
+    uint32_t next_send_ms;
+    uint32_t generation;
+} Cmd4AnswerRepeatState;
+
+static Cmd4AnswerRepeatState s_answer_repeat = {0};
+
+static void cmd4_answer_repeat_start(uint8_t answer)
+{
+    if (answer >= 4U) {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    /* 收到新的答案命令时覆盖旧播报任务，避免旧答案继续插队播报。 */
+    s_answer_repeat.active = true;
+    s_answer_repeat.answer = answer;
+    s_answer_repeat.remaining = CMD4_ANSWER_REPEAT_COUNT;
+    s_answer_repeat.next_send_ms = HAL_GetTick();
+    s_answer_repeat.generation++;
+    taskEXIT_CRITICAL();
+}
+
 static void cmd4_mark_all_valves_open(void)
 {
     for (uint8_t valve_id = 0U; valve_id < 4U; ++valve_id) {
@@ -981,7 +1010,44 @@ static void cmd4_handle_answer_control(const uint8_t *data)
 {
     /* DATA[0] 为答案编号 (0~3)，其余字节保留 */
     /* USART6 已专用于 1Mbps 飞特舵机总线；语音模块使用 USART1 9600bps。 */
-    xiao_R_usart_send_answer(&huart1, data[0]);
+    cmd4_answer_repeat_start(data[0]);
+}
+
+void cmd4_answer_repeat_process(void)
+{
+    uint8_t answer = 0U;
+    uint32_t generation = 0U;
+    bool should_send = false;
+    const uint32_t now_ms = HAL_GetTick();
+
+    taskENTER_CRITICAL();
+    if (s_answer_repeat.active &&
+        s_answer_repeat.remaining > 0U &&
+        (int32_t)(now_ms - s_answer_repeat.next_send_ms) >= 0) {
+        /* 只在到点时取出发送快照，真正串口发送放在临界区外执行。 */
+        answer = s_answer_repeat.answer;
+        generation = s_answer_repeat.generation;
+        s_answer_repeat.next_send_ms = now_ms + 20U;
+        should_send = true;
+    }
+    taskEXIT_CRITICAL();
+
+    if (should_send) {
+        const HAL_StatusTypeDef tx_status = xiao_R_usart_send_answer(&huart1, answer);
+
+        taskENTER_CRITICAL();
+        if (s_answer_repeat.active &&
+            s_answer_repeat.generation == generation &&
+            s_answer_repeat.answer == answer &&
+            tx_status == HAL_OK) {
+            s_answer_repeat.remaining--;
+            s_answer_repeat.next_send_ms = now_ms + CMD4_ANSWER_REPEAT_INTERVAL_MS;
+            if (s_answer_repeat.remaining == 0U) {
+                s_answer_repeat.active = false;
+            }
+        }
+        taskEXIT_CRITICAL();
+    }
 }
 
 /**

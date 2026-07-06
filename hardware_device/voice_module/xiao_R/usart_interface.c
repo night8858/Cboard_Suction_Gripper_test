@@ -1,14 +1,6 @@
 #include "usart_interface.h"
 
 /**
- * @brief 小 R 语音模块串口发送超时时间，单位 ms。
- *
- * 这 4 条答案播报命令都只有 5 字节，阻塞发送耗时很短；保留 100ms
- * 是为了在系统负载较高或串口波特率较低时仍有足够余量。
- */
-#define XIAO_R_USART_TX_TIMEOUT_MS 100U
-
-/**
  * @brief “答案为零/一/二/三”的完整串口命令表。
  *
  * 字节含义：
@@ -42,8 +34,7 @@ HAL_StatusTypeDef xiao_R_usart_send_answer(UART_HandleTypeDef *huart, uint8_t an
         return HAL_ERROR;
     }
 
-    return HAL_UART_Transmit(huart,
-                             (uint8_t *)k_answer_cmd_table[answer],
-                             (uint16_t)sizeof(k_answer_cmd_table[answer]),
-                             XIAO_R_USART_TX_TIMEOUT_MS);
+    return HAL_UART_Transmit_IT(huart,
+                                (uint8_t *)k_answer_cmd_table[answer],
+                                (uint16_t)sizeof(k_answer_cmd_table[answer]));
 }

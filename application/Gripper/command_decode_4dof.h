@@ -101,6 +101,7 @@ void cmd4_send_diagnostic(void);
 void cmd4_send_action_done(void);
 void cmd4_rx_process(void);
 void cmd4_rx_feed(const uint8_t *buf, uint32_t len);
+void cmd4_answer_repeat_process(void);
 
 /** @brief 由外部模块（如 PC 动作执行器）更新阀门状态镜像，确保反馈帧准确。
  *  @param valve_id 阀门编号 0=左臂 1=右臂 2=左背 3=右背

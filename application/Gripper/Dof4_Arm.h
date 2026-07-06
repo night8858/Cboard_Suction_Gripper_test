@@ -49,7 +49,7 @@ extern "C" {
 #define R_J2_ZERO_BIAS_RAD 2.67f
 #define R_J2_SERVO_SIGN (1)
 #define R_J2_URDF_MIN_DEG (-3.60f * DOF4_RAD_TO_DEG)
-#define R_J2_URDF_MAX_DEG (2.10f * DOF4_RAD_TO_DEG)
+#define R_J2_URDF_MAX_DEG (2.5f * DOF4_RAD_TO_DEG)
 
 /* R_J3: 实物轴按安装对应 URDF -Y；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J3_ZERO_POS DOF4_SERVO_CENTER_POS
@@ -90,7 +90,7 @@ extern "C" {
 #define L_J2_ZERO_BIAS_RAD 2.67f
 #define L_J2_SERVO_SIGN (1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J2_URDF_MIN_DEG (-3.60f * DOF4_RAD_TO_DEG)
-#define L_J2_URDF_MAX_DEG (2.10f * DOF4_RAD_TO_DEG)
+#define L_J2_URDF_MAX_DEG (2.5f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J3_ZERO_BIAS_RAD -1.57f

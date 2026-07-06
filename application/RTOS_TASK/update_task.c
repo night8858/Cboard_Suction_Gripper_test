@@ -10,6 +10,7 @@ void update_task(void const *argument)
 {
   for (;;) {
       cmd4_rx_process();
+      cmd4_answer_repeat_process();
       //block_inspect_process();
       cmd4_send_action_done();
       cmd4_send_diagnostic();
