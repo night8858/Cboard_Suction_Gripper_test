@@ -41,6 +41,7 @@
 
 #include "action_scheduler_4dof.h"
 #include "Dof4_Arm.h"
+#include "Dof4_Arm_Calibration.h"
 #include "pneumatic_control.h"
 #include "pc_action_executor_4dof.h"
 #include "Trajectory_Planning.h"
@@ -111,53 +112,54 @@ BlockPlacementState g_block_state;
  * 时机参数（单位 ms，后续根据实测调整）
  * ════════════════════════════════════════════════════════════════ */
 
-#define ACT4_MOVE_TIMEOUT_MS           2500U   /**< 单段移动最大超时（容错兜底） */
-#define ACT4_SUCTION_TIMEOUT_MS        1500U   /**< 吸附等待最大超时（前方抓取用） */
-#define ACT4_PLACE_HOLD_MS              1000U   /**< 背部取回动作：手臂在抓取点等待背部吸盘释放的时间 */
-#define ACT4_BACK_RELEASE_HOLD_MS       500U   /**< 背部吸盘关闭后等待物块交接稳定时间 */
+#define ACT4_CFG                       (Dof4_calibration_get_action())
+#define ACT4_MOVE_TIMEOUT_MS           (ACT4_CFG->move_timeout_ms)
+#define ACT4_SUCTION_TIMEOUT_MS        (ACT4_CFG->suction_timeout_ms)
+#define ACT4_PLACE_HOLD_MS             (ACT4_CFG->place_hold_ms)
+#define ACT4_BACK_RELEASE_HOLD_MS      (ACT4_CFG->back_release_hold_ms)
 /* ── 放置动作释放时序宏（通过修改宏值即可调试，无需改动逻辑代码）── */
 
 /** @brief 后背放置：到达目标点后、关闭手臂电磁阀前的预释放等待时间
  *  此阶段背部吸盘已打开，等待其牢固吸附物块后再松开手臂吸盘 */
-#define ACT4_PLACE_PRE_RELEASE_BACK_MS  2000U
+#define ACT4_PLACE_PRE_RELEASE_BACK_MS  (ACT4_CFG->place_pre_release_back_ms)
 
 /** @brief 后背放置：关闭手臂电磁阀后、撤退前的释放后等待时间
  *  确保物块已完全交接给背部吸盘，机械臂移动不会带偏/刮碰物块 */
-#define ACT4_PLACE_POST_RELEASE_BACK_MS 2000U
+#define ACT4_PLACE_POST_RELEASE_BACK_MS (ACT4_CFG->place_post_release_back_ms)
 
 /** @brief 外部放置：关闭手臂电磁阀后、撤退前的释放后等待时间
  *  物块靠重力落向堆叠点，需等待其稳定后再移动机械臂 */
-#define ACT4_PLACE_POST_RELEASE_EXT_MS  2000U
+#define ACT4_PLACE_POST_RELEASE_EXT_MS  (ACT4_CFG->place_post_release_ext_ms)
 
-#define ACT4_RELEASE_TIMEOUT_MS        1000U   /**< 释放等待最大超时（保留备用） */
-#define ACT4_HOLD_MS                    100U   /**< 完成后保持时间（回 IDLE 前） */
-#define ACT4_WAYPOINT_HOLD_MS           100U   /**< 途经点停留时间（DANCE 用） */
+#define ACT4_RELEASE_TIMEOUT_MS        (ACT4_CFG->release_timeout_ms)
+#define ACT4_HOLD_MS                   (ACT4_CFG->hold_ms)
+#define ACT4_WAYPOINT_HOLD_MS          (ACT4_CFG->waypoint_hold_ms)
 
 /* ── 多段轨迹平滑参数 ── */
 
 /** @brief 运动链中间途经点的默认前瞻切换距离，单位 m。
  *  当机械臂末端距离当前目标小于此距离时，提前下发下一段目标，
  *  使 5 次多项式规划器在速度尚高时自然衔接，消除走-停-走顿挫。 */
-#define ACT4_DEFAULT_BLEND_DIST_M        0.08f
+#define ACT4_DEFAULT_BLEND_DIST_M        (ACT4_CFG->default_blend_dist_m)
 
 /** @brief 运动链中间途经点的默认通过速度因子。
  *  0.0 = 零速停止（精确到位），0.5~0.7 = 以最高速度的 50%~70% 通过。
  *  仅对末端位姿模式（POSE）生效；关节模式（JOINT）仅使用 blend_distance。 */
-#define ACT4_DEFAULT_VIA_SPEED_FACTOR    0.6f
+#define ACT4_DEFAULT_VIA_SPEED_FACTOR    (ACT4_CFG->default_via_speed_factor)
 
 /** @brief 运动链终点（需精确停止执行吸取/释放）的前瞻切换距离，单位 m。
  *  比中间途经点更紧，确保吸取/释放位置精度。 */
-#define ACT4_CHAIN_FINAL_BLEND_DIST_M    0.03f
+#define ACT4_CHAIN_FINAL_BLEND_DIST_M    (ACT4_CFG->chain_final_blend_dist_m)
 
 /** @brief 到位判定：位置容差，单位 m */
-#define ACT4_REACH_POS_TOL_M     0.03f
+#define ACT4_REACH_POS_TOL_M     (ACT4_CFG->reach_pos_tol_m)
 /** @brief 到位判定：pitch 容差，单位 rad */
-#define ACT4_REACH_PITCH_TOL_RAD 0.05f
+#define ACT4_REACH_PITCH_TOL_RAD (ACT4_CFG->reach_pitch_tol_rad)
 /** @brief 关节轨迹到位判定容差，单位 rad。TODO: 实测后调整。 */
-#define ACT4_JOINT_REACH_TOL_RAD 0.05f
+#define ACT4_JOINT_REACH_TOL_RAD (ACT4_CFG->joint_reach_tol_rad)
 
 /** @brief 关节轨迹 blend 容差（运动链中间途经点用），单位 rad。比 reach 容差大以实现提前切换。 */
-#define ACT4_JOINT_BLEND_TOL_RAD 0.15f
+#define ACT4_JOINT_BLEND_TOL_RAD (ACT4_CFG->joint_blend_tol_rad)
 
 /** @brief 动作表总数（枚举最后一个有效动作 + 1）。 */
 #define ACTION_4DOF_COUNT ((uint32_t)ACTION_DANCE + 1U)
@@ -169,12 +171,8 @@ typedef enum {
 
 #define ACT4_JOINT_TODO {0.0f, 0.0f, 0.0f, 0.0f}
 
-/** @brief 左背占用时的默认左臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_left_back_avoid_pose  = {0.10f,  0.15f, 0.28f, 0.45f};
-/** @brief 右背占用时的默认右臂高位避让位姿，动作表可覆盖。 */
-static const Dof4_Pose s_default_right_back_avoid_pose = {0.10f, -0.15f, 0.28f, 0.45f};
-static Dof4_Pose s_current_left_back_avoid_pose  = {0.10f,  0.15f, 0.28f, 0.45f};
-static Dof4_Pose s_current_right_back_avoid_pose = {0.10f, -0.15f, 0.28f, 0.45f};
+static Dof4_Pose s_current_left_back_avoid_pose;
+static Dof4_Pose s_current_right_back_avoid_pose;
 
 /* ════════════════════════════════════════════════════════════════
  * 目标位姿数据结构
@@ -1770,10 +1768,14 @@ Dof4_Pose action_4dof_get_idle_pose(Dof4_ArmId arm_id)
     const bool is_left = (arm_id == DOF4_ARM_LEFT);
 
     Dof4_Pose pose;
-    pose.x     = base_x + (is_left ? IDLE_LEFT_BASE_X : IDLE_RIGHT_BASE_X);
-    pose.y     = base_y + (is_left ? IDLE_LEFT_BASE_Y : IDLE_RIGHT_BASE_Y);
-    pose.z     = base_z + (is_left ? IDLE_LEFT_BASE_Z : IDLE_RIGHT_BASE_Z);
-    pose.pitch = is_left ? IDLE_LEFT_BASE_PITCH : IDLE_RIGHT_BASE_PITCH;
+    const Dof4_Pose idle_offset =
+        Dof4_calibration_get_action()->idle_offset[is_left ? DOF4_ARM_LEFT
+                                                           : DOF4_ARM_RIGHT];
+
+    pose.x = base_x + idle_offset.x;
+    pose.y = base_y + idle_offset.y;
+    pose.z = base_z + idle_offset.z;
+    pose.pitch = idle_offset.pitch;
 
     return pose;
 }
@@ -1801,8 +1803,10 @@ void action_4dof_init(void)
 
     /* 复位全局物块位置状态 */
     memset(&g_block_state, 0, sizeof(g_block_state));
-    s_current_left_back_avoid_pose = s_default_left_back_avoid_pose;
-    s_current_right_back_avoid_pose = s_default_right_back_avoid_pose;
+    s_current_left_back_avoid_pose =
+        Dof4_calibration_get_action()->default_back_avoid[DOF4_ARM_LEFT];
+    s_current_right_back_avoid_pose =
+        Dof4_calibration_get_action()->default_back_avoid[DOF4_ARM_RIGHT];
 
     /* 初始化后 IDLE 状态：双臂电磁阀常开，防止真空泵憋压 */
     relay_control(RELAY_LEFT_ARM,  SUCTION_ON);
@@ -1941,12 +1945,14 @@ void action_4dof_set_back_occupied(Dof4_ArmId arm_id, bool occupied)
     if (arm_id == DOF4_ARM_LEFT) {
         g_block_state.left_back = occupied;
         if (occupied) {
-            s_current_left_back_avoid_pose = s_default_left_back_avoid_pose;
+            s_current_left_back_avoid_pose =
+                Dof4_calibration_get_action()->default_back_avoid[DOF4_ARM_LEFT];
         }
     } else if (arm_id == DOF4_ARM_RIGHT) {
         g_block_state.right_back = occupied;
         if (occupied) {
-            s_current_right_back_avoid_pose = s_default_right_back_avoid_pose;
+            s_current_right_back_avoid_pose =
+                Dof4_calibration_get_action()->default_back_avoid[DOF4_ARM_RIGHT];
         }
     }
 }

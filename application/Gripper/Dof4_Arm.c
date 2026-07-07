@@ -122,6 +122,7 @@
  */
 
 #include "Dof4_Arm.h"
+#include "Dof4_Arm_Calibration.h"
 #include "Dof4_Collision.h"
 #include "Trajectory_Planning.h"
 
@@ -193,22 +194,22 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 #define DOF4_URDF_R_TOOL_LEN 0.03600f
 
 /** @brief 左臂 J1 下限，单位 rad。 */
-#define DOF4_L_J1_MIN (-3.75f)  /* -215°, 下限较 URDF 原值扩展 15° */
+#define DOF4_L_J1_MIN (-3.90f)  /* 保守扩大左臂 J1 下限，现场需确认无机械干涉 */
 /** @brief 左臂 J1 上限，单位 rad。放宽到约 +100°，覆盖左侧更外侧目标点。 */
-#define DOF4_L_J1_MAX 1.75f
+#define DOF4_L_J1_MAX 1.90f
 /** @brief 右臂 J1 下限，单位 rad。放宽到约 -100°，覆盖右侧更外侧目标点。 */
-#define DOF4_R_J1_MIN (-1.75f)
+#define DOF4_R_J1_MIN (-1.90f)
 /** @brief 右臂 J1 上限，单位 rad。 */
-#define DOF4_R_J1_MAX 3.49f
+#define DOF4_R_J1_MAX 3.64f
 /** @brief J2 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
-#define DOF4_J2_SERVO_REL_MIN (-3.10f)
-#define DOF4_J2_SERVO_REL_MAX 2.10f
+#define DOF4_J2_SERVO_REL_MIN (-3.25f)
+#define DOF4_J2_SERVO_REL_MAX 2.25f
 /** @brief J3 相对舵机中位的下限；绝对上限允许轻微反向，减少边界点被拒绝。 */
-#define DOF4_J3_SERVO_REL_MIN (-4.44f)
-#define DOF4_J3_ABS_MAX 0.35f
+#define DOF4_J3_SERVO_REL_MIN (-4.60f)
+#define DOF4_J3_ABS_MAX 0.50f
 /** @brief J4 相对舵机中位的原有效范围，初始化时换算为绝对关节角。 */
-#define DOF4_J4_SERVO_REL_MIN (-2.20f)
-#define DOF4_J4_SERVO_REL_MAX 2.20f
+#define DOF4_J4_SERVO_REL_MIN (-2.35f)
+#define DOF4_J4_SERVO_REL_MAX 2.35f
 
 /** @brief 几何解算退化阈值。 */
 #define DOF4_GEOM_EPS 1.0e-6f
@@ -800,97 +801,34 @@ Dof4_ArmConfig Dof4_arm_default_config(Dof4_ArmId arm_id)
 {
     Dof4_ArmConfig cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.arm_id = arm_id;
+    const Dof4ArmCalibration *cal = Dof4_calibration_get_arm();
+    const Dof4_ArmId safe_arm_id =
+        (arm_id == DOF4_ARM_RIGHT) ? DOF4_ARM_RIGHT : DOF4_ARM_LEFT;
+    const Dof4_SingleArmCalibration *src = &cal->arm[safe_arm_id];
 
-    // 基于 URDF 参数初始化左右臂配置
-    if (arm_id == DOF4_ARM_RIGHT) {
-        cfg.base[0] = DOF4_URDF_R_BASE_X;
-        cfg.base[1] = DOF4_URDF_R_BASE_Y;
-        cfg.base[2] = DOF4_URDF_R_BASE_Z;
-        cfg.link_len[2] = DOF4_URDF_R_TOOL_LEN;
-        cfg.servo_id[0] = 5U;
-        cfg.servo_id[1] = 6U;
-        cfg.servo_id[2] = 7U;
-        cfg.servo_id[3] = 8U;
-        cfg.joint_min[0] = DOF4_R_J1_MIN;
-        cfg.joint_max[0] = DOF4_R_J1_MAX;
-        cfg.ws_min[0] = -0.30f;     //x
-        cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.85f;       //y
-        cfg.ws_max[1] = 0.6f;
-    } else {
-        cfg.arm_id = DOF4_ARM_LEFT;
-        cfg.base[0] = DOF4_URDF_L_BASE_X;
-        cfg.base[1] = DOF4_URDF_L_BASE_Y;
-        cfg.base[2] = DOF4_URDF_L_BASE_Z;
-        cfg.link_len[2] = DOF4_URDF_L_TOOL_LEN;
-        cfg.servo_id[0] = 1U;
-        cfg.servo_id[1] = 2U;
-        cfg.servo_id[2] = 3U;
-        cfg.servo_id[3] = 4U;
-        cfg.joint_min[0] = DOF4_L_J1_MIN;
-        cfg.joint_max[0] = DOF4_L_J1_MAX;
-        cfg.ws_min[0] = -0.30f;
-        cfg.ws_max[0] = 0.85f;
-        cfg.ws_min[1] = -0.6f;
-        cfg.ws_max[1] = 0.85f;
-    }
-
-    cfg.shoulder_r = DOF4_URDF_SHOULDER_R;
-    cfg.shoulder_z = DOF4_URDF_SHOULDER_Z;
-    cfg.link_len[0] = DOF4_URDF_LINK2_LEN;
-    cfg.link_len[1] = DOF4_URDF_LINK3_LEN;
-    cfg.ws_min[2] = -0.6f;           // TCP Z 方向工作空间下限（相对于基座）
-    cfg.ws_max[2] = 0.6f;            // TCP Z 方向工作空间上限（相对于基座）
-    cfg.cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS;         // 笛卡尔空间规划速度，单位 m/s
-    cfg.pitch_vel_rps = DOF4_DEFAULT_PITCH_VEL_RPS;         // 俯仰角规划速度，单位 rad/s
-    cfg.servo_speed = 3000U;
-    cfg.servo_acc = 25U;
-
-    for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
-        cfg.servo_min[i] = DOF4_SERVO_MIN_POS;
-        cfg.servo_max[i] = DOF4_SERVO_MAX_POS;
-        cfg.servo_reverse[i] = 0U;
-    }
-
-    if (cfg.arm_id == DOF4_ARM_RIGHT) {
-        cfg.servo_zero[0] = R_J1_ZERO_POS;
-        cfg.servo_zero[1] = R_J2_ZERO_POS;
-        cfg.servo_zero[2] = R_J3_ZERO_POS;
-        cfg.servo_zero[3] = R_J4_ZERO_POS;
-        cfg.servo_offset[0] = R_J1_ZERO_BIAS_RAD;
-        cfg.servo_offset[1] = R_J2_ZERO_BIAS_RAD;
-        cfg.servo_offset[2] = R_J3_ZERO_BIAS_RAD;
-        cfg.servo_offset[3] = R_J4_ZERO_BIAS_RAD;
-        cfg.servo_sign[0] = R_J1_SERVO_SIGN;
-        cfg.servo_sign[1] = R_J2_SERVO_SIGN;
-        cfg.servo_sign[2] = R_J3_SERVO_SIGN;
-        cfg.servo_sign[3] = R_J4_SERVO_SIGN;
-    } else {
-        cfg.servo_zero[0] = L_J1_ZERO_POS;
-        cfg.servo_zero[1] = L_J2_ZERO_POS;
-        cfg.servo_zero[2] = L_J3_ZERO_POS;
-        cfg.servo_zero[3] = L_J4_ZERO_POS;
-        cfg.servo_offset[0] = L_J1_ZERO_BIAS_RAD;
-        cfg.servo_offset[1] = L_J2_ZERO_BIAS_RAD;
-        cfg.servo_offset[2] = L_J3_ZERO_BIAS_RAD;
-        cfg.servo_offset[3] = L_J4_ZERO_BIAS_RAD;
-        cfg.servo_sign[0] = L_J1_SERVO_SIGN;
-        cfg.servo_sign[1] = L_J2_SERVO_SIGN;
-        cfg.servo_sign[2] = L_J3_SERVO_SIGN;
-        cfg.servo_sign[3] = L_J4_SERVO_SIGN;
-    }
-
-    /*
-     * J2/J4 原配置描述的是舵机相对中位的机械行程。运行时统一保存为
-     * URDF 绝对关节角，避免锁存路径和 Dof4_angle_to_servo() 语义不一致。
-     */
-    cfg.joint_min[1] = cfg.servo_offset[1] + DOF4_J2_SERVO_REL_MIN;
-    cfg.joint_max[1] = cfg.servo_offset[1] + DOF4_J2_SERVO_REL_MAX;
-    cfg.joint_min[2] = cfg.servo_offset[2] + DOF4_J3_SERVO_REL_MIN;
-    cfg.joint_max[2] = DOF4_J3_ABS_MAX;
-    cfg.joint_min[3] = cfg.servo_offset[3] + DOF4_J4_SERVO_REL_MIN;
-    cfg.joint_max[3] = cfg.servo_offset[3] + DOF4_J4_SERVO_REL_MAX;
+    cfg.arm_id = safe_arm_id;
+    memcpy(cfg.servo_id, src->servo_id, sizeof(cfg.servo_id));
+    memcpy(cfg.base, src->base, sizeof(cfg.base));
+    memcpy(cfg.base_offset, src->base_offset, sizeof(cfg.base_offset));
+    cfg.shoulder_r = src->shoulder_r;
+    cfg.shoulder_z = src->shoulder_z;
+    memcpy(cfg.link_len, src->link_len, sizeof(cfg.link_len));
+    memcpy(cfg.tcp_offset, src->tcp_offset, sizeof(cfg.tcp_offset));
+    cfg.pitch_offset = src->pitch_offset;
+    memcpy(cfg.joint_min, src->joint_min, sizeof(cfg.joint_min));
+    memcpy(cfg.joint_max, src->joint_max, sizeof(cfg.joint_max));
+    memcpy(cfg.servo_min, src->servo_min, sizeof(cfg.servo_min));
+    memcpy(cfg.servo_max, src->servo_max, sizeof(cfg.servo_max));
+    memcpy(cfg.servo_zero, src->servo_zero, sizeof(cfg.servo_zero));
+    memcpy(cfg.servo_offset, src->servo_offset, sizeof(cfg.servo_offset));
+    memcpy(cfg.servo_sign, src->servo_sign, sizeof(cfg.servo_sign));
+    memcpy(cfg.servo_reverse, src->servo_reverse, sizeof(cfg.servo_reverse));
+    cfg.servo_speed = src->servo_speed;
+    cfg.servo_acc = src->servo_acc;
+    memcpy(cfg.ws_min, src->ws_min, sizeof(cfg.ws_min));
+    memcpy(cfg.ws_max, src->ws_max, sizeof(cfg.ws_max));
+    cfg.cart_vel_mps = src->cart_vel_mps;
+    cfg.pitch_vel_rps = src->pitch_vel_rps;
     return cfg;
 
 }

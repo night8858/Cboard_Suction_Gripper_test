@@ -41,29 +41,29 @@ extern "C" {
 #define R_J1_ZERO_POS DOF4_SERVO_CENTER_POS
 #define R_J1_ZERO_BIAS_RAD -1.57f
 #define R_J1_SERVO_SIGN (-1)
-#define R_J1_URDF_MIN_DEG (-1.75f * DOF4_RAD_TO_DEG)  /* 放宽到约 -100° */
-#define R_J1_URDF_MAX_DEG (3.49f * DOF4_RAD_TO_DEG)
+#define R_J1_URDF_MIN_DEG (-1.90f * DOF4_RAD_TO_DEG)  /* 保守扩大，现场需确认无机械干涉 */
+#define R_J1_URDF_MAX_DEG (3.64f * DOF4_RAD_TO_DEG)
 
 /* R_J2: 实物轴按安装对应 URDF -Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J2_ZERO_POS DOF4_SERVO_CENTER_POS
 #define R_J2_ZERO_BIAS_RAD 2.67f
 #define R_J2_SERVO_SIGN (1)
-#define R_J2_URDF_MIN_DEG (-3.60f * DOF4_RAD_TO_DEG)
-#define R_J2_URDF_MAX_DEG (2.5f * DOF4_RAD_TO_DEG)
+#define R_J2_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)
+#define R_J2_URDF_MAX_DEG (2.65f * DOF4_RAD_TO_DEG)
 
 /* R_J3: 实物轴按安装对应 URDF -Y；舵机 position 顺时针增加；URDF 正角时 position 减少。 */
 #define R_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define R_J3_ZERO_BIAS_RAD -1.57f
 #define R_J3_SERVO_SIGN (-1)
-#define R_J3_URDF_MIN_DEG (-4.8f * DOF4_RAD_TO_DEG)
-#define R_J3_URDF_MAX_DEG (0.9f * DOF4_RAD_TO_DEG)
+#define R_J3_URDF_MIN_DEG (-4.95f * DOF4_RAD_TO_DEG)
+#define R_J3_URDF_MAX_DEG (1.05f * DOF4_RAD_TO_DEG)
 
 /* R_J4: 实物轴按安装对应 URDF +Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J4_ZERO_POS DOF4_SERVO_CENTER_POS
 #define R_J4_ZERO_BIAS_RAD 0.0f
 #define R_J4_SERVO_SIGN (1)
-#define R_J4_URDF_MIN_DEG (-2.20f * DOF4_RAD_TO_DEG)
-#define R_J4_URDF_MAX_DEG (2.20f * DOF4_RAD_TO_DEG)
+#define R_J4_URDF_MIN_DEG (-2.35f * DOF4_RAD_TO_DEG)
+#define R_J4_URDF_MAX_DEG (2.35f * DOF4_RAD_TO_DEG)
 
 /**
  * L 臂舵机方向标定说明 ════════════════════════════════════════
@@ -83,26 +83,26 @@ extern "C" {
 #define L_J1_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J1_ZERO_BIAS_RAD 1.57f
 #define L_J1_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
-#define L_J1_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)  /* -215°, 下限扩展 15° */
-#define L_J1_URDF_MAX_DEG (1.75f * DOF4_RAD_TO_DEG)  /* 放宽到约 +100° */
+#define L_J1_URDF_MIN_DEG (-3.90f * DOF4_RAD_TO_DEG)  /* 保守扩大，现场需确认无机械干涉 */
+#define L_J1_URDF_MAX_DEG (1.90f * DOF4_RAD_TO_DEG)
 
 #define L_J2_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J2_ZERO_BIAS_RAD 2.67f
 #define L_J2_SERVO_SIGN (1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
-#define L_J2_URDF_MIN_DEG (-3.60f * DOF4_RAD_TO_DEG)
-#define L_J2_URDF_MAX_DEG (2.5f * DOF4_RAD_TO_DEG)
+#define L_J2_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)
+#define L_J2_URDF_MAX_DEG (2.25f * DOF4_RAD_TO_DEG)
 
 #define L_J3_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J3_ZERO_BIAS_RAD -1.57f
 #define L_J3_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
-#define L_J3_URDF_MIN_DEG (-4.8f * DOF4_RAD_TO_DEG)
-#define L_J3_URDF_MAX_DEG (0.9f * DOF4_RAD_TO_DEG)
+#define L_J3_URDF_MIN_DEG (-4.95f * DOF4_RAD_TO_DEG)
+#define L_J3_URDF_MAX_DEG (1.05f * DOF4_RAD_TO_DEG)
 
 #define L_J4_ZERO_POS DOF4_SERVO_CENTER_POS
 #define L_J4_ZERO_BIAS_RAD -0.00f
 #define L_J4_SERVO_SIGN (-1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
-#define L_J4_URDF_MIN_DEG (-2.20f * DOF4_RAD_TO_DEG)
-#define L_J4_URDF_MAX_DEG (2.20f * DOF4_RAD_TO_DEG)
+#define L_J4_URDF_MIN_DEG (-2.35f * DOF4_RAD_TO_DEG)
+#define L_J4_URDF_MAX_DEG (2.35f * DOF4_RAD_TO_DEG)
 
 
 

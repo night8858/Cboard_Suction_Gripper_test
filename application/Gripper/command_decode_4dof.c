@@ -83,6 +83,7 @@
 
 /* ── 头文件包含 ── */
 #include "command_decode_4dof.h"
+#include "Dof4_Arm_Calibration.h"
 
 #ifdef CMD4_HOST_TEST
 #include <action_scheduler_4dof.h>
@@ -131,26 +132,6 @@ typedef union {
 extern PumpCtrl g_pump;  /**< 全局气泵控制实例，管理启停与目标转速 */
 extern Gimbal_s Gimbal;  /**< 全局云台实例，管理云台状态与目标角度 */
 
-/* 外部目标点补偿量，单位 m。实际执行目标 = 上位机目标 + 偏置。 */
-#ifndef CMD4_LEFT_TARGET_BIAS_X_M
-#define CMD4_LEFT_TARGET_BIAS_X_M 0.01f
-#endif
-#ifndef CMD4_LEFT_TARGET_BIAS_Y_M
-#define CMD4_LEFT_TARGET_BIAS_Y_M (-0.02f)
-#endif
-#ifndef CMD4_LEFT_TARGET_BIAS_Z_M
-#define CMD4_LEFT_TARGET_BIAS_Z_M 0.03f
-#endif
-#ifndef CMD4_RIGHT_TARGET_BIAS_X_M
-#define CMD4_RIGHT_TARGET_BIAS_X_M (-0.04f)
-#endif
-#ifndef CMD4_RIGHT_TARGET_BIAS_Y_M
-#define CMD4_RIGHT_TARGET_BIAS_Y_M 0.05f
-#endif
-#ifndef CMD4_RIGHT_TARGET_BIAS_Z_M
-#define CMD4_RIGHT_TARGET_BIAS_Z_M (-0.06f)
-#endif
-
 /* ════════════════════════════════════════════════════════════════
  * 模块内部状态
  * ════════════════════════════════════════════════════════════════ */
@@ -174,7 +155,7 @@ static bool s_manual_pose_pending[2] = {false, false};
 static Dof4_Pose s_manual_pose_target[2];
 static bool s_startup_request_pending = false;
 
-#define CMD4_ANSWER_REPEAT_COUNT       5U
+#define CMD4_ANSWER_REPEAT_COUNT       10U
 #define CMD4_ANSWER_REPEAT_INTERVAL_MS 600U
 
 typedef struct {
@@ -224,14 +205,11 @@ static void cmd4_apply_target_bias(uint8_t arm_id, Dof4_Pose *pose)
         return;
     }
 
-    if (arm_id == CMD4_ARM_LEFT) {
-        pose->x += CMD4_LEFT_TARGET_BIAS_X_M;
-        pose->y += CMD4_LEFT_TARGET_BIAS_Y_M;
-        pose->z += CMD4_LEFT_TARGET_BIAS_Z_M;
-    } else if (arm_id == CMD4_ARM_RIGHT) {
-        pose->x += CMD4_RIGHT_TARGET_BIAS_X_M;
-        pose->y += CMD4_RIGHT_TARGET_BIAS_Y_M;
-        pose->z += CMD4_RIGHT_TARGET_BIAS_Z_M;
+    if (arm_id <= CMD4_ARM_RIGHT) {
+        const Dof4ArmCalibration *cal = Dof4_calibration_get_arm();
+        pose->x += cal->target_bias[arm_id].x;
+        pose->y += cal->target_bias[arm_id].y;
+        pose->z += cal->target_bias[arm_id].z;
     }
 }
 

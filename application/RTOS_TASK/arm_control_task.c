@@ -11,6 +11,7 @@
 #include "stm32f4xx_hal.h"
 
 #include "Dof4_Arm.h"
+#include "Dof4_Arm_Calibration.h"
 #include "action_scheduler_4dof.h"
 #include "command_decode_4dof.h"
 #include "pc_action_executor_4dof.h"
@@ -68,13 +69,10 @@ void arm_control_task(void *argument)
     osDelay(500);
 
     Dof4_dual_arm_init(&g_dof4_arm_left, &g_dof4_arm_right);
-    
-    Dof4_arm_set_tcp_offset(&g_dof4_arm_left,  0.0f, 0.0f, -0.05f);
-    Dof4_arm_set_tcp_offset(&g_dof4_arm_right, 0.0f, 0.0f, -0.05f);
+    Dof4_calibration_apply_runtime_offsets(&g_dof4_arm_left, &g_dof4_arm_right);
 
     Dof4_double_arm_Desable();
     (void)Dof4_servo_comm_check(1U, &g_dof4_servo_comm_diagnostic);
-    Dof4_set_world_offset(0.0f, 0.0f, 0.0f);
     pc_action_4dof_init();
     osDelay(100);
 

@@ -26,6 +26,7 @@
 #include "pc_action_executor_4dof.h"
 
 #include "FreeRTOS.h"
+#include "Dof4_Arm_Calibration.h"
 #include "action_scheduler_4dof.h"
 #include "command_decode_4dof.h"
 #include "pneumatic_control.h"
@@ -46,24 +47,24 @@
 
 /* ======================== 运动到位公差 ======================== */
 /** 到位和超时参数沿用原 4DOF 调度器的量级，便于实机统一调试。 */
-#define PC_ACT4_MOVE_TIMEOUT_MS              2500U   /**< 单段路径运动超时 (ms) */
-#define PC_ACT4_POSE_POS_TOL_M                0.03f  /**< 位姿位置到位公差 (m) */
-#define PC_ACT4_POSE_PITCH_TOL_RAD            0.03f  /**< 位姿俯仰角到位公差 (rad) */
-#define PC_ACT4_JOINT_TOL_RAD                  0.01f /**< 关节角到位公差 (rad) */
-#define PC_ACT4_BACK_SERVO_SPEED              6000U  /**< PC 背部固定关节动作专用舵机速度 */
-#define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX         0U    /**< 动态路径到达悬停点后等待（简化后仅一个中间点） */
-#define PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M      0.06f /**< 动态取/放块目标上方悬停高度，需明显大于到位公差 */
+#define PC_ACT4_CFG                         (Dof4_calibration_get_pc_action())
+#define PC_ACT4_MOVE_TIMEOUT_MS             (PC_ACT4_CFG->move_timeout_ms)
+#define PC_ACT4_POSE_POS_TOL_M              (PC_ACT4_CFG->pose_pos_tol_m)
+#define PC_ACT4_POSE_PITCH_TOL_RAD          (PC_ACT4_CFG->pose_pitch_tol_rad)
+#define PC_ACT4_JOINT_TOL_RAD               (PC_ACT4_CFG->joint_tol_rad)
+#define PC_ACT4_BACK_SERVO_SPEED            (PC_ACT4_CFG->back_servo_speed)
+#define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX      (PC_ACT4_CFG->dynamic_hold_pre_index)
 
 /* ======================== PC 动作阀门时序，可按实机效果集中调节 ======================== */
-#define PC_ACT4_DELAY_DYNAMIC_PICK_HOLD_MS       1500U /**< 动态取块：目标点吸附稳定等待 */
-#define PC_ACT4_DELAY_DYNAMIC_PLACE_RELEASE_MS   1600U /**< 动态放块：关闭工作臂阀后的释放等待 */
-#define PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS    800U /**< 动态取/放块：到目标点后的稳定等待 */
-#define PC_ACT4_DELAY_BACK_PRE_RELEASE_MS        1600U /**< 放到背部：打开背部阀后的预吸附等待 */
-#define PC_ACT4_DELAY_BACK_POST_RELEASE_MS       1600U /**< 放到背部：关闭工作臂阀后的交接等待 */
-#define PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS       1600U /**< 从背部取回：工作臂吸附稳定等待 */
-#define PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS      800U /**< 从背部取回：关闭来源背部阀后的释放等待 */
-#define PC_ACT4_DELAY_IDLE_HOLD_MS                100U /**< 到达 IDLE 后的结束保持 */
-#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS      60U /**< 动态路径悬停点保持 */
+#define PC_ACT4_DELAY_DYNAMIC_PICK_HOLD_MS      (PC_ACT4_CFG->delay_dynamic_pick_hold_ms)
+#define PC_ACT4_DELAY_DYNAMIC_PLACE_RELEASE_MS  (PC_ACT4_CFG->delay_dynamic_place_release_ms)
+#define PC_ACT4_DELAY_DYNAMIC_TARGET_SETTLE_MS  (PC_ACT4_CFG->delay_dynamic_target_settle_ms)
+#define PC_ACT4_DELAY_BACK_PRE_RELEASE_MS       (PC_ACT4_CFG->delay_back_pre_release_ms)
+#define PC_ACT4_DELAY_BACK_POST_RELEASE_MS      (PC_ACT4_CFG->delay_back_post_release_ms)
+#define PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS      (PC_ACT4_CFG->delay_back_get_arm_hold_ms)
+#define PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS    (PC_ACT4_CFG->delay_back_source_release_ms)
+#define PC_ACT4_DELAY_IDLE_HOLD_MS              (PC_ACT4_CFG->delay_idle_hold_ms)
+#define PC_ACT4_DELAY_DYNAMIC_HOVER_HOLD_MS     (PC_ACT4_CFG->delay_dynamic_hover_hold_ms)
 
 /* ======================== 路径数组容量 ======================== */
 #define PC_ACT4_ARM_COUNT              2U     /**< 机械臂数量（左/右） */
@@ -130,12 +131,7 @@ typedef enum {
     PC_ACT4_JNT_COMPLETE,            /**< 归位(关节→POSE idle) */
 } PcAction4DOF_JointSubstate;
 
-/**
- * @brief 关节角路径点，包含 4 个关节的目标角度。
- */
-typedef struct {
-    float q[DOF4_JOINT_COUNT];  /**< 关节角数组 [J1, J2, J3, J4]，单位 rad */
-} PcAction4DOF_JointPoint;
+typedef Dof4PcActionJointPoint PcAction4DOF_JointPoint;
 
 /**
  * @brief 位姿模式路径，包含接近段和撤离段两个方向的路点序列。
@@ -150,32 +146,8 @@ typedef struct {
     uint8_t post_count;  /**< 撤离段有效路点数（<= PC_ACT4_MAX_POST_POSE_POINTS） */
 } PcAction4DOF_PosePath;
 
-/**
- * @brief 关节角模式路径，包含接近段和撤离段两个方向的关节角序列。
- *
- * 用于背部存放/取回等固定路径，路径点以关节角形式直接指定。
- */
-typedef struct {
-    PcAction4DOF_JointPoint pre[PC_ACT4_MAX_PRE_JOINT_POINTS];   /**< 接近段关节角序列 */
-    PcAction4DOF_JointPoint post[PC_ACT4_MAX_POST_JOINT_POINTS]; /**< 撤离段关节角序列 */
-    uint8_t pre_count;   /**< 接近段有效点数（<= PC_ACT4_MAX_PRE_JOINT_POINTS） */
-    uint8_t post_count;  /**< 撤离段有效点数（<= PC_ACT4_MAX_POST_JOINT_POINTS） */
-} PcAction4DOF_JointPath;
-
-/**
- * @brief 动态动作模板。
- *
- * entry/exit_offset 是当前已调模板中 approach/retreat 相对 target 的偏移。
- * PC 只提供最终 xyz；当前动态路径保留 target 正上方中间点，
- * 其中 entry_offset.pitch 作为中间点的绝对俯仰角使用。
- * 每个手臂（左/右）各有一个独立模板，以适应双侧不同的工作空间约束。
- */
-typedef struct {
-    Dof4_Pose entry_offset;  /**< 入口偏移量；pitch 为中间点绝对俯仰角 */
-    Dof4_Pose exit_offset;   /**< 出口偏移量；pitch 保留给后续撤离路径调参 */
-    float target_pitch;      /**< 操作目标点的俯仰角，单位 rad */
-    float vertical_clearance_m; /**< 中间点相对 target 的 z 向上偏移量，单位 m */
-} PcAction4DOF_DynamicTemplate;
+typedef Dof4PcActionJointPath PcAction4DOF_JointPath;
+typedef Dof4PcActionDynamicTemplate PcAction4DOF_DynamicTemplate;
 
 /**
  * @brief PC 动作状态机运行时上下文。
@@ -236,190 +208,6 @@ static void pc_action_4dof_report_error_event(void)
     g_pc_action_error_event_count++;
     taskEXIT_CRITICAL();
 }
-
-/* ======================== 单臂动态动作模板 ======================== */
-/**
- * @brief 单臂取块动作模板。
- *
- * 各数值由已调动作表换算为相对 PC 下发 target 的偏移量。
- * [0]=左臂, [1]=右臂，偏移方向因左右工作空间对称性而不同。
- */
-static const PcAction4DOF_DynamicTemplate s_pick_templates[PC_ACT4_ARM_COUNT] = {
-    /* 左臂 */
-    {
-        .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
-        .exit_offset  = {-0.10f, -0.07f, 0.38f, -0.30f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-    /* 右臂 */
-    {
-        .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
-        .exit_offset  = {0.10f, 0.07f, 0.40f, -0.30f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-};
-
-/* ======================== 双臂动态动作模板 ======================== */
-/**
- * @brief 双臂取块动作模板。
- *
- * 双臂同时取块时双臂间距较大，entry_offset 需额外考虑双臂干涉规避。
- */
-static const PcAction4DOF_DynamicTemplate s_dual_pick_templates[PC_ACT4_ARM_COUNT] = {
-    /* 左臂 */
-    {
-        .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
-        .exit_offset  = {0.10f, -0.07f, 0.365f, -0.30f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-    /* 右臂 */
-    {
-        .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
-        .exit_offset  = {0.10f, 0.07f, 0.385f, -0.30f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-};
-
-/* ======================== 单臂放置动作模板 ======================== */
-/**
- * @brief 单臂放块动作模板。
- *
- * 放置时需要更大的垂直空间以避开已堆叠物块，因此 entry_offset.z 偏大。
- */
-static const PcAction4DOF_DynamicTemplate s_place_templates[PC_ACT4_ARM_COUNT] = {
-    /* 左臂 */
-    {
-        .entry_offset = {-0.075f, -0.10f, 0.49f, -0.30f},
-        .exit_offset  = {-0.175f, -0.15f, 0.44f, -0.50f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-    /* 右臂 */
-    {
-        .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
-        .exit_offset  = {-0.175f, 0.15f, 0.43f, -0.50f},
-        .target_pitch = -1.48f,
-        .vertical_clearance_m = PC_ACT4_DYNAMIC_HOVER_CLEARANCE_M,
-    },
-};
-
-#define PC_JOINT_POINT(j1_, j2_, j3_, j4_) \
-    { .q = {(j1_), (j2_), (j3_), (j4_)} }
-
-/* ======================== 背部固定路径 - 关节角序列 ======================== */
-/**
- * @brief 单臂放块到背部路径（0x14）。
- *
- * 关节角保留实机已调的 waypoint_2、target、retreat、complete 四点。
- * 左臂 J1 向正方向旋转至左后方，右臂 J1 向负方向旋转至右后方。
- * pre[0]=waypoint_2, pre[1]=target
- * post[0]=retreat, post[1]=complete（关节归位点，之后切 POSE 回 IDLE）
- */
-static const PcAction4DOF_JointPath s_put_back_paths[PC_ACT4_ARM_COUNT] = {
-    /* 左臂：J1 向正方向旋转到左后方（匹配 ACTION_BLOCK_PLACE_LEFT_ARM_TO_LEFT_BACK） */
-    {
-        .pre = {
-            PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT( 2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
-            PC_JOINT_POINT( 1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-    /* 右臂：J1 向负方向旋转到右后方（匹配 ACTION_BLOCK_PLACE_RIGHT_ARM_TO_RIGHT_BACK） */
-    {
-        .pre = {
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.82f, -1.31f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT(-2.000f, 1.50f, -1.20f, -1.463f),   /* retreat */
-            PC_JOINT_POINT( -1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-};
-
-/**
- * @brief 双臂同时放块到背部路径（0x22）。
- *
- * 匹配 ACTION_BLOCK_PLACE_BACK，双臂模式下展开角度更大（J1=±3.10）。
- * pre[0]=waypoint_2, pre[1]=target
- * post[0]=retreat, post[1]=complete
- */
-static const PcAction4DOF_JointPath s_dual_put_back_paths[PC_ACT4_ARM_COUNT] = {
-    /* 左臂 */
-    {
-        .pre = {
-            PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT( 2.800f, 1.50f, -1.20f, -1.463f),   /* retreat */
-            PC_JOINT_POINT( 1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-    /* 右臂 */
-    {
-        .pre = {
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.81f, -1.31f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.20f, -1.463f),   /* retreat */
-            PC_JOINT_POINT( -1.0f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-};
-
-/**
- * @brief 单臂从背部取块路径（0x15）。
- *
- * 匹配 ACTION_BLOCK_GET_LEFT_BACK_TO_HAND_LEFT_ARM（左）和
- * ACTION_BLOCK_GET_RIGHT_BACK_TO_HAND_RIGHT_ARM（右）。
- * pre[0]=waypoint_2, pre[1]=target
- * post[0]=retreat, post[1]=complete
- */
-static const PcAction4DOF_JointPath s_get_back_paths[PC_ACT4_ARM_COUNT] = {
-    /* 左臂 */
-    {
-        .pre = {
-            PC_JOINT_POINT(2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( 2.830f, 1.60f, -1.76f, -1.26f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT(2.800f, 1.50f, -1.48f, -1.463f),   /* retreat */
-            PC_JOINT_POINT(1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-    /* 右臂 */
-    {
-        .pre = {
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.00f, -1.680f),   /* waypoint_2 */
-            PC_JOINT_POINT( -2.860f, 1.65f, -1.82f, -1.31f),   /* target */
-        },
-        .post = {
-            PC_JOINT_POINT(-2.800f, 1.50f, -1.48f, -1.463f),   /* retreat */
-            PC_JOINT_POINT(-1.042f, 1.50f, -1.70f, -1.463f),   /* complete */
-        },
-        .pre_count = 2U,
-        .post_count = 2U,
-    },
-};
 
 /* ======================== 辅助函数 ======================== */
 
@@ -1455,8 +1243,8 @@ static bool pc_action_4dof_build_candidate_from_pending(
         const Dof4_ArmId arm_id = use_left ? DOF4_ARM_LEFT : DOF4_ARM_RIGHT;
         const PcAction4DOF_DynamicTemplate *template_data =
             (request->command == PC_ACT4_COMMAND_PICK)
-                ? &s_pick_templates[arm_index]
-                : &s_place_templates[arm_index];
+                ? &PC_ACT4_CFG->pick[arm_index]
+                : &PC_ACT4_CFG->place[arm_index];
         PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
 
         *reject_arm_id = arm_id;
@@ -1484,12 +1272,12 @@ static bool pc_action_4dof_build_candidate_from_pending(
     case PC_ACT4_COMMAND_DUAL_PLACE: {
         const PcAction4DOF_DynamicTemplate *left_template =
             (request->command == PC_ACT4_COMMAND_DUAL_PICK)
-                ? &s_dual_pick_templates[0]
-                : &s_place_templates[0];
+                ? &PC_ACT4_CFG->dual_pick[0]
+                : &PC_ACT4_CFG->place[0];
         const PcAction4DOF_DynamicTemplate *right_template =
             (request->command == PC_ACT4_COMMAND_DUAL_PICK)
-                ? &s_dual_pick_templates[1]
-                : &s_place_templates[1];
+                ? &PC_ACT4_CFG->dual_pick[1]
+                : &PC_ACT4_CFG->place[1];
         PcAction4DOF_RejectReason reject_reason = PC_ACTION_4DOF_REJECT_NONE;
 
         *reject_arm_id = DOF4_ARM_LEFT;
@@ -1529,8 +1317,8 @@ static bool pc_action_4dof_build_candidate_from_pending(
             arm_index == 1U);
         candidate->path.joint[arm_index] =
             (request->command == PC_ACT4_COMMAND_PUT_BACK)
-                ? s_put_back_paths[arm_index]
-                : s_get_back_paths[arm_index];
+                ? PC_ACT4_CFG->put_back[arm_index]
+                : PC_ACT4_CFG->get_back[arm_index];
         if (!pc_action_4dof_normalize_joint_path(
                 arm_index, &candidate->path.joint[arm_index])) {
             pc_action_4dof_record_reject(
@@ -1546,11 +1334,11 @@ static bool pc_action_4dof_build_candidate_from_pending(
         pc_action_4dof_prepare_candidate(
             candidate, request->command, PC_ACT4_MODE_JOINT, true, true);
         if (request->command == PC_ACT4_COMMAND_DUAL_PUT_BACK) {
-            candidate->path.joint[0] = s_dual_put_back_paths[0];
-            candidate->path.joint[1] = s_dual_put_back_paths[1];
+            candidate->path.joint[0] = PC_ACT4_CFG->dual_put_back[0];
+            candidate->path.joint[1] = PC_ACT4_CFG->dual_put_back[1];
         } else {
-            candidate->path.joint[0] = s_get_back_paths[0];
-            candidate->path.joint[1] = s_get_back_paths[1];
+            candidate->path.joint[0] = PC_ACT4_CFG->get_back[0];
+            candidate->path.joint[1] = PC_ACT4_CFG->get_back[1];
         }
         if (!pc_action_4dof_normalize_joint_path(0U, &candidate->path.joint[0]) ||
             !pc_action_4dof_normalize_joint_path(1U, &candidate->path.joint[1])) {

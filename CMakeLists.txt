@@ -72,6 +72,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/Gripper/action_scheduler_4dof.c
     application/Gripper/pc_action_executor_4dof.c
     application/Gripper/Dof4_Arm.c
+    application/Gripper/Dof4_Arm_Calibration.c
     application/Gripper/Dof4_Collision.c
     application/Gripper/Trajectory_Planning.c
     application/variables/variables.c
