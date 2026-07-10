@@ -107,12 +107,12 @@ int main(void)
                      "right initial feedback angle");
     }
 
-    require_near(left.cfg.joint_min[1], L_J2_ZERO_BIAS_RAD - 3.10f, TEST_FLOAT_EPS, "L J2 min");
-    require_near(left.cfg.joint_max[1], L_J2_ZERO_BIAS_RAD + 2.10f, TEST_FLOAT_EPS, "L J2 max");
-    require_near(left.cfg.joint_min[3], L_J4_ZERO_BIAS_RAD - 2.20f, TEST_FLOAT_EPS, "L J4 min");
-    require_near(left.cfg.joint_max[3], L_J4_ZERO_BIAS_RAD + 2.20f, TEST_FLOAT_EPS, "L J4 max");
-    require_near(left.cfg.joint_max[2], 0.35f, TEST_FLOAT_EPS, "L J3 straight max");
-    require_near(right.cfg.joint_max[2], 0.35f, TEST_FLOAT_EPS, "R J3 straight max");
+    require_near(left.cfg.joint_min[1], L_J2_ZERO_BIAS_RAD - 3.25f, TEST_FLOAT_EPS, "L J2 min");
+    require_near(left.cfg.joint_max[1], L_J2_ZERO_BIAS_RAD + 2.25f, TEST_FLOAT_EPS, "L J2 max");
+    require_near(left.cfg.joint_min[3], L_J4_ZERO_BIAS_RAD - 2.35f, TEST_FLOAT_EPS, "L J4 min");
+    require_near(left.cfg.joint_max[3], L_J4_ZERO_BIAS_RAD + 2.35f, TEST_FLOAT_EPS, "L J4 max");
+    require_near(left.cfg.joint_max[2], 0.50f, TEST_FLOAT_EPS, "L J3 straight max");
+    require_near(right.cfg.joint_max[2], 0.50f, TEST_FLOAT_EPS, "R J3 straight max");
 
     int16_t left_j3_servo = 0;
     int16_t right_j3_servo = 0;
@@ -131,7 +131,7 @@ int main(void)
     const Dof4_Pose right_grab = {0.4f, -0.425f, -0.21f, -1.45f};
     const Dof4_Pose left_place = {0.425f, 0.40f, -0.19f, -1.45f};
     const Dof4_Pose right_place = {0.425f, -0.40f, -0.19f, -1.45f};
-    const Dof4_Pose left_low_pick = {0.2224f, 0.2854f, -0.5010f, -1.57f};
+    const Dof4_Pose left_low_pick = {0.2224f, 0.2854f, -0.4500f, -1.57f};
     const Dof4_Pose right_pc_edge_biased = {0.51f, -0.22f, -0.03f, -1.48f};
     verify_pose_round_trip(&left, &left_grab, "left front grab");
     verify_pose_round_trip(&right, &right_grab, "right front grab");

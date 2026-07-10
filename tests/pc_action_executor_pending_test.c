@@ -68,6 +68,7 @@ static void init_arm(Dof4_Arm *arm)
     memset(arm, 0, sizeof(*arm));
     arm->current_pose = (Dof4_Pose){0.0f, 0.0f, 0.0f, -1.50f};
     arm->cfg.servo_speed = 3000U;
+    arm->cfg.servo_acc = 25U;
     for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
         arm->cfg.joint_min[i] = -10.0f;
         arm->cfg.joint_max[i] = 10.0f;
@@ -79,6 +80,7 @@ static void reset_test_state(void)
     init_arm(&g_dof4_arm_left);
     init_arm(&g_dof4_arm_right);
     g_dof4_arm_started = true;
+    g_pc_action_error_event_count = 0U;
     s_tick_ms = 0U;
     s_relay_on_calls = 0U;
     s_relay_calls = 0U;
@@ -174,7 +176,7 @@ Dof4_Status Dof4_arm_set_joint_target(Dof4_Arm *arm,
     return DOF4_STATUS_OK;
 }
 
-Dof4_Status Dof4_arm_inverse_kinematics(const Dof4_Arm *arm,
+Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
                                         const Dof4_Pose *target,
                                         float elbow_sign,
                                         Dof4_JointState *joints)
@@ -223,6 +225,34 @@ Dof4_Status Dof4_clamp_to_workspace(const Dof4_Arm *arm, Dof4_Pose *pose)
         pose->z = 0.60f;
     } else if (pose->z < -0.60f) {
         pose->z = -0.60f;
+    }
+    return DOF4_STATUS_OK;
+}
+
+Dof4_Status Dof4_arm_set_base_offset(Dof4_Arm *arm, float dx, float dy, float dz)
+{
+    if (arm != NULL) {
+        arm->cfg.base_offset[0] = dx;
+        arm->cfg.base_offset[1] = dy;
+        arm->cfg.base_offset[2] = dz;
+    }
+    return DOF4_STATUS_OK;
+}
+
+Dof4_Status Dof4_arm_set_tcp_offset(Dof4_Arm *arm, float dx, float dy, float dz)
+{
+    if (arm != NULL) {
+        arm->cfg.tcp_offset[0] = dx;
+        arm->cfg.tcp_offset[1] = dy;
+        arm->cfg.tcp_offset[2] = dz;
+    }
+    return DOF4_STATUS_OK;
+}
+
+Dof4_Status Dof4_arm_set_pitch_offset(Dof4_Arm *arm, float pitch_offset)
+{
+    if (arm != NULL) {
+        arm->cfg.pitch_offset = pitch_offset;
     }
     return DOF4_STATUS_OK;
 }
@@ -321,10 +351,9 @@ static void finish_dynamic_after_operation(uint32_t hold_ms)
 
 static void advance_joint_to_operation_target(void)
 {
-    pc_action_4dof_loop();
-    pc_action_4dof_loop();
-    pc_action_4dof_loop();
-    pc_action_4dof_loop();
+    for (uint8_t i = 0U; i < 10U; ++i) {
+        pc_action_4dof_loop();
+    }
 }
 
 static void require_joint_near(const Dof4_JointState *actual,
@@ -506,23 +535,27 @@ int main(void)
     pc_action_4dof_loop();
     require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
                  "put-back applies dedicated left servo speed");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 30U,
+                 "put-back applies fast left servo acc");
     require_true(g_dof4_arm_right.cfg.servo_speed == 3000U,
                  "put-back leaves unused right servo speed unchanged");
+    require_true(g_dof4_arm_right.cfg.servo_acc == 25U,
+                 "put-back leaves unused right servo acc unchanged");
     require_true(s_set_joint_calls > 0U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT,
                  "put-back first joint target recorded");
     const float put_back_left_wp2[DOF4_JOINT_COUNT] = {
-        2.800f, 1.50f, -1.20f, -1.680f
+        2.500f, 1.50f, -1.20f, -1.680f
     };
     require_joint_near(&s_joint_calls[0].joints,
                        put_back_left_wp2,
-                       "put-back first point is waypoint_2");
-    require_true(fabsf(s_joint_calls[0].joints.q[0] - (-0.042f)) > 0.1f,
-                 "put-back skips original approach");
-    require_true(fabsf(s_joint_calls[0].joints.q[0] - 1.570f) > 0.1f,
-                 "put-back skips original waypoint_1");
+                       "put-back first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U,
+                 "put-back uses final low servo speed at target");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 10U,
+                 "put-back uses final low servo acc at target");
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U &&
                  s_relay_history[s_relay_calls - 1U].relay_id == 2U &&
@@ -542,8 +575,12 @@ int main(void)
     finish_joint_action_from_retreat();
     require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
                  "put-back restores left servo speed after finish");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 25U,
+                 "put-back restores left servo acc after finish");
     require_true(g_dof4_arm_right.cfg.servo_speed == 3000U,
                  "put-back keeps right servo speed restored");
+    require_true(g_dof4_arm_right.cfg.servo_acc == 25U,
+                 "put-back keeps right servo acc restored");
 
     reset_test_state();
     require_true(pc_action_4dof_start_put_back(DOF4_ARM_LEFT),
@@ -557,16 +594,22 @@ int main(void)
     pc_action_4dof_loop();
     s_tick_ms += 2500U;
     pc_action_4dof_loop();
-    require_true(relay_seen_after(timeout_put_before_back_suction, 2U, 1U),
-                 "put-back target timeout still opens target back valve");
-    const unsigned timeout_put_before_arm_release = s_relay_calls;
-    s_tick_ms += 2000U;
+    require_true(!relay_seen_after(timeout_put_before_back_suction, 2U, 1U),
+                 "put-back target timeout must not open target back valve");
+    require_true(!relay_seen_after(timeout_put_before_back_suction, 0U, 0U),
+                 "put-back target timeout must not close working arm valve");
+    require_true(!s_back_occupied[DOF4_ARM_LEFT],
+                 "put-back target timeout must not mark back occupied");
+    require_true(g_pc_action_error_event_count > 0U,
+                 "put-back target timeout reports error");
+    s_hold_pose_feedback = false;
     pc_action_4dof_loop();
+    s_tick_ms += 100U;
     pc_action_4dof_loop();
-    require_true(relay_seen_after(timeout_put_before_arm_release, 0U, 0U),
-                 "put-back target timeout still closes working arm valve");
-    require_true(s_back_occupied[DOF4_ARM_LEFT],
-                 "put-back target timeout still marks back occupied");
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
+                 "put-back timeout restores left servo speed");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 25U,
+                 "put-back timeout restores left servo acc");
 
     reset_test_state();
     require_true(pc_action_4dof_start_get_back(DOF4_ARM_LEFT),
@@ -574,21 +617,23 @@ int main(void)
     pc_action_4dof_loop();
     require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
                  "get-back applies dedicated left servo speed");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 30U,
+                 "get-back applies fast left servo acc");
     require_true(s_set_joint_calls > 0U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT,
                  "get-back first joint target recorded");
     const float get_back_left_wp2[DOF4_JOINT_COUNT] = {
-        2.800f, 1.50f, -1.00f, -1.680f
+        2.500f, 1.50f, -1.00f, -1.680f
     };
     require_joint_near(&s_joint_calls[0].joints,
                        get_back_left_wp2,
-                       "get-back first point is waypoint_2");
-    require_true(fabsf(s_joint_calls[0].joints.q[0] - 1.570f) > 0.1f,
-                 "get-back skips original approach");
-    require_true(fabsf(s_joint_calls[0].joints.q[0] - 2.000f) > 0.1f,
-                 "get-back skips original waypoint_1");
+                       "get-back first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U,
+                 "get-back uses final low servo speed at target");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 10U,
+                 "get-back uses final low servo acc at target");
     pc_action_4dof_loop();
     require_true(!relay_seen_after(0U, 0U, 0U),
                  "get-back keeps working arm valve open before source release");
@@ -609,21 +654,30 @@ int main(void)
     require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
                  g_dof4_arm_right.cfg.servo_speed == 6000U,
                  "dual put-back applies dedicated speed to both arms");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 30U &&
+                 g_dof4_arm_right.cfg.servo_acc == 30U,
+                 "dual put-back applies fast acc to both arms");
     require_true(s_set_joint_calls >= 2U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
                  s_joint_calls[1].arm_id == DOF4_ARM_RIGHT,
                  "dual put-back first joint targets recorded");
     const float put_back_right_wp2[DOF4_JOINT_COUNT] = {
-        -2.800f, 1.50f, -1.20f, -1.680f
+        -2.500f, 1.50f, -1.20f, -1.680f
     };
     require_joint_near(&s_joint_calls[0].joints,
                        put_back_left_wp2,
-                       "dual put-back left first point is waypoint_2");
+                       "dual put-back left first point is first pre point");
     require_joint_near(&s_joint_calls[1].joints,
                        put_back_right_wp2,
-                       "dual put-back right first point is waypoint_2");
+                       "dual put-back right first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U &&
+                 g_dof4_arm_right.cfg.servo_speed == 2200U,
+                 "dual put-back uses final low speed on both arms");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 10U &&
+                 g_dof4_arm_right.cfg.servo_acc == 10U,
+                 "dual put-back uses final low acc on both arms");
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U && s_valve_shadow[3] == 1U &&
                  relay_seen_after(0U, 2U, 1U) &&
@@ -649,21 +703,30 @@ int main(void)
     require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
                  g_dof4_arm_right.cfg.servo_speed == 6000U,
                  "dual get-back applies dedicated speed to both arms");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 30U &&
+                 g_dof4_arm_right.cfg.servo_acc == 30U,
+                 "dual get-back applies fast acc to both arms");
     require_true(s_set_joint_calls >= 2U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
                  s_joint_calls[1].arm_id == DOF4_ARM_RIGHT,
                  "dual get-back first joint targets recorded");
     const float get_back_right_wp2[DOF4_JOINT_COUNT] = {
-        -2.800f, 1.50f, -1.00f, -1.680f
+        -2.500f, 1.50f, -1.00f, -1.680f
     };
     require_joint_near(&s_joint_calls[0].joints,
                        get_back_left_wp2,
-                       "dual get-back left first point is waypoint_2");
+                       "dual get-back left first point is first pre point");
     require_joint_near(&s_joint_calls[1].joints,
                        get_back_right_wp2,
-                       "dual get-back right first point is waypoint_2");
+                       "dual get-back right first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U &&
+                 g_dof4_arm_right.cfg.servo_speed == 2200U,
+                 "dual get-back uses final low speed on both arms");
+    require_true(g_dof4_arm_left.cfg.servo_acc == 10U &&
+                 g_dof4_arm_right.cfg.servo_acc == 10U,
+                 "dual get-back uses final low acc on both arms");
     pc_action_4dof_loop();
     s_tick_ms += 1600U;
     pc_action_4dof_loop();

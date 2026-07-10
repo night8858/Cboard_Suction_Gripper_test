@@ -85,6 +85,12 @@ typedef struct {
     float pose_pitch_tol_rad;
     float joint_tol_rad;
     uint16_t back_servo_speed;
+    uint16_t back_fast_servo_speed;
+    uint16_t back_final_servo_speed;
+    uint8_t back_fast_servo_acc;
+    uint8_t back_final_servo_acc;
+    float back_final_joint_tol_rad;
+    uint8_t back_final_stable_frames;
     uint8_t dynamic_hold_pre_index;
     uint32_t delay_dynamic_pick_hold_ms;
     uint32_t delay_dynamic_place_release_ms;

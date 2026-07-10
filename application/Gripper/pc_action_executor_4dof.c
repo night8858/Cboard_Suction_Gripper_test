@@ -53,6 +53,12 @@
 #define PC_ACT4_POSE_PITCH_TOL_RAD          (PC_ACT4_CFG->pose_pitch_tol_rad)
 #define PC_ACT4_JOINT_TOL_RAD               (PC_ACT4_CFG->joint_tol_rad)
 #define PC_ACT4_BACK_SERVO_SPEED            (PC_ACT4_CFG->back_servo_speed)
+#define PC_ACT4_BACK_FAST_SERVO_SPEED       (PC_ACT4_CFG->back_fast_servo_speed)
+#define PC_ACT4_BACK_FINAL_SERVO_SPEED      (PC_ACT4_CFG->back_final_servo_speed)
+#define PC_ACT4_BACK_FAST_SERVO_ACC         (PC_ACT4_CFG->back_fast_servo_acc)
+#define PC_ACT4_BACK_FINAL_SERVO_ACC        (PC_ACT4_CFG->back_final_servo_acc)
+#define PC_ACT4_BACK_FINAL_JOINT_TOL_RAD    (PC_ACT4_CFG->back_final_joint_tol_rad)
+#define PC_ACT4_BACK_FINAL_STABLE_FRAMES    (PC_ACT4_CFG->back_final_stable_frames)
 #define PC_ACT4_DYNAMIC_HOLD_PRE_INDEX      (PC_ACT4_CFG->dynamic_hold_pre_index)
 
 /* ======================== PC 动作阀门时序，可按实机效果集中调节 ======================== */
@@ -169,6 +175,7 @@ typedef struct {
     bool operation_phase_started;       /**< 位姿模式操作保持阶段是否已开始 */
     bool joint_phase_started;           /**< 关节模式当前阀门保持阶段是否已开始 */
     bool error_reported;                /**< 本次动作失败事件是否已上报给 LED。 */
+    uint8_t joint_final_stable_frames;  /**< 背部最终交接点连续稳定帧计数。 */
     PcAction4DOF_JointSubstate jnt_substate; /**< 关节模式子状态 */
     union {
         PcAction4DOF_PosePath pose[PC_ACT4_ARM_COUNT];   /**< 位姿路径（双臂各一份） */
@@ -200,6 +207,7 @@ static PcAction4DOF_Context s_pc_ctx;            /**< PC 状态机运行时上�
 static volatile bool s_pc_completion_pending;    /**< 是否有待发送的 0xCC 结束事件 */
 static PcAction4DOF_PendingRequest s_pc_pending; /**< 待启动 PC 动作请求 */
 static uint16_t s_pc_saved_servo_speed[PC_ACT4_ARM_COUNT]; /**< 背部动作速度覆盖前的原速度 */
+static uint8_t s_pc_saved_servo_acc[PC_ACT4_ARM_COUNT]; /**< 背部动作加速度覆盖前的原加速度 */
 static bool s_pc_servo_speed_overridden[PC_ACT4_ARM_COUNT]; /**< 对应手臂速度是否被覆盖 */
 
 static void pc_action_4dof_report_error_event(void)
@@ -400,8 +408,9 @@ static bool pc_action_4dof_pose_reached(const Dof4_Arm *arm,
  * @param target 目标关节角点
  * @return true 表示所有关节均到位
  */
-static bool pc_action_4dof_joint_reached(const Dof4_Arm *arm,
-                                         const PcAction4DOF_JointPoint *target)
+static bool pc_action_4dof_joint_reached_with_tol(const Dof4_Arm *arm,
+                                                  const PcAction4DOF_JointPoint *target,
+                                                  float tolerance_rad)
 {
     if (arm == NULL || target == NULL) {
         return false;
@@ -410,11 +419,19 @@ static bool pc_action_4dof_joint_reached(const Dof4_Arm *arm,
     for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
         const float error =
             fabsf(Dof4_normalize_angle(arm->joint_actual.q[i] - target->q[i]));
-        if (error > PC_ACT4_JOINT_TOL_RAD) {
+        if (error > tolerance_rad) {
             return false;
         }
     }
     return true;
+}
+
+static bool pc_action_4dof_joint_reached(const Dof4_Arm *arm,
+                                         const PcAction4DOF_JointPoint *target)
+{
+    return pc_action_4dof_joint_reached_with_tol(arm,
+                                                target,
+                                                PC_ACT4_JOINT_TOL_RAD);
 }
 
 /**
@@ -478,14 +495,17 @@ static void pc_action_4dof_restore_servo_speed(void)
             continue;
         }
 
-        pc_action_4dof_arm(arm_index)->cfg.servo_speed =
-            s_pc_saved_servo_speed[arm_index];
+        Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
+        arm->cfg.servo_speed = s_pc_saved_servo_speed[arm_index];
+        arm->cfg.servo_acc = s_pc_saved_servo_acc[arm_index];
         s_pc_saved_servo_speed[arm_index] = 0U;
+        s_pc_saved_servo_acc[arm_index] = 0U;
         s_pc_servo_speed_overridden[arm_index] = false;
     }
 }
 
-static void pc_action_4dof_apply_back_servo_speed(void)
+static void pc_action_4dof_apply_back_servo_motion(uint16_t servo_speed,
+                                                   uint8_t servo_acc)
 {
     if (!pc_action_4dof_is_back_command(s_pc_ctx.command)) {
         return;
@@ -499,10 +519,26 @@ static void pc_action_4dof_apply_back_servo_speed(void)
         Dof4_Arm *arm = pc_action_4dof_arm(arm_index);
         if (!s_pc_servo_speed_overridden[arm_index]) {
             s_pc_saved_servo_speed[arm_index] = arm->cfg.servo_speed;
+            s_pc_saved_servo_acc[arm_index] = arm->cfg.servo_acc;
             s_pc_servo_speed_overridden[arm_index] = true;
         }
-        arm->cfg.servo_speed = PC_ACT4_BACK_SERVO_SPEED;
+        arm->cfg.servo_speed = servo_speed;
+        arm->cfg.servo_acc = servo_acc;
     }
+}
+
+static void pc_action_4dof_apply_back_fast_motion(void)
+{
+    const uint16_t speed = (PC_ACT4_BACK_FAST_SERVO_SPEED != 0U)
+                           ? PC_ACT4_BACK_FAST_SERVO_SPEED
+                           : PC_ACT4_BACK_SERVO_SPEED;
+    pc_action_4dof_apply_back_servo_motion(speed, PC_ACT4_BACK_FAST_SERVO_ACC);
+}
+
+static void pc_action_4dof_apply_back_final_motion(void)
+{
+    pc_action_4dof_apply_back_servo_motion(PC_ACT4_BACK_FINAL_SERVO_SPEED,
+                                           PC_ACT4_BACK_FINAL_SERVO_ACC);
 }
 
 /**
@@ -741,6 +777,7 @@ static void pc_action_4dof_begin_abort_return(void)
         s_pc_ctx.error_reported = true;
         pc_action_4dof_report_error_event();
     }
+    s_pc_ctx.mode = PC_ACT4_MODE_POSE;
     pc_action_4dof_set_state(PC_ACT4_STATE_ABORT_RETURN_IDLE,
                              PC_ACT4_MOVE_TIMEOUT_MS);
 }
@@ -781,13 +818,38 @@ static bool pc_action_4dof_jnt_pre_blend(uint8_t idx)
     }
     return true;
 }
-static bool pc_action_4dof_jnt_pre_reach(uint8_t idx)
+static bool pc_action_4dof_jnt_pre_final_reach(uint8_t idx)
 {
+    const float tol = (PC_ACT4_BACK_FINAL_JOINT_TOL_RAD > 0.0f)
+                      ? PC_ACT4_BACK_FINAL_JOINT_TOL_RAD
+                      : PC_ACT4_JOINT_TOL_RAD;
+
     for (uint8_t ai = 0U; ai < PC_ACT4_ARM_COUNT; ++ai) {
         if (!pc_action_4dof_arm_used(&s_pc_ctx, ai)) continue;
-        if (!pc_action_4dof_joint_reached(pc_action_4dof_arm(ai), &s_pc_ctx.path.joint[ai].pre[idx])) return false;
+        if (!pc_action_4dof_joint_reached_with_tol(pc_action_4dof_arm(ai),
+                                                   &s_pc_ctx.path.joint[ai].pre[idx],
+                                                   tol)) return false;
     }
     return true;
+}
+static void pc_action_4dof_jnt_reset_final_stability(void)
+{
+    s_pc_ctx.joint_final_stable_frames = 0U;
+}
+static bool pc_action_4dof_jnt_final_stable(uint8_t idx)
+{
+    const uint8_t required = (PC_ACT4_BACK_FINAL_STABLE_FRAMES > 0U)
+                             ? PC_ACT4_BACK_FINAL_STABLE_FRAMES
+                             : 1U;
+
+    if (pc_action_4dof_jnt_pre_final_reach(idx)) {
+        if (s_pc_ctx.joint_final_stable_frames < 255U) {
+            s_pc_ctx.joint_final_stable_frames++;
+        }
+    } else {
+        s_pc_ctx.joint_final_stable_frames = 0U;
+    }
+    return s_pc_ctx.joint_final_stable_frames >= required;
 }
 static bool pc_action_4dof_jnt_post_blend(uint8_t idx)
 {
@@ -817,6 +879,7 @@ static void pc_action_4dof_handle_joint(void)
     switch (s_pc_ctx.jnt_substate) {
     case PC_ACT4_JNT_APPROACH:
     case PC_ACT4_JNT_PLACE_APPROACH:
+        pc_action_4dof_apply_back_fast_motion();
         pc_action_4dof_jnt_drive_pre(0U);
         if (pc_action_4dof_jnt_pre_blend(0U) || pc_action_4dof_timed_out()) {
             s_pc_ctx.path_index = 0U;
@@ -828,6 +891,7 @@ static void pc_action_4dof_handle_joint(void)
     case PC_ACT4_JNT_INTERMEDIATE: {
         uint8_t wp_i = s_pc_ctx.path_index;
         uint8_t pre_i = wp_i + 1U;
+        pc_action_4dof_apply_back_fast_motion();
         pc_action_4dof_jnt_drive_pre(pre_i);
         if (pc_action_4dof_jnt_pre_blend(pre_i) || pc_action_4dof_timed_out()) {
             s_pc_ctx.path_index = wp_i + 1U;
@@ -837,6 +901,8 @@ static void pc_action_4dof_handle_joint(void)
             } else {
                 bool is_place = pc_action_4dof_is_back_put_command(s_pc_ctx.command);
                 s_pc_ctx.jnt_substate = is_place ? PC_ACT4_JNT_PLACE : PC_ACT4_JNT_GRAB;
+                pc_action_4dof_jnt_reset_final_stability();
+                pc_action_4dof_apply_back_final_motion();
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
             }
         }
@@ -844,18 +910,23 @@ static void pc_action_4dof_handle_joint(void)
     }
 
     case PC_ACT4_JNT_GRAB:
+        pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
-        if (pc_action_4dof_jnt_pre_reach(last_pre) || pc_action_4dof_timed_out()) {
+        if (pc_action_4dof_jnt_final_stable(last_pre)) {
             s_pc_ctx.joint_phase_started = false;
             s_pc_ctx.jnt_substate = PC_ACT4_JNT_SUCTION_GRAB;
             pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS);
+        } else if (pc_action_4dof_timed_out()) {
+            pc_action_4dof_begin_abort_return();
         }
         break;
 
     case PC_ACT4_JNT_SUCTION_GRAB:
+        pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
         if (pc_action_4dof_timed_out()) {
             if (!pc_action_4dof_is_back_get_command(s_pc_ctx.command)) {
+                pc_action_4dof_apply_back_fast_motion();
                 s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
             } else if (!s_pc_ctx.joint_phase_started) {
@@ -866,6 +937,7 @@ static void pc_action_4dof_handle_joint(void)
                 s_pc_ctx.release_committed = true;
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_SOURCE_RELEASE_MS);
             } else {
+                pc_action_4dof_apply_back_fast_motion();
                 s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
             }
@@ -873,14 +945,16 @@ static void pc_action_4dof_handle_joint(void)
         break;
 
     case PC_ACT4_JNT_PLACE:
+        pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
         if (!s_pc_ctx.joint_phase_started) {
-            if (pc_action_4dof_jnt_pre_reach(last_pre) ||
-                pc_action_4dof_timed_out()) {
-                /* 背部放置：到达或目标点运动超时后，仍按时序打开目标背部阀。 */
+            if (pc_action_4dof_jnt_final_stable(last_pre)) {
+                /* 背部放置：目标点连续稳定后才打开目标背部阀。 */
                 s_pc_ctx.joint_phase_started = true;
                 pc_action_4dof_open_target_back_valves();
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_PRE_RELEASE_MS);
+            } else if (pc_action_4dof_timed_out()) {
+                pc_action_4dof_begin_abort_return();
             }
         } else if (pc_action_4dof_timed_out()) {
             s_pc_ctx.joint_phase_started = false;
@@ -890,6 +964,7 @@ static void pc_action_4dof_handle_joint(void)
         break;
 
     case PC_ACT4_JNT_SUCTION_PLACE:
+        pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
         if (!s_pc_ctx.joint_phase_started) {
             /* 背部放置：背部已吸附稳定，关闭工作臂阀完成交接。 */
@@ -899,12 +974,14 @@ static void pc_action_4dof_handle_joint(void)
             s_pc_ctx.release_committed = true;
             pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_POST_RELEASE_MS);
         } else if (pc_action_4dof_timed_out()) {
+            pc_action_4dof_apply_back_fast_motion();
             s_pc_ctx.jnt_substate = PC_ACT4_JNT_RETREAT;
             pc_action_4dof_jnt_set_tmo(PC_ACT4_MOVE_TIMEOUT_MS);
         }
         break;
 
     case PC_ACT4_JNT_RETREAT:
+        pc_action_4dof_apply_back_fast_motion();
         pc_action_4dof_jnt_drive_post(0U);
         if (pc_action_4dof_jnt_post_blend(0U) || pc_action_4dof_timed_out()) {
             s_pc_ctx.jnt_substate = PC_ACT4_JNT_COMPLETE;
@@ -914,6 +991,7 @@ static void pc_action_4dof_handle_joint(void)
 
     case PC_ACT4_JNT_COMPLETE:
         if (s_pc_ctx.timeout_ms == PC_ACT4_MOVE_TIMEOUT_MS) {
+            pc_action_4dof_apply_back_fast_motion();
             pc_action_4dof_jnt_drive_post(1U);
             if (pc_action_4dof_jnt_post_reach(1U) || pc_action_4dof_timed_out()) {
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_IDLE_HOLD_MS);
@@ -1093,7 +1171,7 @@ static bool pc_action_4dof_claim(const PcAction4DOF_Context *candidate,
 
     if (accepted) {
         /* 所有取放动作启动时先打开工作臂电磁阀，确保接近过程中保持默认阀态。 */
-        pc_action_4dof_apply_back_servo_speed();
+        pc_action_4dof_apply_back_fast_motion();
         pc_action_4dof_open_working_arm_valves();
     } else {
         pc_action_4dof_record_reject(reject_arm_id, reject_reason, target_world);
@@ -1394,6 +1472,7 @@ void pc_action_4dof_init(void)
     memset(&s_pc_ctx, 0, sizeof(s_pc_ctx));
     memset(&s_pc_pending, 0, sizeof(s_pc_pending));
     memset(s_pc_saved_servo_speed, 0, sizeof(s_pc_saved_servo_speed));
+    memset(s_pc_saved_servo_acc, 0, sizeof(s_pc_saved_servo_acc));
     memset(s_pc_servo_speed_overridden, 0, sizeof(s_pc_servo_speed_overridden));
     s_pc_ctx.command = PC_ACT4_COMMAND_NONE;
     s_pc_ctx.state = PC_ACT4_STATE_IDLE;
@@ -1408,6 +1487,7 @@ void pc_action_4dof_abort(void)
     memset(&s_pc_ctx, 0, sizeof(s_pc_ctx));
     memset(&s_pc_pending, 0, sizeof(s_pc_pending));
     memset(s_pc_saved_servo_speed, 0, sizeof(s_pc_saved_servo_speed));
+    memset(s_pc_saved_servo_acc, 0, sizeof(s_pc_saved_servo_acc));
     memset(s_pc_servo_speed_overridden, 0, sizeof(s_pc_servo_speed_overridden));
     s_pc_ctx.command = PC_ACT4_COMMAND_NONE;
     s_pc_ctx.state = PC_ACT4_STATE_IDLE;

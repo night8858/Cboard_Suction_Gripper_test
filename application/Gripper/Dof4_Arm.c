@@ -219,6 +219,8 @@ static void dof4_host_enable_torque(int servo_id, bool enable)
 #define DOF4_COS_EPS 1.0e-5f
 /** @brief Startup pose control-loop period, in ms. */
 #define DOF4_STARTUP_CONTROL_PERIOD_MS 5U
+/** @brief 主控制循环周期，单位 ms。需与 arm_control_task 的 osDelay 保持一致。 */
+#define DOF4_CONTROL_LOOP_PERIOD_MS 5U
 
 /** @brief 碰撞规避：沿最近距离方向推开右臂的距离，单位 m。 */
 #define DOF4_AVOID_PUSH_M      0.25f
@@ -363,6 +365,64 @@ static int32_t round_servo_steps(float steps_f)
 {
     return (int32_t)((steps_f >= 0.0f) ? (steps_f + 0.5f) : (steps_f - 0.5f));
 }
+
+#ifndef DOF4_HOST_TEST
+static uint16_t select_servo_track_speed(uint16_t configured_speed,
+                                         int16_t current_pos,
+                                         int16_t target_pos)
+{
+    if (configured_speed == 0U) {
+        return 0U;
+    }
+
+    const int32_t delta_signed = (int32_t)target_pos - (int32_t)current_pos;
+    const uint32_t delta = (delta_signed >= 0) ? (uint32_t)delta_signed
+                                               : (uint32_t)(-delta_signed);
+    uint32_t speed = (delta * 1000U * 3U) / (DOF4_CONTROL_LOOP_PERIOD_MS * 2U);
+    uint32_t min_speed = (uint32_t)configured_speed / 3U;
+
+    if (min_speed < 600U) {
+        min_speed = 600U;
+    }
+    if (min_speed > configured_speed) {
+        min_speed = configured_speed;
+    }
+    if (speed < min_speed) {
+        speed = min_speed;
+    }
+    if (speed > configured_speed) {
+        speed = configured_speed;
+    }
+    return (uint16_t)speed;
+}
+
+static uint8_t select_servo_track_acc(uint8_t configured_acc,
+                                      int16_t current_pos,
+                                      int16_t target_pos)
+{
+    if (configured_acc == 0U) {
+        return 0U;
+    }
+
+    const int32_t delta_signed = (int32_t)target_pos - (int32_t)current_pos;
+    const uint32_t delta = (delta_signed >= 0) ? (uint32_t)delta_signed
+                                               : (uint32_t)(-delta_signed);
+    uint32_t acc = configured_acc;
+
+    if (delta <= 2U) {
+        acc = (uint32_t)configured_acc / 4U;
+    } else if (delta <= 8U) {
+        acc = (uint32_t)configured_acc / 2U;
+    }
+    if (acc < 4U) {
+        acc = 4U;
+    }
+    if (acc > configured_acc) {
+        acc = configured_acc;
+    }
+    return (uint8_t)acc;
+}
+#endif
 
 static int32_t joint_angle_to_servo_steps_raw(const Dof4_Arm *arm,
                                               uint8_t joint_index,
@@ -634,6 +694,7 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
         return DOF4_STATUS_NULL_PARAM;
     }
     if (!arm->target_valid) {
+        (void)Dof4_cartesian_planner_init(planner);
         *sample = arm->current_pose;
         return DOF4_STATUS_OK;
     }
@@ -649,8 +710,6 @@ static Dof4_Status sample_arm_target(Dof4_Arm *arm,
             } else if (planner->has_last_sample) {
                 plan_start = planner->last_sample_pose;
             }
-        } else if (planner->has_last_sample) {
-            plan_start = planner->last_sample_pose;
         }
 
         const float duration = Dof4_cartesian_compute_duration(&plan_start,
@@ -1532,16 +1591,24 @@ Dof4_Status Dof4_batch_write_all_servo(const Dof4_Arm *arm_left,
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         id[i]  = arm_left->cfg.servo_id[i];
         pos[i] = arm_left->target_servo_pos[i];
-        spd[i] = arm_left->cfg.servo_speed;
-        acc[i] = arm_left->cfg.servo_acc;
+        spd[i] = select_servo_track_speed(arm_left->cfg.servo_speed,
+                                          arm_left->servo_pos[i],
+                                          arm_left->target_servo_pos[i]);
+        acc[i] = select_servo_track_acc(arm_left->cfg.servo_acc,
+                                        arm_left->servo_pos[i],
+                                        arm_left->target_servo_pos[i]);
     }
 
     /* 右臂 4 路 */
     for (uint8_t i = 0; i < DOF4_JOINT_COUNT; ++i) {
         id[DOF4_JOINT_COUNT + i]  = arm_right->cfg.servo_id[i];
         pos[DOF4_JOINT_COUNT + i] = arm_right->target_servo_pos[i];
-        spd[DOF4_JOINT_COUNT + i] = arm_right->cfg.servo_speed;
-        acc[DOF4_JOINT_COUNT + i] = arm_right->cfg.servo_acc;
+        spd[DOF4_JOINT_COUNT + i] = select_servo_track_speed(arm_right->cfg.servo_speed,
+                                                             arm_right->servo_pos[i],
+                                                             arm_right->target_servo_pos[i]);
+        acc[DOF4_JOINT_COUNT + i] = select_servo_track_acc(arm_right->cfg.servo_acc,
+                                                           arm_right->servo_pos[i],
+                                                           arm_right->target_servo_pos[i]);
     }
 
     SyncWritePosEx(id, DOF4_BATCH_SERVO_COUNT, pos, spd, acc);

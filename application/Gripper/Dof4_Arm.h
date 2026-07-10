@@ -116,7 +116,7 @@ extern "C" {
 #define DOF4_TRAJ_MIN_DURATION_S 0.15f
 
 /** @brief 默认轨迹最长时间，单位 s。 */
-#define DOF4_TRAJ_MAX_DURATION_S 0.8f
+#define DOF4_TRAJ_MAX_DURATION_S 1.2f
 
 /** @brief 默认笛卡尔最大速度，单位 m/s。 */
 #define DOF4_DEFAULT_CART_VEL_MPS 2.0f

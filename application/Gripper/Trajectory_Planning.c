@@ -8,6 +8,13 @@
 #include <math.h>
 #include <string.h>
 
+/* Zero-velocity quintic profiles have peak velocity 15/8 times average
+ * velocity and peak acceleration 10/sqrt(3) times distance/T^2. */
+#define TRAJ_QUINTIC_PEAK_VEL_RATIO 1.875f
+#define TRAJ_QUINTIC_PEAK_ACC_RATIO 5.7735027f
+#define TRAJ_DEFAULT_CART_ACC_MPS2 16.0f
+#define TRAJ_DEFAULT_PITCH_ACC_RPS2 10.0f
+
 /**
  * @brief 将浮点数限制到指定范围。
  * @param value 输入值。
@@ -333,8 +340,23 @@ float Dof4_cartesian_compute_duration(const Dof4_Pose *start,
     const float dpitch = fabsf(target->pitch - start->pitch);
     const float safe_cart_vel = (cart_vel_mps > 1.0e-6f) ? cart_vel_mps : DOF4_DEFAULT_CART_VEL_MPS;
     const float safe_pitch_vel = (pitch_vel_rps > 1.0e-6f) ? pitch_vel_rps : DOF4_DEFAULT_PITCH_VEL_RPS;
-    float duration = dist / safe_cart_vel;
-    const float pitch_duration = dpitch / safe_pitch_vel;
+    float duration = (dist * TRAJ_QUINTIC_PEAK_VEL_RATIO) / safe_cart_vel;
+    const float pitch_duration = (dpitch * TRAJ_QUINTIC_PEAK_VEL_RATIO) / safe_pitch_vel;
+
+    if (dist > 1.0e-6f) {
+        const float accel_duration = sqrtf((TRAJ_QUINTIC_PEAK_ACC_RATIO * dist) /
+                                           TRAJ_DEFAULT_CART_ACC_MPS2);
+        if (accel_duration > duration) {
+            duration = accel_duration;
+        }
+    }
+    if (dpitch > 1.0e-6f) {
+        const float pitch_accel_duration = sqrtf((TRAJ_QUINTIC_PEAK_ACC_RATIO * dpitch) /
+                                                 TRAJ_DEFAULT_PITCH_ACC_RPS2);
+        if (pitch_accel_duration > duration) {
+            duration = pitch_accel_duration;
+        }
+    }
 
     if (pitch_duration > duration) {
         duration = pitch_duration;

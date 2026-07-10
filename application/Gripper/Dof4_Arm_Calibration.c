@@ -22,6 +22,9 @@
 #define CALIB_SERVO_ALL_MAX \
     { DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS }
 
+/* PC 动态取放目标正上方悬停高度。现场调参只需修改此值，单位 m。 */
+#define CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M 0.20f
+
 /* ========================================================================
  *  机械臂本体标定参数（左臂 & 右臂）
  *  包含：舵机ID、几何尺寸、关节限位、舵机映射、工作空间等
@@ -111,13 +114,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
             .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
             .exit_offset = {-0.10f, -0.07f, 0.38f, -0.30f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,            /* 垂直安全距离 */
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
             .exit_offset = {0.10f, 0.07f, 0.40f, -0.30f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
     /* ── 双臂协同抓取 (dual_pick) ── */
@@ -126,13 +129,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
             .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
             .exit_offset = {0.10f, -0.07f, 0.365f, -0.30f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
             .exit_offset = {0.10f, 0.07f, 0.385f, -0.30f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
     /* ── 单臂放置 (place) ── */
@@ -141,13 +144,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
             .entry_offset = {-0.075f, -0.10f, 0.49f, -0.30f},
             .exit_offset = {-0.175f, -0.15f, 0.44f, -0.50f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
             .exit_offset = {-0.175f, 0.15f, 0.43f, -0.50f},
             .target_pitch = -1.48f,
-            .vertical_clearance_m = 0.06f,
+            .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
     /* ── 单臂放回 (put_back)：pre=放回前路径点, post=放回后路径点 ── */
@@ -236,7 +239,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
     .pose_pos_tol_m = 0.03f,                          /* 位姿位置容差 */
     .pose_pitch_tol_rad = 0.03f,                      /* 位姿俯仰容差 */
     .joint_tol_rad = 0.01f,                           /* 关节角度容差 */
-    .back_servo_speed = 6000U,                        /* 归位动作舵机速度 */
+    .back_servo_speed = 6000U,                        /* 兼容旧字段：背部动作高速段舵机速度 */
+    .back_fast_servo_speed = 6000U,                   /* 背部动作非交接段高速速度 */
+    .back_final_servo_speed = 2200U,                  /* 背部交接点低速精定位速度 */
+    .back_fast_servo_acc = 30U,                       /* 背部动作非交接段加速度 */
+    .back_final_servo_acc = 10U,                      /* 背部交接点低速精定位加速度 */
+    .back_final_joint_tol_rad = 0.01f,                /* 背部交接点严格关节容差 */
+    .back_final_stable_frames = 6U,                   /* 背部交接点连续稳定帧数，200Hz 下约 30ms */
     .dynamic_hold_pre_index = 0U,                     /* 动态抓取预保持索引 */
     /* ── 各阶段延迟 (ms) ── */
     .delay_dynamic_pick_hold_ms = 1500U,              /* 动态抓取后保持 */
