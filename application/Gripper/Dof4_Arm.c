@@ -1239,6 +1239,314 @@ Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
     return solve_ik_candidate(arm, target, elbow_sign, joints);
 }
 
+static float dof4_pose_xyz_distance(const Dof4_Pose *a, const Dof4_Pose *b)
+{
+    const float dx = a->x - b->x;
+    const float dy = a->y - b->y;
+    const float dz = a->z - b->z;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+static float dof4_joint_travel_score(const Dof4_Arm *arm,
+                                     const Dof4_JointState *joints)
+{
+    float score = fabsf(Dof4_normalize_angle(joints->q[0] -
+                                             arm->joint_actual.q[0]));
+    for (uint8_t i = 1U; i < DOF4_JOINT_COUNT; ++i) {
+        score += fabsf(joints->q[i] - arm->joint_actual.q[i]);
+    }
+    return score;
+}
+
+Dof4_Status Dof4_arm_pose_executable(Dof4_Arm *arm,
+                                     const Dof4_Pose *target,
+                                     float elbow_sign,
+                                     Dof4_JointState *joints)
+{
+    if (arm == NULL || target == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+    if (!isfinite(target->x) || !isfinite(target->y) ||
+        !isfinite(target->z) || !isfinite(target->pitch)) {
+        return DOF4_STATUS_BAD_CONFIG;
+    }
+
+    Dof4_JointState candidate;
+    Dof4_Status st = Dof4_arm_inverse_kinematics(arm,
+                                                 target,
+                                                 elbow_sign,
+                                                 &candidate);
+    if (st != DOF4_STATUS_OK) {
+        return st;
+    }
+
+    /* q3 接近 0 或 ±pi 时，极小的 TCP 变化会放大成 J2/J3/J4 的大跳变。
+     * 将这些数学上可解但实机不稳定的点视为不可执行。 */
+    const float singular_sine = sinf(DOF4_IK_SINGULAR_MARGIN_RAD);
+    if (fabsf(sinf(candidate.q[2])) < singular_sine) {
+        return DOF4_STATUS_IK_UNREACHABLE;
+    }
+
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        if (!isfinite(candidate.q[i]) ||
+            candidate.q[i] < arm->cfg.joint_min[i] ||
+            candidate.q[i] > arm->cfg.joint_max[i]) {
+            return DOF4_STATUS_JOINT_LIMIT;
+        }
+
+        int16_t servo_pos = 0;
+        st = Dof4_angle_to_servo(arm, i, candidate.q[i], &servo_pos);
+        if (st != DOF4_STATUS_OK) {
+            return st;
+        }
+    }
+
+    if (joints != NULL) {
+        *joints = candidate;
+    }
+    return DOF4_STATUS_OK;
+}
+
+static bool dof4_consider_reachable_candidate(Dof4_Arm *arm,
+                                               const Dof4_Pose *requested,
+                                               const Dof4_Pose *candidate,
+                                               float elbow_sign,
+                                               float max_adjust_m,
+                                               bool *have_best,
+                                               float *best_distance,
+                                               float *best_joint_score,
+                                               Dof4_Pose *best_pose,
+                                               Dof4_JointState *best_joints)
+{
+    const float distance = dof4_pose_xyz_distance(requested, candidate);
+    if (distance > max_adjust_m + 1.0e-6f) {
+        return false;
+    }
+
+    Dof4_JointState joints;
+    if (Dof4_arm_pose_executable(arm, candidate, elbow_sign, &joints) !=
+        DOF4_STATUS_OK) {
+        return false;
+    }
+
+    const float joint_score = dof4_joint_travel_score(arm, &joints);
+    if (!*have_best || distance < *best_distance - 1.0e-6f ||
+        (fabsf(distance - *best_distance) <= 1.0e-6f &&
+         joint_score < *best_joint_score)) {
+        *have_best = true;
+        *best_distance = distance;
+        *best_joint_score = joint_score;
+        *best_pose = *candidate;
+        *best_joints = joints;
+    }
+    return true;
+}
+
+static Dof4_Pose dof4_project_wrist_to_safe_annulus(const Dof4_Arm *arm,
+                                                     const Dof4_Pose *pose)
+{
+    Dof4_Pose projected = *pose;
+    float base[3];
+    get_effective_base(arm, base);
+
+    const float arm_x = pose->x - g_dof4_world_offset.x;
+    const float arm_y = pose->y - g_dof4_world_offset.y;
+    const float arm_z = pose->z - g_dof4_world_offset.z;
+    const float dx = arm_x - base[0] - arm->cfg.tcp_offset[0];
+    const float dy = arm_y - base[1] - arm->cfg.tcp_offset[1];
+    const float planar_dist = sqrtf(dx * dx + dy * dy);
+    const float dir_x = (planar_dist > DOF4_AXIS_SINGULAR_EPS_M)
+                        ? (dx / planar_dist)
+                        : cosf(arm->joint_actual.q[0]);
+    const float dir_y = (planar_dist > DOF4_AXIS_SINGULAR_EPS_M)
+                        ? (dy / planar_dist)
+                        : sinf(arm->joint_actual.q[0]);
+
+    const float phi = pose->pitch - arm->cfg.pitch_offset;
+    const float tool = arm->cfg.link_len[2];
+    const float wrist_r = planar_dist - arm->cfg.shoulder_r -
+                          tool * cosf(phi);
+    const float wrist_z = arm_z - base[2] - arm->cfg.shoulder_z -
+                          arm->cfg.tcp_offset[2] - tool * sinf(phi);
+    const float wrist_d = sqrtf(wrist_r * wrist_r + wrist_z * wrist_z);
+
+    const float l2 = arm->cfg.link_len[0];
+    const float l3 = arm->cfg.link_len[1];
+    const float outer_q3 = DOF4_IK_SINGULAR_MARGIN_RAD;
+    const float inner_q3 = M_PI_F - DOF4_IK_SINGULAR_MARGIN_RAD;
+    const float outer_d = sqrtf(l2 * l2 + l3 * l3 +
+                                2.0f * l2 * l3 * cosf(outer_q3));
+    const float inner_d = sqrtf(l2 * l2 + l3 * l3 +
+                                2.0f * l2 * l3 * cosf(inner_q3));
+    const float safe_d = clamp_float(wrist_d, inner_d, outer_d);
+
+    float safe_wrist_r;
+    float safe_wrist_z;
+    if (wrist_d > DOF4_GEOM_EPS) {
+        const float scale = safe_d / wrist_d;
+        safe_wrist_r = wrist_r * scale;
+        safe_wrist_z = wrist_z * scale;
+    } else {
+        safe_wrist_r = safe_d;
+        safe_wrist_z = 0.0f;
+    }
+
+    float safe_planar_dist = arm->cfg.shoulder_r + safe_wrist_r +
+                             tool * cosf(phi);
+    if (safe_planar_dist < 0.0f) {
+        safe_planar_dist = 0.0f;
+    }
+
+    projected.x = base[0] + arm->cfg.tcp_offset[0] +
+                  dir_x * safe_planar_dist + g_dof4_world_offset.x;
+    projected.y = base[1] + arm->cfg.tcp_offset[1] +
+                  dir_y * safe_planar_dist + g_dof4_world_offset.y;
+    projected.z = base[2] + arm->cfg.shoulder_z +
+                  arm->cfg.tcp_offset[2] + safe_wrist_z +
+                  tool * sinf(phi) + g_dof4_world_offset.z;
+    return projected;
+}
+
+static void dof4_record_pose_projection(Dof4_Arm *arm,
+                                        const Dof4_Pose *requested,
+                                        const Dof4_Pose *resolved,
+                                        const Dof4_JointState *resolved_joints)
+{
+    Dof4_ClipDiagnostic *diagnostic = &arm->clip_diagnostic;
+    memset(diagnostic, 0, sizeof(*diagnostic));
+    diagnostic->requested_pose = *requested;
+    diagnostic->limited_pose = *resolved;
+    diagnostic->limited_joints = *resolved_joints;
+    (void)Dof4_arm_inverse_kinematics(arm,
+                                      requested,
+                                      -1.0f,
+                                      &diagnostic->requested_joints);
+    for (uint8_t i = 0U; i < DOF4_JOINT_COUNT; ++i) {
+        (void)Dof4_angle_to_servo(arm,
+                                  i,
+                                  resolved_joints->q[i],
+                                  &diagnostic->target_servo_pos[i]);
+    }
+    diagnostic->control_mode = DOF4_CONTROL_MODE_POSE;
+    diagnostic->reason = DOF4_CLIP_REASON_POSE_PROJECTED;
+    diagnostic->joint_mask = 0U;
+    arm->clip_event_counter++;
+    diagnostic->event_id = arm->clip_event_counter;
+    diagnostic->pending = true;
+}
+
+Dof4_Status Dof4_arm_resolve_reachable_pose(Dof4_Arm *arm,
+                                            const Dof4_Pose *requested,
+                                            float elbow_sign,
+                                            float max_adjust_m,
+                                            Dof4_Pose *resolved)
+{
+    if (arm == NULL || requested == NULL || resolved == NULL) {
+        return DOF4_STATUS_NULL_PARAM;
+    }
+    if (!isfinite(requested->x) || !isfinite(requested->y) ||
+        !isfinite(requested->z) || !isfinite(requested->pitch) ||
+        !isfinite(max_adjust_m) || max_adjust_m < 0.0f) {
+        return DOF4_STATUS_BAD_CONFIG;
+    }
+
+    Dof4_JointState exact_joints;
+    Dof4_Status exact_st = Dof4_arm_pose_executable(arm,
+                                                    requested,
+                                                    elbow_sign,
+                                                    &exact_joints);
+    if (exact_st == DOF4_STATUS_OK) {
+        *resolved = *requested;
+        return DOF4_STATUS_OK;
+    }
+    if (max_adjust_m <= 0.0f) {
+        return exact_st;
+    }
+
+    bool have_best = false;
+    float best_distance = 0.0f;
+    float best_joint_score = 0.0f;
+    Dof4_Pose best_pose = *requested;
+    Dof4_JointState best_joints;
+
+    /* 先处理矩形工作空间和真实 2R 腕部圆环，这两步覆盖绝大多数边界点。 */
+    Dof4_Pose clamped = *requested;
+    (void)Dof4_clamp_to_workspace(arm, &clamped);
+    (void)dof4_consider_reachable_candidate(arm,
+                                            requested,
+                                            &clamped,
+                                            elbow_sign,
+                                            max_adjust_m,
+                                            &have_best,
+                                            &best_distance,
+                                            &best_joint_score,
+                                            &best_pose,
+                                            &best_joints);
+
+    Dof4_Pose annulus = dof4_project_wrist_to_safe_annulus(arm, &clamped);
+    (void)Dof4_clamp_to_workspace(arm, &annulus);
+    (void)dof4_consider_reachable_candidate(arm,
+                                            requested,
+                                            &annulus,
+                                            elbow_sign,
+                                            max_adjust_m,
+                                            &have_best,
+                                            &best_distance,
+                                            &best_joint_score,
+                                            &best_pose,
+                                            &best_joints);
+
+    /* 对关节/J4 限位造成的非圆形边界做有界局部搜索。每层 26 个方向，
+     * 找到首个有效半径层后即停止，保证 F407 上命令处理耗时可控。 */
+    const int max_shell = (int)floorf(max_adjust_m /
+                                      DOF4_REACH_SEARCH_STEP_M + 1.0e-5f);
+    for (int shell = 1; shell <= max_shell; ++shell) {
+        const float radius = (float)shell * DOF4_REACH_SEARCH_STEP_M;
+        bool shell_has_valid = false;
+        for (int ix = -1; ix <= 1; ++ix) {
+            for (int iy = -1; iy <= 1; ++iy) {
+                for (int iz = -1; iz <= 1; ++iz) {
+                    if (ix == 0 && iy == 0 && iz == 0) {
+                        continue;
+                    }
+                    const float norm = sqrtf((float)(ix * ix + iy * iy + iz * iz));
+                    Dof4_Pose candidate = *requested;
+                    candidate.x += radius * (float)ix / norm;
+                    candidate.y += radius * (float)iy / norm;
+                    candidate.z += radius * (float)iz / norm;
+                    (void)Dof4_clamp_to_workspace(arm, &candidate);
+                    if (dof4_consider_reachable_candidate(arm,
+                                                          requested,
+                                                          &candidate,
+                                                          elbow_sign,
+                                                          max_adjust_m,
+                                                          &have_best,
+                                                          &best_distance,
+                                                          &best_joint_score,
+                                                          &best_pose,
+                                                          &best_joints)) {
+                        shell_has_valid = true;
+                    }
+                }
+            }
+        }
+        if (shell_has_valid) {
+            break;
+        }
+    }
+
+    if (!have_best) {
+        return exact_st;
+    }
+
+    *resolved = best_pose;
+    dof4_record_pose_projection(arm,
+                                requested,
+                                &best_pose,
+                                &best_joints);
+    return DOF4_STATUS_OK;
+}
+
 /**
  * @brief 将舵机步进值转换为真实反馈关节角，不做 URDF 关节限位钳制。
  * @param arm 机械臂实例。

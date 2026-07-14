@@ -54,16 +54,13 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_12|GPIO_PIN_10, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOH, GPIO_PIN_11, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOH, RGB_R_Pin|RGB_G_Pin|RGB_B_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, RELAY1_Pin_Pin|RELAY2_Pin_Pin|RELAY3_Pin_Pin|RELAY4_Pin_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PH12 PH11 PH10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_11|GPIO_PIN_10;
+  /*Configure GPIO pins : RGB_R_Pin RGB_G_Pin RGB_B_Pin */
+  GPIO_InitStruct.Pin = RGB_R_Pin|RGB_G_Pin|RGB_B_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

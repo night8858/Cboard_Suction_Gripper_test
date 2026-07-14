@@ -29,6 +29,7 @@ typedef struct {
     unsigned pc_action_abort_calls;
     unsigned relay_calls;
     unsigned answer_calls;
+    unsigned led_answer_calls;
     unsigned pump_speed_calls;
     unsigned world_offset_calls;
     unsigned arm_start_calls;
@@ -40,6 +41,7 @@ typedef struct {
     uint8_t last_relay_state;
     uint8_t relay_state[4];
     uint8_t last_answer;
+    uint8_t last_led_answer;
     float last_pump_speed;
     float last_offset_x;
     float last_offset_y;

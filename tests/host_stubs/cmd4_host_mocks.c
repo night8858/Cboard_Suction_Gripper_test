@@ -1,6 +1,7 @@
 #include "cmd4_host_mocks.h"
 
 #include "command_decode_4dof.h"
+#include "Dof4_Arm_Calibration.h"
 #include "gimbal.h"
 #include "stm32f4xx_hal.h"
 #include "usart_interface.h"
@@ -18,6 +19,12 @@ Gimbal_s Gimbal;
 static Cmd4HostMockState s_state;
 static bool s_action_active;
 static bool s_pc_action_active;
+static const Dof4ArmCalibration s_arm_calibration = {
+    .target_bias = {
+        {0.01f, -0.02f, 0.03f},
+        {-0.04f, 0.05f, -0.06f},
+    },
+};
 
 void cmd4_host_mocks_reset(void)
 {
@@ -35,6 +42,11 @@ void cmd4_host_mocks_reset(void)
 const Cmd4HostMockState *cmd4_host_mocks_state(void)
 {
     return &s_state;
+}
+
+const Dof4ArmCalibration *Dof4_calibration_get_arm(void)
+{
+    return &s_arm_calibration;
 }
 
 void cmd4_host_mocks_set_action_active(bool active)
@@ -231,6 +243,12 @@ int xiao_R_usart_send_answer(UART_HandleTypeDef *huart, uint8_t answer)
     ++s_state.answer_calls;
     s_state.last_answer = answer;
     return 0;
+}
+
+void led_indicate_answer_notify(uint8_t answer)
+{
+    ++s_state.led_answer_calls;
+    s_state.last_led_answer = answer;
 }
 
 uint32_t HAL_GetTick(void)

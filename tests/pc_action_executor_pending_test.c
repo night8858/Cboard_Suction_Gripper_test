@@ -533,9 +533,9 @@ int main(void)
     require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
                  "put-back speed unchanged while pending");
     pc_action_4dof_loop();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 8000U,
                  "put-back applies dedicated left servo speed");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 30U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 40U,
                  "put-back applies fast left servo acc");
     require_true(g_dof4_arm_right.cfg.servo_speed == 3000U,
                  "put-back leaves unused right servo speed unchanged");
@@ -552,9 +552,9 @@ int main(void)
                        "put-back first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2800U,
                  "put-back uses final low servo speed at target");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 10U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 14U,
                  "put-back uses final low servo acc at target");
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U &&
@@ -615,9 +615,9 @@ int main(void)
     require_true(pc_action_4dof_start_get_back(DOF4_ARM_LEFT),
                  "get-back request is queued");
     pc_action_4dof_loop();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 8000U,
                  "get-back applies dedicated left servo speed");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 30U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 40U,
                  "get-back applies fast left servo acc");
     require_true(s_set_joint_calls > 0U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT,
@@ -630,9 +630,9 @@ int main(void)
                        "get-back first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2800U,
                  "get-back uses final low servo speed at target");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 10U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 14U,
                  "get-back uses final low servo acc at target");
     pc_action_4dof_loop();
     require_true(!relay_seen_after(0U, 0U, 0U),
@@ -651,11 +651,11 @@ int main(void)
     require_true(pc_action_4dof_start_dual_put_back(),
                  "dual put-back request is queued");
     pc_action_4dof_loop();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
-                 g_dof4_arm_right.cfg.servo_speed == 6000U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 8000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 8000U,
                  "dual put-back applies dedicated speed to both arms");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 30U &&
-                 g_dof4_arm_right.cfg.servo_acc == 30U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 40U &&
+                 g_dof4_arm_right.cfg.servo_acc == 40U,
                  "dual put-back applies fast acc to both arms");
     require_true(s_set_joint_calls >= 2U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
@@ -672,11 +672,11 @@ int main(void)
                        "dual put-back right first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U &&
-                 g_dof4_arm_right.cfg.servo_speed == 2200U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2800U &&
+                 g_dof4_arm_right.cfg.servo_speed == 2800U,
                  "dual put-back uses final low speed on both arms");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 10U &&
-                 g_dof4_arm_right.cfg.servo_acc == 10U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 14U &&
+                 g_dof4_arm_right.cfg.servo_acc == 14U,
                  "dual put-back uses final low acc on both arms");
     pc_action_4dof_loop();
     require_true(s_valve_shadow[2] == 1U && s_valve_shadow[3] == 1U &&
@@ -700,11 +700,11 @@ int main(void)
     require_true(pc_action_4dof_start_dual_get_back(),
                  "dual get-back request is queued");
     pc_action_4dof_loop();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 6000U &&
-                 g_dof4_arm_right.cfg.servo_speed == 6000U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 8000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 8000U,
                  "dual get-back applies dedicated speed to both arms");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 30U &&
-                 g_dof4_arm_right.cfg.servo_acc == 30U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 40U &&
+                 g_dof4_arm_right.cfg.servo_acc == 40U,
                  "dual get-back applies fast acc to both arms");
     require_true(s_set_joint_calls >= 2U &&
                  s_joint_calls[0].arm_id == DOF4_ARM_LEFT &&
@@ -721,11 +721,11 @@ int main(void)
                        "dual get-back right first point is first pre point");
     s_set_joint_calls = 0U;
     advance_joint_to_operation_target();
-    require_true(g_dof4_arm_left.cfg.servo_speed == 2200U &&
-                 g_dof4_arm_right.cfg.servo_speed == 2200U,
+    require_true(g_dof4_arm_left.cfg.servo_speed == 2800U &&
+                 g_dof4_arm_right.cfg.servo_speed == 2800U,
                  "dual get-back uses final low speed on both arms");
-    require_true(g_dof4_arm_left.cfg.servo_acc == 10U &&
-                 g_dof4_arm_right.cfg.servo_acc == 10U,
+    require_true(g_dof4_arm_left.cfg.servo_acc == 14U &&
+                 g_dof4_arm_right.cfg.servo_acc == 14U,
                  "dual get-back uses final low acc on both arms");
     pc_action_4dof_loop();
     s_tick_ms += 1600U;

@@ -323,9 +323,20 @@ int main(void)
     len = build_answer_frame(2U, frame);
     require_true(len == CMD4_FRAME_ANSWER_LEN, "answer frame length");
     cmd4_rx_feed(frame, len);
+    cmd4_answer_repeat_process();
     state = cmd4_host_mocks_state();
     require_true(state->answer_calls == 1U && state->last_answer == 2U,
                  "answer dispatch");
+    require_true(state->led_answer_calls == 1U && state->last_led_answer == 2U,
+                 "answer LED dispatch");
+
+    len = build_answer_frame(4U, frame);
+    cmd4_rx_feed(frame, len);
+    state = cmd4_host_mocks_state();
+    require_true(state->answer_calls == 1U,
+                 "invalid answer does not dispatch serial");
+    require_true(state->led_answer_calls == 1U,
+                 "invalid answer does not dispatch LED");
 
     len = build_pump_frame(1U, 3200.0f, frame);
     require_true(len == CMD4_FRAME_PUMP_LEN, "pump frame length");

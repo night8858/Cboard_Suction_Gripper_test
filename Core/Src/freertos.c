@@ -123,7 +123,7 @@ void MX_FREERTOS_Init(void) {
   RobotArm_TASKHandle = osThreadCreate(osThread(RobotArm_TASK), NULL);
 
   /* definition and creation of LED_TASK */
-  osThreadDef(LED_TASK, led_indicate_task, osPriorityIdle, 0, 256);
+  osThreadDef(LED_TASK, led_indicate_task, osPriorityBelowNormal, 0, 256);
   LED_TASKHandle = osThreadCreate(osThread(LED_TASK), NULL);
 
   /* definition and creation of Pump_control */

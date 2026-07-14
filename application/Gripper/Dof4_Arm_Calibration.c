@@ -23,7 +23,7 @@
     { DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS, DOF4_SERVO_MAX_POS }
 
 /* PC 动态取放目标正上方悬停高度。现场调参只需修改此值，单位 m。 */
-#define CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M 0.20f
+#define CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M 0.12f
 
 /* ========================================================================
  *  机械臂本体标定参数（左臂 & 右臂）
@@ -40,7 +40,7 @@ static const Dof4ArmCalibration s_arm_calibration = {
             .shoulder_r = 0.02716f,                  /* 肩关节水平偏移半径 */
             .shoulder_z = 0.022319f,                 /* 肩关节高度 */
             .link_len = {0.35548f, 0.27130f, 0.03600f}, /* 连杆长度 L1/L2/L3 */
-            .tcp_offset = {0.0f, 0.0f, -0.05f},      /* 工具中心点偏置 */
+            .tcp_offset = {0.0f, 0.0f, -0.0f},      /* 工具中心点偏置 */
             .pitch_offset = 0.0f,                     /* 末端俯仰角偏置 */
             .joint_min = {-3.90f, 2.67f - 3.25f, -1.57f - 4.60f, -0.00f - 2.35f}, /* 关节下限 */
             .joint_max = {1.90f, 2.67f + 2.25f, 0.50f, -0.00f + 2.35f},           /* 关节上限 */
@@ -52,11 +52,11 @@ static const Dof4ArmCalibration s_arm_calibration = {
                 DOF4_SERVO_CENTER_POS,
                 DOF4_SERVO_CENTER_POS,
             },
-            .servo_offset = {1.57f, 2.67f, -1.57f, -0.00f}, /* 舵机零位对应的关节角 */
+            .servo_offset = {1.57f, 1.57f, -1.57f, -0.00f}, /* 舵机零位对应的关节角 */
             .servo_sign = {-1, 1, -1, -1},           /* 舵机转向符号（+1同向/-1反向） */
             .servo_reverse = {0U, 0U, 0U, 0U},       /* 是否反转舵机输出 */
-            .servo_speed = 3000U,                     /* 舵机默认速度 */
-            .servo_acc = 25U,                         /* 舵机默认加速度 */
+            .servo_speed = 8000U,                     /* 舵机默认速度 */
+            .servo_acc = 40U,                         /* 舵机默认加速度 */
             .ws_min = {-0.35f, -0.65f, -0.65f},       /* 工作空间下限 (x,y,z) */
             .ws_max = {0.90f, 0.90f, 0.65f},          /* 工作空间上限 (x,y,z) */
             .cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS,   /* 默认笛卡尔线速度 */
@@ -70,7 +70,7 @@ static const Dof4ArmCalibration s_arm_calibration = {
             .shoulder_r = 0.02716f,                  /* 肩关节水平偏移半径 */
             .shoulder_z = 0.022319f,                 /* 肩关节高度 */
             .link_len = {0.35548f, 0.27130f, 0.03600f}, /* 连杆长度 L1/L2/L3 */
-            .tcp_offset = {0.0f, 0.0f, -0.05f},      /* 工具中心点偏置 */
+            .tcp_offset = {0.0f, 0.0f, -0.0f},      /* 工具中心点偏置 */
             .pitch_offset = 0.0f,                     /* 末端俯仰角偏置 */
             .joint_min = {-1.90f, 2.67f - 3.25f, -1.57f - 4.60f, 0.0f - 2.35f}, /* 关节下限 */
             .joint_max = {3.90f, 2.67f + 2.25f, 0.50f, 0.0f + 2.35f},           /* 关节上限 */
@@ -82,11 +82,11 @@ static const Dof4ArmCalibration s_arm_calibration = {
                 DOF4_SERVO_CENTER_POS,
                 DOF4_SERVO_CENTER_POS,
             },
-            .servo_offset = {-1.57f, 2.67f, -1.57f, 0.0f}, /* 舵机零位对应的关节角 */
+            .servo_offset = {-1.57f, 1.57f, -1.57f, 0.0f}, /* 舵机零位对应的关节角 */
             .servo_sign = {-1, 1, -1, 1},            /* 舵机转向符号（+1同向/-1反向） */
             .servo_reverse = {0U, 0U, 0U, 0U},       /* 是否反转舵机输出 */
-            .servo_speed = 3000U,                     /* 舵机默认速度 */
-            .servo_acc = 30U,                         /* 舵机默认加速度 */
+            .servo_speed = 8000U,                     /* 舵机默认速度 */
+            .servo_acc = 40U,                         /* 舵机默认加速度 */
             .ws_min = {-0.35f, -0.90f, -0.65f},       /* 工作空间下限 (x,y,z) */
             .ws_max = {0.90f, 0.65f, 0.65f},          /* 工作空间上限 (x,y,z) */
             .cart_vel_mps = DOF4_DEFAULT_CART_VEL_MPS,   /* 默认笛卡尔线速度 */
@@ -113,13 +113,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
             .exit_offset = {-0.10f, -0.07f, 0.38f, -0.30f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
             .exit_offset = {0.10f, 0.07f, 0.40f, -0.30f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
@@ -128,13 +128,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
             .exit_offset = {0.10f, -0.07f, 0.365f, -0.30f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
             .exit_offset = {0.10f, 0.07f, 0.385f, -0.30f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
@@ -143,13 +143,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {-0.075f, -0.10f, 0.49f, -0.30f},
             .exit_offset = {-0.175f, -0.15f, 0.44f, -0.50f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
             .exit_offset = {-0.175f, 0.15f, 0.43f, -0.50f},
-            .target_pitch = -1.48f,
+            .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
     },
@@ -235,16 +235,16 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
         },
     },
     /* ── 通用超时与容差 ── */
-    .move_timeout_ms = 2500U,                         /* 单次移动超时 */
+    .move_timeout_ms = 2000U,                         /* 单次移动超时 */
     .pose_pos_tol_m = 0.03f,                          /* 位姿位置容差 */
-    .pose_pitch_tol_rad = 0.03f,                      /* 位姿俯仰容差 */
-    .joint_tol_rad = 0.01f,                           /* 关节角度容差 */
-    .back_servo_speed = 6000U,                        /* 兼容旧字段：背部动作高速段舵机速度 */
-    .back_fast_servo_speed = 6000U,                   /* 背部动作非交接段高速速度 */
-    .back_final_servo_speed = 2200U,                  /* 背部交接点低速精定位速度 */
-    .back_fast_servo_acc = 30U,                       /* 背部动作非交接段加速度 */
-    .back_final_servo_acc = 10U,                      /* 背部交接点低速精定位加速度 */
-    .back_final_joint_tol_rad = 0.01f,                /* 背部交接点严格关节容差 */
+    .pose_pitch_tol_rad = 0.02f,                      /* 位姿俯仰容差 */
+    .joint_tol_rad = 0.06f,                           /* 关节角度容差 */
+    .back_servo_speed = 8000U,                        /* 兼容旧字段：背部动作高速段舵机速度 */
+    .back_fast_servo_speed = 8000U,                   /* 背部动作非交接段高速速度 */
+    .back_final_servo_speed = 2800U,                  /* 背部交接点低速精定位速度 */
+    .back_fast_servo_acc = 40U,                       /* 背部动作非交接段加速度 */
+    .back_final_servo_acc = 14U,                      /* 背部交接点低速精定位加速度 */
+    .back_final_joint_tol_rad = 0.04f,                /* 背部交接点严格关节容差 */
     .back_final_stable_frames = 6U,                   /* 背部交接点连续稳定帧数，200Hz 下约 30ms */
     .dynamic_hold_pre_index = 0U,                     /* 动态抓取预保持索引 */
     /* ── 各阶段延迟 (ms) ── */
@@ -269,8 +269,8 @@ static const Dof4ActionCalibration s_action_calibration = {
         [DOF4_ARM_RIGHT] = {0.15f, -0.05f, 0.25f, -0.02f},
     },
     .default_back_avoid = {                           /* 默认归位避让点 */
-        [DOF4_ARM_LEFT] = {0.22f, 0.12f, 0.28f, 0.45f},
-        [DOF4_ARM_RIGHT] = {0.22f, -0.12f, 0.28f, 0.45f},
+        [DOF4_ARM_LEFT] = {0.22f, 0.06f, 0.34f, 0.45f},
+        [DOF4_ARM_RIGHT] = {0.22f, -0.06f, 0.34f, 0.45f},
     },
     .current_back_avoid = {                           /* 当前归位避让点 */
         [DOF4_ARM_LEFT] = {0.10f, 0.15f, 0.28f, 0.45f},
@@ -289,11 +289,11 @@ static const Dof4ActionCalibration s_action_calibration = {
     .waypoint_hold_ms = 100U,                         /* 路径点停留 */
     /* ── 轨迹混合参数 ── */
     .default_blend_dist_m = 0.08f,                    /* 默认混合距离 */
-    .default_via_speed_factor = 0.6f,                 /* 默认途经点速度系数 */
+    .default_via_speed_factor = 0.75f,                /* 默认途经点速度系数 */
     .chain_final_blend_dist_m = 0.03f,                /* 链末段混合距离 */
     /* ── 到位判定容差 ── */
     .reach_pos_tol_m = 0.03f,                         /* 位置到位容差 */
-    .reach_pitch_tol_rad = 0.05f,                     /* 俯仰到位容差 */
+    .reach_pitch_tol_rad = 0.03f,                     /* 俯仰到位容差 */
     .joint_reach_tol_rad = 0.05f,                     /* 关节到位容差 */
     .joint_blend_tol_rad = 0.15f,                     /* 关节混合容差 */
 };

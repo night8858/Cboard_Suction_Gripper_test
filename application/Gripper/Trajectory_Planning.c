@@ -12,8 +12,8 @@
  * velocity and peak acceleration 10/sqrt(3) times distance/T^2. */
 #define TRAJ_QUINTIC_PEAK_VEL_RATIO 1.875f
 #define TRAJ_QUINTIC_PEAK_ACC_RATIO 5.7735027f
-#define TRAJ_DEFAULT_CART_ACC_MPS2 16.0f
-#define TRAJ_DEFAULT_PITCH_ACC_RPS2 10.0f
+#define TRAJ_DEFAULT_CART_ACC_MPS2 24.0f
+#define TRAJ_DEFAULT_PITCH_ACC_RPS2 16.0f
 
 /**
  * @brief 将浮点数限制到指定范围。

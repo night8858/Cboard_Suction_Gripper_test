@@ -46,22 +46,22 @@ int main(void)
                                                                   &medium,
                                                                   DOF4_DEFAULT_CART_VEL_MPS,
                                                                   DOF4_DEFAULT_PITCH_VEL_RPS);
-    require_true(medium_duration > 0.37f && medium_duration < 0.39f,
+    require_true(medium_duration > 0.30f && medium_duration < 0.32f,
                  "medium move duration respects quintic peak limits");
 
     const float long_duration = Dof4_cartesian_compute_duration(&origin,
                                                                 &long_move,
                                                                 DOF4_DEFAULT_CART_VEL_MPS,
                                                                 DOF4_DEFAULT_PITCH_VEL_RPS);
-    require_true(long_duration > 0.93f && long_duration < DOF4_TRAJ_MAX_DURATION_S,
-                 "long move is no longer clipped by the old 0.8s cap");
+    require_true(long_duration > 0.48f && long_duration < 0.50f,
+                 "long move uses raised cartesian acceleration");
 
     const float pitch_duration = Dof4_cartesian_compute_duration(&origin,
                                                                  &pitch_move,
                                                                  DOF4_DEFAULT_CART_VEL_MPS,
                                                                  DOF4_DEFAULT_PITCH_VEL_RPS);
-    require_true(pitch_duration > 0.93f && pitch_duration < 0.95f,
-                 "pitch move duration respects quintic peak velocity");
+    require_true(pitch_duration > 0.59f && pitch_duration < 0.61f,
+                 "pitch move uses raised pitch speed and acceleration");
 
     printf("dof4 trajectory profile test passed\n");
     return 0;

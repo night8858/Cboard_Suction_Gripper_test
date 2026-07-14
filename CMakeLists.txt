@@ -63,6 +63,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     application/RTOS_TASK/arm_control_task.c
     application/RTOS_TASK/pump_control_task.c
     application/RTOS_TASK/led_indicate_task.c
+    application/RTOS_TASK/led_indicate_state.c
     application/RTOS_TASK/update_task.c
     application/RTOS_TASK/gimbal_task.c
     application/Gripper/pneumatic_control.c

@@ -83,9 +83,9 @@
 
 /* ── 头文件包含 ── */
 #include "command_decode_4dof.h"
-#include "Dof4_Arm_Calibration.h"
 
 #ifdef CMD4_HOST_TEST
+#include <Dof4_Arm_Calibration.h>
 #include <action_scheduler_4dof.h>
 #include <pc_action_executor_4dof.h>
 #include <pneumatic_control.h>
@@ -96,7 +96,9 @@
 #include <usart_interface.h>
 #include <virtual_serial_port.h>
 #include <gimbal.h>
+#include <led_indicate_task.h>
 #else
+#include "Dof4_Arm_Calibration.h"
 #include "Dof4_Arm.h"           /* 4DOF 机械臂运动学模型 */
 #include "action_scheduler_4dof.h" /* 4DOF 动作调度器接口 */
 #include "pc_action_executor_4dof.h" /* PC 下发动作专用状态机 */
@@ -108,6 +110,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "gimbal.h"                 /* 相机云台控制接口 */
+#include "led_indicate_task.h"       /* RGB 答案灯效通知接口 */
 #endif
 
 #include <stddef.h>
@@ -980,15 +983,19 @@ void cmd4_update_valve_shadow(uint8_t valve_id, uint8_t state)
 }
 
 /**
- * @brief 处理 CMD4_ANSWER_CONTROL (0x05) —— 语音应答控制 (预留)
- *
- * 当前为占位实现。DATA 段格式待定义。
+ * @brief 处理 CMD4_ANSWER_CONTROL (0x05) —— 语音播报与 RGB 答案灯效
  */
 static void cmd4_handle_answer_control(const uint8_t *data)
 {
-    /* DATA[0] 为答案编号 (0~3)，其余字节保留 */
+    const uint8_t answer = data[0];
+    if (answer >= 4U) {
+        return;
+    }
+
+    /* DATA[0] 为答案编号 (0~3)，其余字节保留。 */
     /* USART6 已专用于 1Mbps 飞特舵机总线；语音模块使用 USART1 9600bps。 */
-    cmd4_answer_repeat_start(data[0]);
+    cmd4_answer_repeat_start(answer);
+    led_indicate_answer_notify(answer);
 }
 
 void cmd4_answer_repeat_process(void)

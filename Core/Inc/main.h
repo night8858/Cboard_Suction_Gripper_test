@@ -57,6 +57,12 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define RGB_B_Pin GPIO_PIN_10
+#define RGB_B_GPIO_Port GPIOH
+#define RGB_G_Pin GPIO_PIN_11
+#define RGB_G_GPIO_Port GPIOH
+#define RGB_R_Pin GPIO_PIN_12
+#define RGB_R_GPIO_Port GPIOH
 #define BLOCK_NSPECT_LB_Pin GPIO_PIN_13
 #define BLOCK_NSPECT_LB_GPIO_Port GPIOE
 #define BLOCK_NSPECT_LF_Pin GPIO_PIN_9

@@ -46,7 +46,7 @@ extern "C" {
 
 /* R_J2: 实物轴按安装对应 URDF -Y；舵机 position 逆时针增加；URDF 正角时 position 增加。 */
 #define R_J2_ZERO_POS DOF4_SERVO_CENTER_POS
-#define R_J2_ZERO_BIAS_RAD 2.67f
+#define R_J2_ZERO_BIAS_RAD 1.57f
 #define R_J2_SERVO_SIGN (1)
 #define R_J2_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)
 #define R_J2_URDF_MAX_DEG (2.65f * DOF4_RAD_TO_DEG)
@@ -87,7 +87,7 @@ extern "C" {
 #define L_J1_URDF_MAX_DEG (1.90f * DOF4_RAD_TO_DEG)
 
 #define L_J2_ZERO_POS DOF4_SERVO_CENTER_POS
-#define L_J2_ZERO_BIAS_RAD 2.67f
+#define L_J2_ZERO_BIAS_RAD 1.57f
 #define L_J2_SERVO_SIGN (1) /* ⚠️ TODO: 实测标定后修改；错误符号会导致左臂反向/抖动 */
 #define L_J2_URDF_MIN_DEG (-3.75f * DOF4_RAD_TO_DEG)
 #define L_J2_URDF_MAX_DEG (2.25f * DOF4_RAD_TO_DEG)
@@ -113,16 +113,16 @@ extern "C" {
 #define DOF4_LINK_SEGMENT_COUNT 4U
 
 /** @brief 默认轨迹最短时间，单位 s。 */
-#define DOF4_TRAJ_MIN_DURATION_S 0.15f
+#define DOF4_TRAJ_MIN_DURATION_S 0.10f
 
 /** @brief 默认轨迹最长时间，单位 s。 */
 #define DOF4_TRAJ_MAX_DURATION_S 1.2f
 
 /** @brief 默认笛卡尔最大速度，单位 m/s。 */
-#define DOF4_DEFAULT_CART_VEL_MPS 2.0f
+#define DOF4_DEFAULT_CART_VEL_MPS 5.0f
 
 /** @brief 默认 pitch 最大速度，单位 rad/s。 */
-#define DOF4_DEFAULT_PITCH_VEL_RPS 2.00f
+#define DOF4_DEFAULT_PITCH_VEL_RPS 5.00f
 
 /** @brief 默认目标变化重规划阈值，单位 m。 */
 #define DOF4_REPLAN_POS_EPS_M 0.001f
@@ -132,6 +132,18 @@ extern "C" {
 
 /** @brief 默认舵机通信连续失败阈值。 */
 #define DOF4_COMM_FAIL_THRESHOLD 5U
+
+/** @brief PC/手动位姿允许的最大 XYZ 自动修正量，单位 m。 */
+#define DOF4_REACH_MAX_ADJUST_M 0.05f
+
+/** @brief 最近可达点局部搜索步长，单位 m。 */
+#define DOF4_REACH_SEARCH_STEP_M 0.005f
+
+/** @brief J3 与完全伸直/完全折叠奇异位形的最小角度余量，单位 rad。 */
+#define DOF4_IK_SINGULAR_MARGIN_RAD 0.20f
+
+/** @brief 位姿控制相邻 5 ms 指令允许的最大单关节变化，单位 rad。 */
+#define DOF4_POSE_MAX_JOINT_STEP_RAD 0.35f
 
 /**
  * @brief 状态码。
@@ -146,7 +158,8 @@ typedef enum {
     DOF4_STATUS_SERVO_LIMIT,           ///< 舵机限位
     DOF4_STATUS_COLLISION_RISK,        ///< 碰撞风险
     DOF4_STATUS_COMM_FAIL,             ///< 通信失败
-    DOF4_STATUS_NOT_READY              ///< 未就绪
+    DOF4_STATUS_NOT_READY,             ///< 未就绪
+    DOF4_STATUS_DISCONTINUITY          ///< 位姿控制关节目标发生异常跳变
 } Dof4_Status;
 
 /**
@@ -181,7 +194,9 @@ typedef enum {
     DOF4_CLIP_REASON_NONE = 0,                             ///< 无裁剪
     DOF4_CLIP_REASON_JOINT_LIMIT = (1U << 0),              ///< 关节角超出配置上下限
     DOF4_CLIP_REASON_SERVO_LIMIT = (1U << 1),              ///< 舵机步进超出配置上下限
-    DOF4_CLIP_REASON_PC_ACTION_REJECT = (1U << 2)          ///< PC 动作拒绝（路径构造失败）
+    DOF4_CLIP_REASON_PC_ACTION_REJECT = (1U << 2),         ///< PC 动作拒绝（路径构造失败）
+    DOF4_CLIP_REASON_POSE_PROJECTED = (1U << 3),           ///< 位姿已自动投影到附近可达点
+    DOF4_CLIP_REASON_DISCONTINUITY = (1U << 4)             ///< 检测到异常关节目标跳变
 } Dof4_ClipReason;
 
 /**
@@ -290,6 +305,7 @@ typedef struct {
     Dof4_ControlMode control_mode;         /**< 当前目标控制模式。 */
     float target_via_vel[4];              /**< 途经点终端速度 (x,y,z,pitch)，仅 target_is_via 时有效。 */
     bool target_is_via;                   /**< 当前目标是否为途经点（非零终端速度平滑通过）。 */
+    bool pose_joint_reference_valid;      /**< 位姿模式上一帧安全关节目标是否可用于连续性检查。 */
 
     float joint_world[DOF4_LINK_SEGMENT_COUNT + 1U][3]; /**< J1、J2、J3、J4、TCP 世界坐标。 */
     uint8_t active_clip_reason;            /**< 当前锁存结果的裁剪原因。 */
@@ -418,6 +434,34 @@ Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
                                         const Dof4_Pose *target,
                                         float elbow_sign,
                                         Dof4_JointState *joints);
+
+/**
+ * @brief 严格检查位姿是否可执行，不允许通过关节/舵机裁剪“伪可达”。
+ * @param arm 机械臂实例。
+ * @param target 待检查 TCP 位姿。
+ * @param elbow_sign 固定肘型符号，当前动态动作传 -1。
+ * @param joints 可选输出 IK 关节角，允许为 NULL。
+ * @retval Dof4_Status OK 表示工作空间、IK、奇异区、关节和舵机限位均通过。
+ */
+Dof4_Status Dof4_arm_pose_executable(Dof4_Arm *arm,
+                                     const Dof4_Pose *target,
+                                     float elbow_sign,
+                                     Dof4_JointState *joints);
+
+/**
+ * @brief 在固定 pitch 和肘型下寻找请求点附近的安全可达位姿。
+ * @param arm 机械臂实例。
+ * @param requested 原始请求位姿。
+ * @param elbow_sign 固定肘型符号，当前动态动作传 -1。
+ * @param max_adjust_m 最大 XYZ 欧氏修正量，单位 m。
+ * @param resolved 输出原位姿或修正后的可达位姿。
+ * @retval Dof4_Status OK 表示找到；否则不得执行该请求。
+ */
+Dof4_Status Dof4_arm_resolve_reachable_pose(Dof4_Arm *arm,
+                                            const Dof4_Pose *requested,
+                                            float elbow_sign,
+                                            float max_adjust_m,
+                                            Dof4_Pose *resolved);
 
 /**
  * @brief 从舵机步进转换到真实反馈关节角，不做 URDF 关节限位钳制。
@@ -577,6 +621,11 @@ Dof4_Arm *Dof4_arm_get_by_id(Dof4_ArmId arm_id, Dof4_Arm *left, Dof4_Arm *right)
  * @retval float 归一化后的角度。
  */
 float Dof4_normalize_angle(float angle_rad);
+
+/**
+ * @brief 返回与 angle_rad 等效且最靠近 reference_rad 的连续角度。
+ */
+float Dof4_unwrap_angle_near(float reference_rad, float angle_rad);
 
 /**
  * @brief 设置全局世界坐标系原点偏移。
