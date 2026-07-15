@@ -1,24 +1,35 @@
-
 {
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "STM32 Debug (DAP)",                // 配置名称
-            "type": "cortex-debug",                     // 调试器类型
-            "request": "launch",                        // 调试请求类型
-            "servertype": "openocd",                    // 使用 OpenOCD 作为调试服务器
-            "serverpath": "/usr/bin/openocd",            // OpenOCD 可执行文件路径
-            "cwd": "${workspaceFolder}",                                // 工作目录
+            "name": "STM32 Debug (DAPLink)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "serverpath": "openocd",
+            "cwd": "${workspaceFolder}",
             "executable": "${workspaceFolder}/build/Debug/Cboard_Suction_Gripper_test.elf",
             "configFiles": [
-                "${workspaceFolder}/openocd.cfg"                                  // OpenOCD 配置文件路径
+                "${workspaceFolder}/.vscode/openocd-daplink.cfg"
             ],
-            "runToEntryPoint": "main",                                            // 运行到 main 函数
-            "device": "STM32F407IIHx",                                            // 目标设备型号
-            "svdFile": "${workspaceFolder}/STM32F4.svd",                          // SVD 文件路径
-
-            //"preLaunchTask": "Build Project"                                    // 预启动任务，确保在调试前构建项目
-
+            "runToEntryPoint": "main",
+            "device": "STM32F407IIHx",
+            "preLaunchTask": "CMake Build Debug"
+        },
+        {
+            "name": "STM32 Debug (ST-Link)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "serverpath": "openocd",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/Cboard_Suction_Gripper_test.elf",
+            "configFiles": [
+                "${workspaceFolder}/.vscode/openocd-stlink.cfg"
+            ],
+            "runToEntryPoint": "main",
+            "device": "STM32F407IIHx",
+            "preLaunchTask": "CMake Build Debug"
         }
     ]
 }

@@ -9,7 +9,11 @@
                 "--preset",
                 "Debug"
             ],
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
         },
         {
             "label": "CMake Build Debug",
@@ -25,10 +29,14 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
         },
         {
-            "label": "Flash STM32 (DAPLink/OpenOCD)",
+            "label": "Flash STM32 (DAPLink)",
             "type": "shell",
             "command": "openocd",
             "args": [
@@ -38,7 +46,28 @@
                 "program ${workspaceFolder}/build/Debug/Cboard_Suction_Gripper_test.elf verify reset exit"
             ],
             "dependsOn": "CMake Build Debug",
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Flash STM32 (ST-Link)",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "${workspaceFolder}/.vscode/openocd-stlink.cfg",
+                "-c",
+                "program ${workspaceFolder}/build/Debug/Cboard_Suction_Gripper_test.elf verify reset exit"
+            ],
+            "dependsOn": "CMake Build Debug",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
         }
     ]
 }

@@ -4,8 +4,9 @@ set(CMAKE_SYSTEM_PROCESSOR          arm)
 set(CMAKE_C_COMPILER_ID GNU)
 set(CMAKE_CXX_COMPILER_ID GNU)
 
-# Some default GCC settings. Prefer an explicit STM32 toolchain path so a fresh
-# CubeMX/CMake configure does not depend on the user's shell PATH.
+# Resolve the GNU Arm Embedded Toolchain from an explicit override first, then
+# fall back to the user's PATH. This keeps the project independent of local
+# package managers and versioned installation directories.
 set(STM32_TOOLCHAIN_PATH "" CACHE PATH "Path to the STM32 arm-none-eabi toolchain bin directory")
 
 set(_STM32_TOOLCHAIN_CANDIDATES)
@@ -14,14 +15,6 @@ if(DEFINED ENV{STM32_TOOLCHAIN_PATH} AND NOT "$ENV{STM32_TOOLCHAIN_PATH}" STREQU
 endif()
 if(STM32_TOOLCHAIN_PATH)
     list(APPEND _STM32_TOOLCHAIN_CANDIDATES "${STM32_TOOLCHAIN_PATH}")
-endif()
-
-file(GLOB _STM32_SNAP_TOOLCHAIN_BINS
-    "$ENV{HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/*/bin"
-)
-if(_STM32_SNAP_TOOLCHAIN_BINS)
-    list(SORT _STM32_SNAP_TOOLCHAIN_BINS COMPARE NATURAL ORDER DESCENDING)
-    list(APPEND _STM32_TOOLCHAIN_CANDIDATES ${_STM32_SNAP_TOOLCHAIN_BINS})
 endif()
 
 set(_STM32_SELECTED_TOOLCHAIN_PATH "")
@@ -41,9 +34,9 @@ endif()
 
 if(NOT _STM32_SELECTED_TOOLCHAIN_PATH)
     message(FATAL_ERROR
-        "Could not find arm-none-eabi-gcc. Set STM32_TOOLCHAIN_PATH to the "
-        "directory containing arm-none-eabi-gcc, or install GNU Arm Embedded "
-        "Toolchain so arm-none-eabi-gcc is available on PATH."
+        "Could not find arm-none-eabi-gcc. Install GNU Arm Embedded Toolchain "
+        "and add its bin directory to PATH, or set STM32_TOOLCHAIN_PATH to the "
+        "directory containing arm-none-eabi-gcc."
     )
 endif()
 

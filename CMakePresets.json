@@ -6,20 +6,7 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "environment": {
-                "PATH": "$env{HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin:$env{HOME}/snap/code/current/.local/share/stm32cube/bundles/ninja/1.13.2+st.1/bin:$penv{PATH}"
-            },
-            "cacheVariables": {
-                "CMAKE_MAKE_PROGRAM": {
-                    "type": "FILEPATH",
-                    "value": "$env{HOME}/snap/code/current/.local/share/stm32cube/bundles/ninja/1.13.2+st.1/bin/ninja"
-                },
-                "STM32_TOOLCHAIN_PATH": {
-                    "type": "PATH",
-                    "value": "$env{HOME}/snap/code/current/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin"
-                }
-            }
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake"
         },
         {
             "name": "Debug",
@@ -44,14 +31,6 @@
         {
             "name": "Release",
             "configurePreset": "Release"
-        }
-    ],
-    "testPresets": [
-        {
-            "name": "1111",
-            "description": "",
-            "displayName": "",
-            "configurePreset": "Debug"
         }
     ]
 }
