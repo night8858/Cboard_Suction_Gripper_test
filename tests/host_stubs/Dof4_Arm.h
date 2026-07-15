@@ -17,6 +17,7 @@ typedef enum {
 typedef enum {
     DOF4_ARM_LEFT = 0,
     DOF4_ARM_RIGHT = 1,
+    DOF4_ARM_COUNT = 2,
 } Dof4_ArmId;
 
 typedef enum {
@@ -88,6 +89,11 @@ Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
                                         const Dof4_Pose *target,
                                         float elbow_sign,
                                         Dof4_JointState *joints);
+Dof4_Status Dof4_arm_resolve_reachable_pose(Dof4_Arm *arm,
+                                            const Dof4_Pose *requested,
+                                            float elbow_sign,
+                                            float max_adjust_m,
+                                            Dof4_Pose *resolved);
 Dof4_Status Dof4_angle_to_servo(const Dof4_Arm *arm,
                                 uint8_t joint_index,
                                 float angle_rad,

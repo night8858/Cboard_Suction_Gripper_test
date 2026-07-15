@@ -24,6 +24,12 @@ static uint8_t s_valve_shadow[4];
 static bool s_back_occupied[2];
 static bool s_hold_pose_feedback;
 static bool s_hold_joint_feedback;
+static bool s_limit_exact_path_y;
+static float s_exact_path_y_limit;
+static float s_projection_y_adjust;
+static unsigned s_resolve_path_calls;
+static float s_last_resolve_max_adjust_m;
+static Dof4_Pose s_last_resolve_requested;
 
 typedef struct {
     Dof4_ArmId arm_id;
@@ -93,6 +99,12 @@ static void reset_test_state(void)
     memset(s_joint_calls, 0, sizeof(s_joint_calls));
     s_hold_pose_feedback = false;
     s_hold_joint_feedback = false;
+    s_limit_exact_path_y = false;
+    s_exact_path_y_limit = 0.80f;
+    s_projection_y_adjust = 0.0f;
+    s_resolve_path_calls = 0U;
+    s_last_resolve_max_adjust_m = 0.0f;
+    memset(&s_last_resolve_requested, 0, sizeof(s_last_resolve_requested));
     s_action_active = false;
     pc_action_4dof_init();
 }
@@ -187,11 +199,33 @@ Dof4_Status Dof4_arm_inverse_kinematics(Dof4_Arm *arm,
         !isfinite(target->x) || !isfinite(target->y) ||
         !isfinite(target->z) || !isfinite(target->pitch) ||
         fabsf(target->x) > 0.80f || fabsf(target->y) > 0.80f ||
+        (s_limit_exact_path_y && fabsf(target->y) > s_exact_path_y_limit) ||
         target->z < -0.60f || target->z > 0.60f) {
         return DOF4_STATUS_IK_UNREACHABLE;
     }
     memset(joints, 0, sizeof(*joints));
     return DOF4_STATUS_OK;
+}
+
+Dof4_Status Dof4_arm_resolve_reachable_pose(Dof4_Arm *arm,
+                                            const Dof4_Pose *requested,
+                                            float elbow_sign,
+                                            float max_adjust_m,
+                                            Dof4_Pose *resolved)
+{
+    ++s_resolve_path_calls;
+    s_last_resolve_max_adjust_m = max_adjust_m;
+    s_last_resolve_requested = *requested;
+
+    if (fabsf(s_projection_y_adjust) > max_adjust_m) {
+        return DOF4_STATUS_IK_UNREACHABLE;
+    }
+
+    *resolved = *requested;
+    resolved->y += s_projection_y_adjust;
+
+    Dof4_JointState joints;
+    return Dof4_arm_inverse_kinematics(arm, resolved, elbow_sign, &joints);
 }
 
 Dof4_Status Dof4_angle_to_servo(const Dof4_Arm *arm,
@@ -322,6 +356,23 @@ static bool target_pose_seen(float x, float z)
     return false;
 }
 
+static bool arm_target_pose_seen(Dof4_ArmId arm_id,
+                                 float x,
+                                 float y,
+                                 float z)
+{
+    for (unsigned i = 0U; i < s_set_target_calls &&
+                         i < (sizeof(s_target_calls) / sizeof(s_target_calls[0])); ++i) {
+        if (s_target_calls[i].arm_id == arm_id &&
+            fabsf(s_target_calls[i].pose.x - x) <= 1.0e-6f &&
+            fabsf(s_target_calls[i].pose.y - y) <= 1.0e-6f &&
+            fabsf(s_target_calls[i].pose.z - z) <= 1.0e-6f) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void advance_dynamic_to_target(void)
 {
     pc_action_4dof_loop();
@@ -342,6 +393,7 @@ static void advance_dynamic_target_settle(void)
 static void finish_dynamic_after_operation(uint32_t hold_ms)
 {
     s_tick_ms += hold_ms;
+    pc_action_4dof_loop();
     pc_action_4dof_loop();
     pc_action_4dof_loop();
     pc_action_4dof_loop();
@@ -395,7 +447,7 @@ int main(void)
     require_true(s_set_target_calls == 1U, "first loop drives P1");
     require_near(s_target_calls[0].pose.x, 0.20f, "hover target x");
     require_near(s_target_calls[0].pose.y, 0.10f, "hover target y");
-    require_near(s_target_calls[0].pose.z, 0.36f, "hover target z plus clearance");
+    require_near(s_target_calls[0].pose.z, 0.42f, "hover target z plus clearance");
     s_tick_ms = 1000U;
     for (uint8_t i = 0U; i < 6U && !target_pose_seen(0.20f, 0.30f); ++i) {
         pc_action_4dof_loop();
@@ -403,8 +455,11 @@ int main(void)
     require_true(target_pose_seen(0.20f, 0.30f), "target driven after hover point");
     require_true(!g_dof4_arm_left.clip_diagnostic.pending,
                  "dynamic two-point path accepted");
+    advance_dynamic_target_settle();
     pc_action_4dof_loop();
     finish_dynamic_after_operation(1500U);
+    require_true(arm_target_pose_seen(DOF4_ARM_LEFT, 0.20f, 0.15f, 0.42f),
+                 "single left pick retreats 5 cm toward +Y");
     require_true(!relay_seen_after(0U, 0U, 0U),
                  "dynamic pick never closes working arm valve");
     require_true(!relay_seen_after(0U, 2U, 0U) &&
@@ -417,8 +472,13 @@ int main(void)
     require_true(pc_action_4dof_start_dual_pick(&left_target, &right_target),
                  "dual pick request is queued");
     advance_dynamic_to_target();
+    advance_dynamic_target_settle();
     pc_action_4dof_loop();
     finish_dynamic_after_operation(1500U);
+    require_true(arm_target_pose_seen(DOF4_ARM_LEFT, 0.20f, 0.15f, 0.42f),
+                 "dual pick left arm retreats toward +Y");
+    require_true(arm_target_pose_seen(DOF4_ARM_RIGHT, 0.30f, -0.15f, 0.32f),
+                 "dual pick right arm retreats toward -Y");
     require_true(!relay_seen_after(0U, 0U, 0U) &&
                  !relay_seen_after(0U, 1U, 0U),
                  "dual dynamic pick never closes working arm valves");
@@ -427,6 +487,23 @@ int main(void)
                  !relay_seen_after(0U, 3U, 0U) &&
                  !relay_seen_after(0U, 3U, 1U),
                  "dual dynamic pick does not touch back valves");
+
+    reset_test_state();
+    target = (Dof4_Pose){0.30f, -0.10f, 0.20f, 0.0f};
+    require_true(pc_action_4dof_start_pick(DOF4_ARM_RIGHT, &target),
+                 "single right pick request is queued");
+    pc_action_4dof_loop();
+    s_tick_ms = 1000U;
+    for (uint8_t i = 0U; i < 6U && !target_pose_seen(0.30f, 0.20f); ++i) {
+        pc_action_4dof_loop();
+    }
+    require_true(target_pose_seen(0.30f, 0.20f),
+                 "single right pick reaches target");
+    advance_dynamic_target_settle();
+    pc_action_4dof_loop();
+    finish_dynamic_after_operation(1500U);
+    require_true(arm_target_pose_seen(DOF4_ARM_RIGHT, 0.30f, -0.15f, 0.32f),
+                 "single right pick retreats 5 cm toward -Y");
 
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.58f, 0.0f};
@@ -460,6 +537,7 @@ int main(void)
     require_true(!relay_seen_after(relay_calls_after_release, 0U, 1U),
                  "place release hold keeps working arm valve closed");
     s_tick_ms += 1U;
+    pc_action_4dof_loop();
     pc_action_4dof_loop();
     pc_action_4dof_loop();
     pc_action_4dof_loop();
@@ -500,6 +578,8 @@ int main(void)
     advance_dynamic_target_settle();
     pc_action_4dof_loop();
     finish_dynamic_after_operation(2000U);
+    require_true(arm_target_pose_seen(DOF4_ARM_LEFT, 0.20f, 0.15f, 0.42f),
+                 "single left place retreats 5 cm toward +Y");
     require_true(s_relay_history[s_relay_calls - 1U].relay_id == 0U &&
                  s_relay_history[s_relay_calls - 1U].state == 1U,
                  "finish reopens left arm suction");
@@ -526,6 +606,11 @@ int main(void)
     require_true(relay_seen_after(0U, 0U, 0U) &&
                  relay_seen_after(0U, 1U, 0U),
                  "dual dynamic place closes both working arm valves");
+    finish_dynamic_after_operation(1600U);
+    require_true(arm_target_pose_seen(DOF4_ARM_LEFT, 0.20f, 0.15f, 0.42f),
+                 "dual place left arm retreats toward +Y");
+    require_true(arm_target_pose_seen(DOF4_ARM_RIGHT, 0.30f, -0.15f, 0.32f),
+                 "dual place right arm retreats toward -Y");
 
     reset_test_state();
     require_true(pc_action_4dof_start_put_back(DOF4_ARM_LEFT),
@@ -740,6 +825,42 @@ int main(void)
                  "dual get-back never closes working arm valves");
 
     reset_test_state();
+    s_limit_exact_path_y = true;
+    s_exact_path_y_limit = 0.22f;
+    s_projection_y_adjust = -0.03f;
+    target = (Dof4_Pose){0.20f, 0.20f, 0.30f, 0.0f};
+    require_true(pc_action_4dof_start_pick(DOF4_ARM_LEFT, &target),
+                 "projectable path point request is queued");
+    advance_dynamic_to_target();
+    require_true(s_resolve_path_calls == 1U,
+                 "unreachable outward point invokes reachable projection");
+    require_near(s_last_resolve_max_adjust_m, 0.10f,
+                 "path point projection uses 10 cm tolerance");
+    require_near(s_last_resolve_requested.y, 0.25f,
+                 "projection receives requested 5 cm outward point");
+    advance_dynamic_target_settle();
+    pc_action_4dof_loop();
+    finish_dynamic_after_operation(1500U);
+    require_true(arm_target_pose_seen(DOF4_ARM_LEFT, 0.20f, 0.22f, 0.42f),
+                 "projected reachable outward point is executed");
+
+    reset_test_state();
+    s_limit_exact_path_y = true;
+    s_exact_path_y_limit = 0.22f;
+    s_projection_y_adjust = -0.11f;
+    target = (Dof4_Pose){0.20f, 0.20f, 0.30f, 0.0f};
+    require_true(pc_action_4dof_start_pick(DOF4_ARM_LEFT, &target),
+                 "over-tolerance path point request is queued");
+    pc_action_4dof_loop();
+    require_true(!pc_action_4dof_is_active(),
+                 "path point beyond 10 cm tolerance is rejected");
+    require_true(s_resolve_path_calls == 1U,
+                 "over-tolerance path point attempts one projection");
+    require_true(g_dof4_arm_left.clip_diagnostic.joint_mask ==
+                     PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE,
+                 "over-tolerance path point rejection reason");
+
+    reset_test_state();
     require_true(pc_action_4dof_start_pick(DOF4_ARM_LEFT, &target),
                  "first pending request accepted");
     require_true(!pc_action_4dof_start_pick(DOF4_ARM_RIGHT, &target),
@@ -762,6 +883,8 @@ int main(void)
     require_true(g_dof4_arm_left.clip_diagnostic.joint_mask ==
                      PC_ACTION_4DOF_REJECT_TARGET_UNREACHABLE,
                  "unreachable reason");
+    require_true(s_resolve_path_calls == 0U,
+                 "final unreachable target is never projected");
 
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.10f, 0.0f};

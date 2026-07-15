@@ -8,10 +8,10 @@
  *
  * 动态取放路径：
  *   当前 TCP -> 目标正上方悬停点（使用模板 approach pitch）-> 垂直下降至 PC 目标 TCP
- *   -> 吸取/释放 -> 撤离回悬停点 -> 自适应 IDLE
+ *   -> 吸取/释放 -> 撤离回悬停点 -> Y 向外避让点 -> 自适应 IDLE
  *
- * 悬停点 xyz 固定在目标正上方，pitch 采用已调模板姿态，避免中间点因
- * 强制目标俯仰角导致 IK 不可达；下降段仅改变 Z 轴到达目标点。
+ * 悬停点通常位于目标正上方，pitch 采用已调模板姿态；若边界点不可达，
+ * 允许在标定容差内投影到邻近可达点。下降段到最终目标时仍使用严格位姿。
  *
  * 背部固定路径使用关节角序列。路径数组和有效长度分离，后续实机调试需要增加
  * 中间点时，只需在对应数组中追加关节角并调整 count。
@@ -51,6 +51,7 @@
 #define PC_ACT4_MOVE_TIMEOUT_MS             (PC_ACT4_CFG->move_timeout_ms)
 #define PC_ACT4_POSE_POS_TOL_M              (PC_ACT4_CFG->pose_pos_tol_m)
 #define PC_ACT4_POSE_PITCH_TOL_RAD          (PC_ACT4_CFG->pose_pitch_tol_rad)
+#define PC_ACT4_PATH_POINT_MAX_ADJUST_M      (PC_ACT4_CFG->path_point_max_adjust_m)
 #define PC_ACT4_JOINT_TOL_RAD               (PC_ACT4_CFG->joint_tol_rad)
 #define PC_ACT4_BACK_SERVO_SPEED            (PC_ACT4_CFG->back_servo_speed)
 #define PC_ACT4_BACK_FAST_SERVO_SPEED       (PC_ACT4_CFG->back_fast_servo_speed)
@@ -371,6 +372,32 @@ static bool pc_action_4dof_pose_reachable(Dof4_Arm *arm,
         }
     }
     return true;
+}
+
+/**
+ * @brief 解析动态路径中间点，精确不可达时允许投影到邻近可达位姿。
+ *
+ * 仅悬停点和撤离外伸点调用本函数；最终抓取/放置目标仍由
+ * pc_action_4dof_pose_reachable() 严格校验，不允许自动修正。
+ */
+static bool pc_action_4dof_resolve_path_point(Dof4_Arm *arm,
+                                               const Dof4_Pose *requested,
+                                               Dof4_Pose *resolved)
+{
+    if (arm == NULL || requested == NULL || resolved == NULL) {
+        return false;
+    }
+
+    if (pc_action_4dof_pose_reachable(arm, requested)) {
+        *resolved = *requested;
+        return true;
+    }
+
+    return Dof4_arm_resolve_reachable_pose(arm,
+                                           requested,
+                                           -1.0f,
+                                           PC_ACT4_PATH_POINT_MAX_ADJUST_M,
+                                           resolved) == DOF4_STATUS_OK;
 }
 
 /**
@@ -1038,10 +1065,11 @@ void pc_action_4dof_record_reject(Dof4_ArmId arm_id,
  * 路径结构（单臂）：
  *   pre[0] = 悬停点（target 正上方，俯仰角 = 模板 entry_offset.pitch）
  *   pre[1] = 目标点（PC 下发的 x, y, z，俯仰角由模板指定）
- *   post[0]= 悬停点（撤离时回到正上方）
+ *   post[0]= 悬停点（撤离时先回到正上方）
+ *   post[1]= Y 向外避让点（左臂 +Y，右臂 -Y）
  *
- * 悬停点 xyz 保持在 target 正上方，pitch 使用实机已调的 approach 姿态，
- * 避免正上方中间点因强制目标俯仰角导致 IK 不可达。
+ * 悬停点通常保持在 target 正上方，pitch 使用实机已调的 approach 姿态；
+ * 若中间点不可达，可在标定容差内投影，最终操作目标不允许投影。
  *
  * @param candidate     待填充的上下文（输出参数）
  * @param arm_index     手臂索引 (0=左, 1=右)
@@ -1094,35 +1122,45 @@ static bool pc_action_4dof_build_dynamic_arm_path(
     }
 
     /* ── 构造悬停点：目标正上方，末端优先垂直向下 ─────────── */
-    Dof4_Pose hover = target;
-    hover.z += template_data->vertical_clearance_m;
-    (void)Dof4_clamp_to_workspace(arm, &hover);
+    Dof4_Pose hover_requested = target;
+    hover_requested.z += template_data->vertical_clearance_m;
+    (void)Dof4_clamp_to_workspace(arm, &hover_requested);
+    Dof4_Pose hover = hover_requested;
 
     /* 逐级降级俯仰角：优先 target_pitch（末端垂直向下），
-     * 不可达则降级到模板 approach 姿态，再不可达则用钳位 pitch */
-    hover.pitch = template_data->target_pitch;
-    if (!pc_action_4dof_pose_reachable(arm, &hover)) {
-        hover.pitch = template_data->entry_offset.pitch;
-        if (!pc_action_4dof_pose_reachable(arm, &hover)) {
-            Dof4_Pose clamped2 = target;
-            clamped2.z += template_data->vertical_clearance_m;
-            (void)Dof4_clamp_to_workspace(arm, &clamped2);
-            if (!pc_action_4dof_pose_reachable(arm, &clamped2)) {
-                if (reject_reason != NULL) {
-                    *reject_reason = PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE;
-                }
-                return false;
+     * 不可达则降级到模板 approach 姿态；仍不可达时允许在标定容差内
+     * 投影到固定 approach pitch 的邻近可达点。 */
+    hover_requested.pitch = template_data->target_pitch;
+    if (!pc_action_4dof_pose_reachable(arm, &hover_requested)) {
+        hover_requested.pitch = template_data->entry_offset.pitch;
+        if (!pc_action_4dof_resolve_path_point(arm, &hover_requested, &hover)) {
+            if (reject_reason != NULL) {
+                *reject_reason = PC_ACTION_4DOF_REJECT_TARGET_ABOVE_UNREACHABLE;
             }
-            hover = clamped2;
+            return false;
         }
+    } else {
+        hover = hover_requested;
+    }
+
+    /* ── 构造 Y 外伸点：仅启用标定表 exit_offset.y ─────────── */
+    Dof4_Pose outward_requested = hover;
+    outward_requested.y += template_data->exit_offset.y;
+    Dof4_Pose outward;
+    if (!pc_action_4dof_resolve_path_point(arm, &outward_requested, &outward)) {
+        if (reject_reason != NULL) {
+            *reject_reason = PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE;
+        }
+        return false;
     }
 
     /* ── 简化路径：悬停点 → 目标点（无中间插值） ────────────────── */
     path->pre[0] = hover;
     path->pre[1] = target;
     path->pre_count = 2U;
-    path->post[0] = hover;   /* 撤离时回到悬停点 */
-    path->post_count = 1U;
+    path->post[0] = hover;    /* 撤离时先垂直回到悬停点 */
+    path->post[1] = outward;  /* 再沿 Y 向机械臂外侧避让 */
+    path->post_count = 2U;
 
     return true;
 }

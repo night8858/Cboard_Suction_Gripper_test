@@ -57,7 +57,7 @@ typedef struct {
 
 typedef struct {
     Dof4_Pose entry_offset;
-    Dof4_Pose exit_offset;
+    Dof4_Pose exit_offset; /**< 当前动态撤离仅使用 y；x/z/pitch 保留。 */
     float target_pitch;
     float vertical_clearance_m;
 } Dof4PcActionDynamicTemplate;
@@ -83,6 +83,7 @@ typedef struct {
     uint32_t move_timeout_ms;
     float pose_pos_tol_m;
     float pose_pitch_tol_rad;
+    float path_point_max_adjust_m; /**< 动态路径中间点最大 XYZ 邻近可达修正量。 */
     float joint_tol_rad;
     uint16_t back_servo_speed;
     uint16_t back_fast_servo_speed;

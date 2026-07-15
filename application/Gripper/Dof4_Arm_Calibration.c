@@ -108,17 +108,18 @@ static const Dof4ArmCalibration s_arm_calibration = {
  * ======================================================================== */
 
 static const Dof4PcActionCalibration s_pc_action_calibration = {
+    /* 动态模板的 exit_offset 当前仅启用 y：左臂 +Y、右臂 -Y；其余分量保留。 */
     /* ── 单臂抓取 (pick)：entry=接近目标, exit=离开目标, target_pitch=抓取俯仰角 ── */
     .pick = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {-0.10f, -0.15f, 0.38f, -0.60f},
-            .exit_offset = {-0.10f, -0.07f, 0.38f, -0.30f},
+            .exit_offset = {-0.10f, 0.05f, 0.38f, -0.30f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.40f, -0.60f},
-            .exit_offset = {0.10f, 0.07f, 0.40f, -0.30f},
+            .exit_offset = {0.10f, -0.05f, 0.40f, -0.30f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
@@ -127,13 +128,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
     .dual_pick = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {0.10f, -0.15f, 0.28f, -0.60f},
-            .exit_offset = {0.10f, -0.07f, 0.365f, -0.30f},
+            .exit_offset = {0.10f, 0.05f, 0.365f, -0.30f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {0.10f, 0.15f, 0.30f, -0.60f},
-            .exit_offset = {0.10f, 0.07f, 0.385f, -0.30f},
+            .exit_offset = {0.10f, -0.05f, 0.385f, -0.30f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
@@ -142,13 +143,13 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
     .place = {
         [DOF4_ARM_LEFT] = {
             .entry_offset = {-0.075f, -0.10f, 0.49f, -0.30f},
-            .exit_offset = {-0.175f, -0.15f, 0.44f, -0.50f},
+            .exit_offset = {-0.175f, 0.05f, 0.44f, -0.50f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
         [DOF4_ARM_RIGHT] = {
             .entry_offset = {-0.075f, 0.10f, 0.52f, -1.00f},
-            .exit_offset = {-0.175f, 0.15f, 0.43f, -0.50f},
+            .exit_offset = {-0.175f, -0.05f, 0.43f, -0.50f},
             .target_pitch = -1.57f,
             .vertical_clearance_m = CALIB_PC_DYNAMIC_HOVER_CLEARANCE_M,
         },
@@ -238,6 +239,7 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
     .move_timeout_ms = 2000U,                         /* 单次移动超时 */
     .pose_pos_tol_m = 0.03f,                          /* 位姿位置容差 */
     .pose_pitch_tol_rad = 0.02f,                      /* 位姿俯仰容差 */
+    .path_point_max_adjust_m = 0.10f,                 /* 动态路径中间点最大邻近可达修正量 */
     .joint_tol_rad = 0.06f,                           /* 关节角度容差 */
     .back_servo_speed = 8000U,                        /* 兼容旧字段：背部动作高速段舵机速度 */
     .back_fast_servo_speed = 8000U,                   /* 背部动作非交接段高速速度 */
@@ -265,11 +267,11 @@ static const Dof4PcActionCalibration s_pc_action_calibration = {
  * ======================================================================== */
 static const Dof4ActionCalibration s_action_calibration = {
     .idle_offset = {                                  /* 闲置姿态偏移 */
-        [DOF4_ARM_LEFT] = {0.13f, 0.05f, 0.25f, -0.02f},
-        [DOF4_ARM_RIGHT] = {0.15f, -0.05f, 0.25f, -0.02f},
+        [DOF4_ARM_LEFT]  = {0.15f, 0.10f, 0.25f, -0.02f},
+        [DOF4_ARM_RIGHT] = {0.15f, -0.10f, 0.25f, -0.02f},
     },
     .default_back_avoid = {                           /* 默认归位避让点 */
-        [DOF4_ARM_LEFT] = {0.22f, 0.06f, 0.34f, 0.45f},
+        [DOF4_ARM_LEFT]  = {0.22f,  0.06f,  0.34f, 0.45f},
         [DOF4_ARM_RIGHT] = {0.22f, -0.06f, 0.34f, 0.45f},
     },
     .current_back_avoid = {                           /* 当前归位避让点 */

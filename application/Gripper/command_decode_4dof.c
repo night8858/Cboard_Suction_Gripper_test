@@ -159,7 +159,7 @@ static Dof4_Pose s_manual_pose_target[2];
 static bool s_startup_request_pending = false;
 
 #define CMD4_ANSWER_REPEAT_COUNT       10U
-#define CMD4_ANSWER_REPEAT_INTERVAL_MS 600U
+#define CMD4_ANSWER_REPEAT_INTERVAL_MS 1500U
 
 typedef struct {
     bool active;
