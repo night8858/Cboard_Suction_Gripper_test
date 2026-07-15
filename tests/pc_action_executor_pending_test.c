@@ -390,6 +390,19 @@ static void advance_dynamic_target_settle(void)
     pc_action_4dof_loop();
 }
 
+static void advance_dynamic_to_final_timeout(void)
+{
+    pc_action_4dof_loop();
+    s_tick_ms += 1600U;
+    pc_action_4dof_loop();
+    s_hold_pose_feedback = true;
+    pc_action_4dof_loop();
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
+    s_tick_ms += 800U;
+    pc_action_4dof_loop();
+}
+
 static void finish_dynamic_after_operation(uint32_t hold_ms)
 {
     s_tick_ms += hold_ms;
@@ -401,11 +414,29 @@ static void finish_dynamic_after_operation(uint32_t hold_ms)
     pc_action_4dof_loop();
 }
 
+static void finish_dynamic_timeout_action(uint32_t hold_ms)
+{
+    s_hold_pose_feedback = false;
+    finish_dynamic_after_operation(hold_ms);
+}
+
 static void advance_joint_to_operation_target(void)
 {
     for (uint8_t i = 0U; i < 10U; ++i) {
         pc_action_4dof_loop();
     }
+}
+
+static void advance_joint_to_final_timeout(void)
+{
+    pc_action_4dof_loop();
+    s_hold_joint_feedback = true;
+    pc_action_4dof_loop();
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+    s_tick_ms += 2500U;
+    pc_action_4dof_loop();
 }
 
 static void require_joint_near(const Dof4_JointState *actual,
@@ -429,6 +460,14 @@ static void finish_joint_action_from_retreat(void)
     pc_action_4dof_loop();
     pc_action_4dof_loop();
     pc_action_4dof_loop();
+}
+
+static void finish_joint_timeout_action(uint32_t operation_hold_ms)
+{
+    s_tick_ms += operation_hold_ms;
+    pc_action_4dof_loop();
+    s_hold_joint_feedback = false;
+    finish_joint_action_from_retreat();
 }
 
 int main(void)
@@ -554,21 +593,75 @@ int main(void)
 
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
+    require_true(pc_action_4dof_start_pick(DOF4_ARM_LEFT, &target),
+                 "pick timeout request is queued");
+    advance_dynamic_to_final_timeout();
+    pc_action_4dof_loop();
+    require_true(s_valve_shadow[0] == 1U &&
+                 !relay_seen_after(0U, 0U, 0U),
+                 "dynamic pick timeout keeps working arm suction open");
+    finish_dynamic_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dynamic pick timeout completes normally");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dynamic pick timeout does not report error");
+    pc_action_4dof_completion_acknowledge();
+
+    reset_test_state();
+    left_target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
+    right_target = (Dof4_Pose){0.30f, -0.10f, 0.20f, 0.0f};
+    require_true(pc_action_4dof_start_dual_pick(&left_target, &right_target),
+                 "dual pick timeout request is queued");
+    advance_dynamic_to_final_timeout();
+    pc_action_4dof_loop();
+    require_true(s_valve_shadow[0] == 1U && s_valve_shadow[1] == 1U &&
+                 !relay_seen_after(0U, 0U, 0U) &&
+                 !relay_seen_after(0U, 1U, 0U),
+                 "dual dynamic pick timeout keeps both arm valves open");
+    finish_dynamic_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dual dynamic pick timeout completes normally");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dual dynamic pick timeout does not report error");
+    pc_action_4dof_completion_acknowledge();
+
+    reset_test_state();
+    target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
     require_true(pc_action_4dof_start_place(DOF4_ARM_LEFT, &target),
                  "place timeout request is queued");
-    pc_action_4dof_loop();
-    s_tick_ms += 1600U;
-    pc_action_4dof_loop();
-    s_hold_pose_feedback = true;
-    pc_action_4dof_loop();
+    advance_dynamic_to_final_timeout();
     const unsigned timeout_place_before_release = s_relay_calls;
-    s_tick_ms += 2500U;
-    pc_action_4dof_loop();
-    s_tick_ms += 800U;
-    pc_action_4dof_loop();
     pc_action_4dof_loop();
     require_true(relay_seen_after(timeout_place_before_release, 0U, 0U),
                  "dynamic place timeout still closes working arm valve");
+    finish_dynamic_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dynamic place timeout completes normally");
+    require_true(s_valve_shadow[0] == 1U,
+                 "dynamic place timeout finish reopens working arm valve");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dynamic place timeout does not report error");
+    pc_action_4dof_completion_acknowledge();
+
+    reset_test_state();
+    left_target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
+    right_target = (Dof4_Pose){0.30f, -0.10f, 0.20f, 0.0f};
+    require_true(pc_action_4dof_start_dual_place(&left_target, &right_target),
+                 "dual place timeout request is queued");
+    advance_dynamic_to_final_timeout();
+    const unsigned dual_timeout_place_before_release = s_relay_calls;
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(dual_timeout_place_before_release, 0U, 0U) &&
+                 relay_seen_after(dual_timeout_place_before_release, 1U, 0U),
+                 "dual dynamic place timeout closes both working arm valves");
+    finish_dynamic_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dual dynamic place timeout completes normally");
+    require_true(s_valve_shadow[0] == 1U && s_valve_shadow[1] == 1U,
+                 "dual dynamic place timeout finish reopens both arm valves");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dual dynamic place timeout does not report error");
+    pc_action_4dof_completion_acknowledge();
 
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.30f, 0.0f};
@@ -679,22 +772,26 @@ int main(void)
     pc_action_4dof_loop();
     s_tick_ms += 2500U;
     pc_action_4dof_loop();
-    require_true(!relay_seen_after(timeout_put_before_back_suction, 2U, 1U),
-                 "put-back target timeout must not open target back valve");
-    require_true(!relay_seen_after(timeout_put_before_back_suction, 0U, 0U),
-                 "put-back target timeout must not close working arm valve");
-    require_true(!s_back_occupied[DOF4_ARM_LEFT],
-                 "put-back target timeout must not mark back occupied");
-    require_true(g_pc_action_error_event_count > 0U,
-                 "put-back target timeout reports error");
-    s_hold_pose_feedback = false;
+    require_true(relay_seen_after(timeout_put_before_back_suction, 2U, 1U),
+                 "put-back target timeout still opens target back valve");
+    const unsigned timeout_put_before_arm_release = s_relay_calls;
+    s_tick_ms += 2000U;
     pc_action_4dof_loop();
-    s_tick_ms += 100U;
     pc_action_4dof_loop();
+    require_true(relay_seen_after(timeout_put_before_arm_release, 0U, 0U),
+                 "put-back target timeout still closes working arm valve");
+    require_true(s_back_occupied[DOF4_ARM_LEFT],
+                 "put-back target timeout marks back occupied");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "put-back target timeout does not report error");
+    finish_joint_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "put-back target timeout completes normally");
     require_true(g_dof4_arm_left.cfg.servo_speed == 3000U,
                  "put-back timeout restores left servo speed");
     require_true(g_dof4_arm_left.cfg.servo_acc == 25U,
                  "put-back timeout restores left servo acc");
+    pc_action_4dof_completion_acknowledge();
 
     reset_test_state();
     require_true(pc_action_4dof_start_get_back(DOF4_ARM_LEFT),
@@ -731,6 +828,30 @@ int main(void)
     require_true(!s_back_occupied[DOF4_ARM_LEFT], "get-back marks back empty");
     require_true(!relay_seen_after(0U, 0U, 0U),
                  "get-back never closes working arm valve");
+
+    reset_test_state();
+    s_back_occupied[DOF4_ARM_LEFT] = true;
+    require_true(pc_action_4dof_start_get_back(DOF4_ARM_LEFT),
+                 "get-back timeout request is queued");
+    advance_joint_to_final_timeout();
+    const unsigned timeout_get_before_source_release = s_relay_calls;
+    s_tick_ms += 1600U;
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(timeout_get_before_source_release, 2U, 0U),
+                 "get-back target timeout still closes source back valve");
+    require_true(!s_back_occupied[DOF4_ARM_LEFT],
+                 "get-back target timeout marks back empty");
+    require_true(!relay_seen_after(0U, 0U, 0U),
+                 "get-back target timeout keeps working arm suction open");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "get-back target timeout does not report error");
+    finish_joint_timeout_action(800U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "get-back target timeout completes normally");
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U &&
+                 g_dof4_arm_left.cfg.servo_acc == 25U,
+                 "get-back timeout restores left servo motion settings");
+    pc_action_4dof_completion_acknowledge();
 
     reset_test_state();
     require_true(pc_action_4dof_start_dual_put_back(),
@@ -782,6 +903,35 @@ int main(void)
                  "dual put-back leaves both back valves open");
 
     reset_test_state();
+    require_true(pc_action_4dof_start_dual_put_back(),
+                 "dual put-back timeout request is queued");
+    advance_joint_to_final_timeout();
+    require_true(relay_seen_after(0U, 2U, 1U) &&
+                 relay_seen_after(0U, 3U, 1U),
+                 "dual put-back target timeout opens both back valves");
+    const unsigned dual_timeout_put_before_arm_release = s_relay_calls;
+    s_tick_ms += 2000U;
+    pc_action_4dof_loop();
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(dual_timeout_put_before_arm_release, 0U, 0U) &&
+                 relay_seen_after(dual_timeout_put_before_arm_release, 1U, 0U),
+                 "dual put-back target timeout closes both arm valves");
+    require_true(s_back_occupied[DOF4_ARM_LEFT] &&
+                 s_back_occupied[DOF4_ARM_RIGHT],
+                 "dual put-back target timeout marks both backs occupied");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dual put-back target timeout does not report error");
+    finish_joint_timeout_action(2000U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dual put-back target timeout completes normally");
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 3000U &&
+                 g_dof4_arm_left.cfg.servo_acc == 25U &&
+                 g_dof4_arm_right.cfg.servo_acc == 25U,
+                 "dual put-back timeout restores both arm motion settings");
+    pc_action_4dof_completion_acknowledge();
+
+    reset_test_state();
     require_true(pc_action_4dof_start_dual_get_back(),
                  "dual get-back request is queued");
     pc_action_4dof_loop();
@@ -825,6 +975,36 @@ int main(void)
                  "dual get-back never closes working arm valves");
 
     reset_test_state();
+    s_back_occupied[DOF4_ARM_LEFT] = true;
+    s_back_occupied[DOF4_ARM_RIGHT] = true;
+    require_true(pc_action_4dof_start_dual_get_back(),
+                 "dual get-back timeout request is queued");
+    advance_joint_to_final_timeout();
+    const unsigned dual_timeout_get_before_source_release = s_relay_calls;
+    s_tick_ms += 1600U;
+    pc_action_4dof_loop();
+    require_true(relay_seen_after(dual_timeout_get_before_source_release, 2U, 0U) &&
+                 relay_seen_after(dual_timeout_get_before_source_release, 3U, 0U),
+                 "dual get-back target timeout closes both source back valves");
+    require_true(!s_back_occupied[DOF4_ARM_LEFT] &&
+                 !s_back_occupied[DOF4_ARM_RIGHT],
+                 "dual get-back target timeout marks both backs empty");
+    require_true(!relay_seen_after(0U, 0U, 0U) &&
+                 !relay_seen_after(0U, 1U, 0U),
+                 "dual get-back target timeout keeps both arm valves open");
+    require_true(g_pc_action_error_event_count == 0U,
+                 "dual get-back target timeout does not report error");
+    finish_joint_timeout_action(800U);
+    require_true(pc_action_4dof_completion_pending(),
+                 "dual get-back target timeout completes normally");
+    require_true(g_dof4_arm_left.cfg.servo_speed == 3000U &&
+                 g_dof4_arm_right.cfg.servo_speed == 3000U &&
+                 g_dof4_arm_left.cfg.servo_acc == 25U &&
+                 g_dof4_arm_right.cfg.servo_acc == 25U,
+                 "dual get-back timeout restores both arm motion settings");
+    pc_action_4dof_completion_acknowledge();
+
+    reset_test_state();
     s_limit_exact_path_y = true;
     s_exact_path_y_limit = 0.22f;
     s_projection_y_adjust = -0.03f;
@@ -859,6 +1039,8 @@ int main(void)
     require_true(g_dof4_arm_left.clip_diagnostic.joint_mask ==
                      PC_ACTION_4DOF_REJECT_PATH_POINT_UNREACHABLE,
                  "over-tolerance path point rejection reason");
+    require_true(s_relay_calls == 0U,
+                 "rejected path point does not start valve control");
 
     reset_test_state();
     require_true(pc_action_4dof_start_pick(DOF4_ARM_LEFT, &target),
@@ -885,6 +1067,8 @@ int main(void)
                  "unreachable reason");
     require_true(s_resolve_path_calls == 0U,
                  "final unreachable target is never projected");
+    require_true(s_relay_calls == 0U,
+                 "unreachable target does not start valve control");
 
     reset_test_state();
     target = (Dof4_Pose){0.20f, 0.10f, 0.10f, 0.0f};

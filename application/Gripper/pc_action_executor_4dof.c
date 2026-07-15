@@ -17,7 +17,8 @@
  * 中间点时，只需在对应数组中追加关节角并调整 count。
  *
  * 超时原则：
- *   - 运动阶段未到位：立即终止后续吸取/释放操作，尝试回自适应 IDLE。
+ *   - 最终操作点未到位：按容错完成处理，继续执行正常吸取/释放阀控时序。
+ *   - 其他运动阶段未到位：保持各阶段现有的推进或中止策略。
  *   - 释放前终止：保持工作臂电磁阀打开，不修改背部占用状态，避免掉块。
  *   - 释放后终止：保留已经执行的阀门和背部占用结果。
  *   - 成功和超时终止都会产生一次 0xCC 结束事件；0xCC 不区分结果。
@@ -939,12 +940,12 @@ static void pc_action_4dof_handle_joint(void)
     case PC_ACT4_JNT_GRAB:
         pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
-        if (pc_action_4dof_jnt_final_stable(last_pre)) {
+        if (pc_action_4dof_jnt_final_stable(last_pre) ||
+            pc_action_4dof_timed_out()) {
+            /* 最终取回点未稳定到位时也按容错流程继续吸附和背部释放。 */
             s_pc_ctx.joint_phase_started = false;
             s_pc_ctx.jnt_substate = PC_ACT4_JNT_SUCTION_GRAB;
             pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_GET_ARM_HOLD_MS);
-        } else if (pc_action_4dof_timed_out()) {
-            pc_action_4dof_begin_abort_return();
         }
         break;
 
@@ -975,13 +976,12 @@ static void pc_action_4dof_handle_joint(void)
         pc_action_4dof_apply_back_final_motion();
         pc_action_4dof_jnt_drive_pre(last_pre);
         if (!s_pc_ctx.joint_phase_started) {
-            if (pc_action_4dof_jnt_final_stable(last_pre)) {
-                /* 背部放置：目标点连续稳定后才打开目标背部阀。 */
+            if (pc_action_4dof_jnt_final_stable(last_pre) ||
+                pc_action_4dof_timed_out()) {
+                /* 背部放置：目标点稳定到位或超时后均继续正常交接时序。 */
                 s_pc_ctx.joint_phase_started = true;
                 pc_action_4dof_open_target_back_valves();
                 pc_action_4dof_jnt_set_tmo(PC_ACT4_DELAY_BACK_PRE_RELEASE_MS);
-            } else if (pc_action_4dof_timed_out()) {
-                pc_action_4dof_begin_abort_return();
             }
         } else if (pc_action_4dof_timed_out()) {
             s_pc_ctx.joint_phase_started = false;
